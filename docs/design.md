@@ -164,7 +164,7 @@ pascal-db-faa, readiness check). Middlewares: error handler, logger (JSON), metr
 |---|---|
 | FPC 3.2.2, Windows (lazbuild) | 15/15, second start ok |
 | FPC 3.2.2, Linux (Docker, plain fpc) | 15/15, OpenAPI valid, promtool ok, second start ok |
-| Delphi 12, Win32 / Win64 | pending (IDE) |
+| Delphi 12, Win32 / Win64 (built in the IDE) | 15/15 each; Win64 second start ok |
 
 What setting it up as a consumer showed:
 
