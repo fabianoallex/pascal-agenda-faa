@@ -1,0 +1,48 @@
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup>
+        <ProjectGuid>{F52AF190-9F9D-4A91-814A-EF7949C24E55}</ProjectGuid>
+    </PropertyGroup>
+    <ItemGroup>
+        <Projects Include="tests\Unit\Agenda.UnitTests.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="api\AgendaApi.dproj">
+            <Dependencies/>
+        </Projects>
+    </ItemGroup>
+    <ProjectExtensions>
+        <Borland.Personality>Default.Personality.12</Borland.Personality>
+        <Borland.ProjectType/>
+        <BorlandProject>
+            <Default.Personality/>
+        </BorlandProject>
+    </ProjectExtensions>
+    <Target Name="Agenda_UnitTests">
+        <MSBuild Projects="tests\Unit\Agenda.UnitTests.dproj"/>
+    </Target>
+    <Target Name="Agenda_UnitTests:Clean">
+        <MSBuild Projects="tests\Unit\Agenda.UnitTests.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="Agenda_UnitTests:Make">
+        <MSBuild Projects="tests\Unit\Agenda.UnitTests.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="AgendaApi">
+        <MSBuild Projects="api\AgendaApi.dproj"/>
+    </Target>
+    <Target Name="AgendaApi:Clean">
+        <MSBuild Projects="api\AgendaApi.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="AgendaApi:Make">
+        <MSBuild Projects="api\AgendaApi.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="Build">
+        <CallTarget Targets="Agenda_UnitTests;AgendaApi"/>
+    </Target>
+    <Target Name="Clean">
+        <CallTarget Targets="Agenda_UnitTests:Clean;AgendaApi:Clean"/>
+    </Target>
+    <Target Name="Make">
+        <CallTarget Targets="Agenda_UnitTests:Make;AgendaApi:Make"/>
+    </Target>
+    <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
+</Project>

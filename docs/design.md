@@ -145,6 +145,11 @@ two libraries would share goes to pascal-common-faa.
 - RFC 9457 errors (`application/problem+json`) as an option of `TErrorHandlerMiddleware`.
 - Typed HTTP client for Delphi/Lazarus with refresh, retry and trace propagation (M6).
 
+**Found while building** (not in the first list):
+
+- A shared test kit: the DUnitX-to-FPCUnit adapter and the mirror generator, copied in every
+  repository of the family (see "Progress", M1).
+
 **Not library material**: email/SMS sending, agenda rules, free-slot computation.
 
 When a candidate is found or promoted, record it here and in pascal-api-infra-faa's
@@ -179,3 +184,31 @@ What setting it up as a consumer showed:
   submodule. Its observability guide could say a consumer can do that.
 - No unit tests yet: M0 has no logic of its own. The test project (DUnitX masters, FPCUnit
   mirrors) comes with M1's first logic (password hashing).
+
+### M1 — in progress
+
+**Unit tests**: `tests/Unit` (DUnitX masters, `Agenda.UnitTests.dproj`), mirrors generated in
+`tests/Unit/fpc` by `tools/gen_fpc_mirror.py`; `tools/test_fpc.sh` (Windows) and
+`tools/test_fpc_docker.sh` (Linux, in CI). `Agenda.groupproj` holds both Delphi projects.
+
+**Password hashing** (`src/Agenda.Passwords`, a library candidate): PBKDF2-HMAC-SHA256 on
+pascal-common-faa's HMAC, checked against RFC 7914 and the "password"/"salt" vectors
+(Python's hashlib). 14 tests, 0 leaks, FPC Windows and Linux.
+
+Measured on FPC 3.2.2 Win64 `-O2`, one hash of 600,000 iterations (OWASP's figure):
+
+| Implementation | Time |
+|---|---|
+| on `PcHmacSha256` (4 compressions and 3 allocations per iteration) | 1.7–2.1 s |
+| HMAC's inner and outer states computed once (2 compressions, no allocation) | 0.78–0.81 s |
+| Python's `hashlib` (OpenSSL), for reference | about 0.3 s |
+
+The faster form needs SHA-256's compression function, which is private to
+`PascalCommon.Crypto`: it can only be written well **inside** pascal-common-faa. Moving the
+unit there also needs a string-to-UTF-8-bytes function there (`PaStringToUtf8Bytes` is
+pascal-api-infra-faa's).
+
+**Shared test kit**: the DUnitX-to-FPCUnit adapter (`*.DUnitXCompat.pas`) and
+`gen_fpc_mirror.py` exist as near-identical copies in pascal-common-faa, -jsonmapper-faa,
+-db-faa, -redis-faa, -api-infra-faa and three other projects; this is the eighth. A
+candidate for one shared copy (a `testing/` folder in pascal-common-faa, or the skill).

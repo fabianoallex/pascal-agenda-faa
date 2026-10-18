@@ -20,5 +20,7 @@ DOCKERFILE
 fi
 export FPC_IMAGE
 
+echo "== unit suite (FPC 3.2.2, Linux)"
+sh tools/test_fpc_docker.sh
 echo "== HTTP scenarios (FPC 3.2.2, Linux)"
 sh tools/test_http_docker.sh
