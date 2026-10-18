@@ -16,8 +16,10 @@ uses
   DUnitX.Loggers.Xml.NUnit,
   DUnitX.TestFramework,
   Agenda.Passwords in '..\..\src\Agenda.Passwords.pas',
+  Agenda.Tokens in '..\..\src\Agenda.Tokens.pas',
   Agenda.DUnitXCompat in 'Agenda.DUnitXCompat.pas',
-  Agenda.PasswordsTests in 'Agenda.PasswordsTests.pas';
+  Agenda.PasswordsTests in 'Agenda.PasswordsTests.pas',
+  Agenda.TokensTests in 'Agenda.TokensTests.pas';
 
 var
   runner: ITestRunner;

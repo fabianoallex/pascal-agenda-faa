@@ -114,8 +114,10 @@
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
         <DCCReference Include="..\..\src\Agenda.Passwords.pas"/>
+        <DCCReference Include="..\..\src\Agenda.Tokens.pas"/>
         <DCCReference Include="Agenda.DUnitXCompat.pas"/>
         <DCCReference Include="Agenda.PasswordsTests.pas"/>
+        <DCCReference Include="Agenda.TokensTests.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>

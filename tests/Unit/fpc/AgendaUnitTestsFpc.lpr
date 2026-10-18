@@ -19,7 +19,8 @@ uses
   Interfaces, Forms, GuiTestRunner,
   {$ENDIF}
   Classes, consoletestrunner, testregistry,
-  Agenda.PasswordsTests;
+  Agenda.PasswordsTests,
+  Agenda.TokensTests;
 
 var
   ConsoleApp: TTestRunner;

@@ -218,6 +218,49 @@ Also found: `tools/test_http.sh` stopped the API with `taskkill /IM AgendaApi.ex
 also killed a Delphi build the user had running; it now stops only the executable it started,
 by path.
 
+**Login and refresh tokens** (2026-10-18): `src/Agenda.Auth` (service, no Horse),
+`src/Agenda.Tokens` (ids and refresh tokens, unit-tested), `src/Agenda.AuthDtos`; migrations
+3–5 (`USERS`, `JWT_KEYS`, `REFRESH_TOKENS`); routes `POST /auth/login`, `/auth/refresh`,
+`/auth/logout`, `GET /me`; commands `--create-tenant`, `--create-user` (password from
+`AGENDA_PASSWORD`), `--suspend-tenant`, `--resume-tenant`.
+
+- Catalog: `TCachedTenantCatalog(TDbTenantCatalog)` on the one database; resolver: every tenant
+  `shared`, the factory is the process's.
+- Signing keys: `TTenantJwtKeyRing` on `TSealedJwtKeyStore(TDbJwtKeyStore)`, sealed with
+  `JWT_KEYS_MASTER_KEY` (required unless `DEV_MODE=true`), no legacy secret. A token issued
+  before a restart verifies after it (checked by both runners).
+- Login: every wrong part (tenant, email, password, inactive user) is one 401
+  `invalid_credentials` after the same PBKDF2 work (a dummy hash); a suspended tenant is told
+  only after a right password (403 `tenant_suspended`); a weaker stored hash is replaced.
+- Refresh tokens: `<tenant>.<secret>`, SHA-256 stored, used once; a spent token coming back
+  revokes its family and is logged (`SECURITY ...`); two refreshes racing on one token: one
+  wins, the family is revoked (an `UPDATE ... WHERE USED_AT IS NULL` that must match 1 row).
+- Rate limit: `/auth/` by client address (`AUTH_RATE_LIMIT`, `TClientAddress.Resolve`), the rest
+  by tenant, through the library's `KeyExtractor` and `LimitFor`: it worked as documented.
+
+Checks: 15 unit tests; `tools/http_scenarios.sh` 77 checks (FPC Windows, FPC Linux in Docker),
+plus the restart; OpenAPI valid, promtool ok. Delphi: pending (IDE).
+
+What building it showed about the libraries:
+
+- **Bug (pascal-api-infra-faa):** `EValidationException.CreateFmt(...)` compiles (it is
+  `Exception.CreateFmt`, inherited) and leaves `StatusCode` 0: the error handler answers
+  `HTTP/1.1 0`, which curl refuses ("Unsupported HTTP/1 subversion"), and the access log says
+  `"status":0` (measured on FPC Windows). The same for every `EHttpException` subclass.
+  Neither the library nor its samples call it, so nothing caught it. Fix candidates: override
+  `CreateFmt` in those classes, and/or have `MapException` answer 500 (and log) for a status
+  outside 100–599.
+- **Gap (pascal-api-infra-faa):** a handler can't refuse with a 401 the way the middlewares do:
+  `EHttpException(401)` gets no `WWW-Authenticate` (HTTP requires one), and the error body has
+  no room for a machine-readable code (`TenantRejection` builds `"code"` by hand). The API
+  writes both itself (`SendAuthError`). Candidate: an optional code on `EHttpException`, and a
+  401 exception that adds the challenge.
+- **Known gotcha, hit anyway:** `/auth/*)` in a `(* ... *)` comment closed it ("BEGIN expected").
+  pascal-api-infra-faa's CLAUDE.md records it for its own units; a consumer meets it too.
+- **pascal-db-faa:** a scope released without `Commit` is rolled back, even for a single
+  statement without `StartTransaction`: every write starts and commits its transaction (read
+  in `TScopeTransaction.Destroy`; caught before it bit).
+
 **Shared test kit**: the DUnitX-to-FPCUnit adapter (`*.DUnitXCompat.pas`) and
 `gen_fpc_mirror.py` exist as near-identical copies in pascal-common-faa, -jsonmapper-faa,
 -db-faa, -redis-faa, -api-infra-faa and three other projects; this is the eighth. A

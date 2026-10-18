@@ -67,6 +67,10 @@
         </DelphiCompile>
         <DCCReference Include="..\src\Agenda.Schema.pas"/>
         <DCCReference Include="..\src\Agenda.Database.pas"/>
+        <DCCReference Include="..\src\Agenda.Passwords.pas"/>
+        <DCCReference Include="..\src\Agenda.Tokens.pas"/>
+        <DCCReference Include="..\src\Agenda.Auth.pas"/>
+        <DCCReference Include="..\src\Agenda.AuthDtos.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>
