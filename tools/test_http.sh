@@ -26,7 +26,15 @@ if ! (cd api && "$LAZBUILD" -B AgendaApi.lpi > build.log 2>&1); then
 fi
 cp "$DLL" api/sqlite3.dll
 
-stop() { taskkill //F //IM AgendaApi.exe >/dev/null 2>&1 || pkill -f AgendaApi 2>/dev/null || true; }
+# Only the executable this script built and started (api/AgendaApi.exe), by
+# its path: a Delphi build running from api/Win32/Debug stays up. (taskkill
+# by image name stopped one, 2026-10-18.)
+EXE_WIN="$(cygpath -w "$ROOT/api/AgendaApi.exe" 2>/dev/null || echo "$ROOT/api/AgendaApi.exe")"
+stop() {
+  powershell -NoProfile -Command "Get-Process AgendaApi -ErrorAction SilentlyContinue | Where-Object { \$_.Path -eq '$EXE_WIN' } | Stop-Process -Force" >/dev/null 2>&1 ||
+    pkill -f "$ROOT/api/AgendaApi" 2>/dev/null || true
+  sleep 1
+}
 # start [ARGS]: the server in the background, waiting until it answers.
 start() {
   (cd api && ./AgendaApi.exe "$PORT" "$@" > server.log 2>&1 &)

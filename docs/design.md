@@ -208,6 +208,16 @@ The faster form needs SHA-256's compression function, which is private to
 unit there also needs a string-to-UTF-8-bytes function there (`PaStringToUtf8Bytes` is
 pascal-api-infra-faa's).
 
+Decided with the user (2026-10-18): optimize in pascal-common-faa. **pascal-common-faa 1.18.0**
+adds `PcPbkdf2HmacSha256` (measured there: 210,000 iterations in 0.24–0.28 s, 600,000 in
+0.74–0.88 s) and `PcStringToUtf8Bytes`; `Agenda.Passwords` keeps the stored form, the salt
+and the checks on top of them, with a default of **210,000** iterations (raised later through
+`NeedsRehash`). Its tests dropped the PBKDF2 vectors, which now live in pascal-common-faa.
+
+Also found: `tools/test_http.sh` stopped the API with `taskkill /IM AgendaApi.exe`, which
+also killed a Delphi build the user had running; it now stops only the executable it started,
+by path.
+
 **Shared test kit**: the DUnitX-to-FPCUnit adapter (`*.DUnitXCompat.pas`) and
 `gen_fpc_mirror.py` exist as near-identical copies in pascal-common-faa, -jsonmapper-faa,
 -db-faa, -redis-faa, -api-infra-faa and three other projects; this is the eighth. A

@@ -11,18 +11,22 @@ unit Agenda.Passwords;
   salt (16 bytes) and hash (32 bytes) in Base64url without padding. The
   password is hashed as UTF-8 bytes, the same on both compilers.
 
-  A library candidate (docs/design.md): built on pascal-common-faa's
-  PascalCommon.Crypto (HMAC-SHA256, Base64url, a constant-time comparison)
-  and PascalCommon.Random (the system's random source), and written under
-  the libraries' rules, so it can move to pascal-common-faa as it is.
+  PBKDF2 itself is pascal-common-faa's PcPbkdf2HmacSha256 (1.18.0, written
+  there for this unit: the fast form needs SHA-256's private compression);
+  this unit adds the stored form, the salt (PascalCommon.Random) and the
+  checks. A library candidate (docs/design.md), written under the
+  libraries' rules, so it can move to pascal-common-faa as it is.
 
   - Verify compares in constant time and answers False for anything it can't
     read (another scheme, a cut string): it never raises on stored data.
   - NeedsRehash says when a stored hash used fewer iterations than now: the
     login re-hashes it while it has the password in hand.
-  - A password longer than 64 bytes is hashed once before PBKDF2 starts:
-    HMAC does exactly that to a long key (RFC 2104), so the result is the
-    same, and the cost doesn't grow with the password's length.
+  - The cost doesn't grow with the password's length: a key longer than
+    HMAC's block is hashed once, before the iterations (RFC 2104).
+  - DEFAULT_PASSWORD_ITERATIONS is below OWASP's 600,000 on purpose: pure
+    Pascal SHA-256 runs 600,000 iterations in about 0.8 s (FPC 3.2.2 Win64
+    -O2, measured), 210,000 in about 0.26 s. The stored form keeps the
+    count, so raising it later re-hashes each password at its next login.
   - MAX_PASSWORD_BYTES bounds what the server accepts at all.
 
   Not here: the policy (minimum length, which characters), and making an
@@ -35,8 +39,8 @@ uses
   SysUtils;
 
 const
-  /// OWASP's 2023 figure for PBKDF2-HMAC-SHA256.
-  DEFAULT_PASSWORD_ITERATIONS = 600000;
+  /// About 0.26 s per hash (see above); OWASP's 2023 figure is 600,000.
+  DEFAULT_PASSWORD_ITERATIONS = 210000;
   /// A stored hash asking for more is refused (it would hold the server).
   MAX_PASSWORD_ITERATIONS = 10000000;
   MAX_PASSWORD_BYTES = 1024;
@@ -49,10 +53,6 @@ type
 
   TPasswords = record
   public
-    /// PBKDF2-HMAC-SHA256 itself (RFC 8018 section 5.2). Raises
-    /// EArgumentException for fewer than 1 iteration or a length below 1.
-    class function Pbkdf2Sha256(const APassword, ASalt: TBytes;
-      AIterations, ALength: Integer): TBytes; static;
     /// A new stored form, with a new random salt. Raises EPasswordError for
     /// an empty password or one longer than MAX_PASSWORD_BYTES (UTF-8).
     class function Hash(const APassword: string;
@@ -70,12 +70,14 @@ type
 implementation
 
 uses
+  PascalCommon.Version,
   PascalCommon.Crypto,
   PascalCommon.Random,
-  PascalApi.Text;
+  PascalCommon.Utf8;
 
-const
-  HMAC_BLOCK_BYTES = 64;
+{$IF PASCALCOMMON_VERSION < 11800}
+  {$MESSAGE FATAL 'Agenda.Passwords needs pascal-common-faa 1.18.0 or later (PcPbkdf2HmacSha256)'}
+{$IFEND}
 
 type
   TStoredHash = record
@@ -84,60 +86,9 @@ type
     Hash: TBytes;
   end;
 
-class function TPasswords.Pbkdf2Sha256(const APassword, ASalt: TBytes;
-  AIterations, ALength: Integer): TBytes;
-var
-  LKey, LBlock, LNext: TBytes;
-  LU, LT: TPcSha256Digest;
-  LBlocks, LBlockIndex, LDone, LCount, I, J: Integer;
-begin
-  if AIterations < 1 then
-    raise EArgumentException.Create('PBKDF2: iterations must be 1 or more.');
-  if ALength < 1 then
-    raise EArgumentException.Create('PBKDF2: length must be 1 or more.');
-  // HMAC hashes a key longer than its block first: doing it once here gives
-  // the same result and keeps every iteration at one block of key.
-  if Length(APassword) > HMAC_BLOCK_BYTES then
-    LKey := PcDigestToBytes(PcSha256(APassword))
-  else
-    LKey := APassword;
-  Result := nil;
-  SetLength(Result, ALength);
-  LBlocks := (ALength + 31) div 32;
-  LDone := 0;
-  for LBlockIndex := 1 to LBlocks do
-  begin
-    // U1 = HMAC(P, S || INT(i)), i as 32 bits big-endian.
-    LBlock := nil;
-    SetLength(LBlock, Length(ASalt) + 4);
-    if Length(ASalt) > 0 then
-      Move(ASalt[0], LBlock[0], Length(ASalt));
-    LBlock[Length(ASalt)] := Byte(LBlockIndex shr 24);
-    LBlock[Length(ASalt) + 1] := Byte(LBlockIndex shr 16);
-    LBlock[Length(ASalt) + 2] := Byte(LBlockIndex shr 8);
-    LBlock[Length(ASalt) + 3] := Byte(LBlockIndex);
-    LU := PcHmacSha256(LKey, LBlock);
-    LT := LU;
-    LNext := nil;
-    SetLength(LNext, 32);
-    for I := 2 to AIterations do
-    begin
-      Move(LU[0], LNext[0], 32);
-      LU := PcHmacSha256(LKey, LNext);
-      for J := 0 to 31 do
-        LT[J] := LT[J] xor LU[J];
-    end;
-    LCount := ALength - LDone;
-    if LCount > 32 then
-      LCount := 32;
-    Move(LT[0], Result[LDone], LCount);
-    Inc(LDone, LCount);
-  end;
-end;
-
 function PasswordBytes(const APassword: string): TBytes;
 begin
-  Result := PaStringToUtf8Bytes(APassword);
+  Result := PcStringToUtf8Bytes(APassword);
   if Length(Result) = 0 then
     raise EPasswordError.Create('The password is empty.');
   if Length(Result) > MAX_PASSWORD_BYTES then
@@ -152,7 +103,7 @@ begin
       [MAX_PASSWORD_ITERATIONS]);
   Result := '$' + PASSWORD_SCHEME + '$i=' + IntToStr(AIterations) + '$' +
     PcBase64UrlEncode(ASalt) + '$' +
-    PcBase64UrlEncode(Pbkdf2Sha256(PasswordBytes(APassword), ASalt, AIterations,
+    PcBase64UrlEncode(PcPbkdf2HmacSha256(PasswordBytes(APassword), ASalt, AIterations,
       PASSWORD_HASH_BYTES));
 end;
 
@@ -228,10 +179,10 @@ begin
   Result := False;
   if not TryParse(AStored, LStored) then
     Exit;
-  LPassword := PaStringToUtf8Bytes(APassword);
+  LPassword := PcStringToUtf8Bytes(APassword);
   if (Length(LPassword) = 0) or (Length(LPassword) > MAX_PASSWORD_BYTES) then
     Exit;
-  Result := PcSameBytes(Pbkdf2Sha256(LPassword, LStored.Salt, LStored.Iterations,
+  Result := PcSameBytes(PcPbkdf2HmacSha256(LPassword, LStored.Salt, LStored.Iterations,
     PASSWORD_HASH_BYTES), LStored.Hash);
 end;
 
