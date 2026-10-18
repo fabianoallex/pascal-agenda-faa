@@ -175,27 +175,6 @@ var
 
 { Handlers }
 
-// {"error": ..., "code": ...}; a 401 also names its scheme, as HTTP requires.
-procedure SendAuthError(ARes: THorseResponse; E: EAuthError);
-var
-  LWriter: TJsonWriter;
-begin
-  LWriter := TJsonWriter.Create;
-  try
-    LWriter.BeginObject;
-    LWriter.Name('error');
-    LWriter.WriteString(E.Message);
-    LWriter.Name('code');
-    LWriter.WriteString(E.Code);
-    LWriter.EndObject;
-    if E.Status = 401 then
-      ARes.AddHeader('WWW-Authenticate', BearerChallenge(False));
-    TJsonSend.Send(ARes, LWriter.ToString, E.Status);
-  finally
-    LWriter.Free;
-  end;
-end;
-
 procedure SendTokens(ARes: THorseResponse; const ATokens: TAuthTokens);
 var
   LDto: TTokensResponse;
@@ -215,9 +194,9 @@ end;
 function Required(const AValue, AName: string): string;
 begin
   if Trim(AValue) = '' then
-    // Not CreateFmt: Exception's, inherited, leaves StatusCode 0 (an invalid
-    // "HTTP/1.1 0" answer; measured, docs/design.md).
-    raise EValidationException.Create(Format('"%s" is required.', [AName]));
+    // CreateFmt gives a 400 since pascal-api-infra-faa's f1d0aaf; before, it
+    // left the status 0 ("HTTP/1.1 0", docs/design.md).
+    raise EValidationException.CreateFmt('"%s" is required.', [AName]);
   Result := AValue;
 end;
 
@@ -226,13 +205,8 @@ var
   LBody: ILoginRequest;
 begin
   LBody := TJsonMapper.Shared.FromJson<ILoginRequest>(AReq.Body);
-  try
-    SendTokens(ARes, GAuth.Login(Required(LBody.GetTenant, 'tenant'),
-      Required(LBody.GetEmail, 'email'), Required(LBody.GetPassword, 'password')));
-  except
-    on E: EAuthError do
-      SendAuthError(ARes, E);
-  end;
+  SendTokens(ARes, GAuth.Login(Required(LBody.GetTenant, 'tenant'),
+    Required(LBody.GetEmail, 'email'), Required(LBody.GetPassword, 'password')));
 end;
 
 procedure PostRefresh(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
@@ -240,12 +214,7 @@ var
   LBody: IRefreshRequest;
 begin
   LBody := TJsonMapper.Shared.FromJson<IRefreshRequest>(AReq.Body);
-  try
-    SendTokens(ARes, GAuth.Refresh(Required(LBody.GetRefreshToken, 'refreshToken')));
-  except
-    on E: EAuthError do
-      SendAuthError(ARes, E);
-  end;
+  SendTokens(ARes, GAuth.Refresh(Required(LBody.GetRefreshToken, 'refreshToken')));
 end;
 
 procedure PostLogout(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);

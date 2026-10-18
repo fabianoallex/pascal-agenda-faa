@@ -25,7 +25,12 @@ unit Agenda.Auth;
   scenarios). Logout revokes the family; it answers the same for any token.
 
   Every query on a tenant's rows goes through TTenantFilter.Prepare
-  (pascal-api-infra-faa's rule): the tenant comes from the catalog first. }
+  (pascal-api-infra-faa's rule): the tenant comes from the catalog first.
+
+  Refusals are pascal-api-infra-faa's exceptions with a code
+  (EUnauthorizedException, EHttpException 403), answered by its error
+  handler with "error" and "code" members, a 401 with WWW-Authenticate. Until
+  that library's f1d0aaf the routes wrote them by hand (docs/design.md). }
 
 interface
 
@@ -43,17 +48,6 @@ const
   CODE_TENANT_SUSPENDED = 'tenant_suspended';
 
 type
-  /// A refusal the routes answer as {"error": Message, "code": Code}.
-  EAuthError = class(Exception)
-  private
-    FStatus: Integer;
-    FCode: string;
-  public
-    constructor Create(AStatus: Integer; const ACode, AMessage: string);
-    property Status: Integer read FStatus;
-    property Code: string read FCode;
-  end;
-
   /// Signs JWT claims (the API passes the JWT middleware's key ring).
   TSignClaimsFunc = function(const AClaims: string): string of object;
 
@@ -130,28 +124,20 @@ const
   MSG_INVALID_CREDENTIALS = 'Invalid email or password.';
   MSG_INVALID_REFRESH_TOKEN = 'Invalid or expired refresh token.';
 
-{ EAuthError }
-
-constructor EAuthError.Create(AStatus: Integer; const ACode, AMessage: string);
+function InvalidCredentials: EHttpException;
 begin
-  inherited Create(AMessage);
-  FStatus := AStatus;
-  FCode := ACode;
+  Result := EUnauthorizedException.Create(MSG_INVALID_CREDENTIALS, CODE_INVALID_CREDENTIALS);
 end;
 
-function InvalidCredentials: EAuthError;
+function InvalidRefreshToken: EHttpException;
 begin
-  Result := EAuthError.Create(401, CODE_INVALID_CREDENTIALS, MSG_INVALID_CREDENTIALS);
+  Result := EUnauthorizedException.Create(MSG_INVALID_REFRESH_TOKEN, CODE_INVALID_REFRESH_TOKEN);
 end;
 
-function InvalidRefreshToken: EAuthError;
+function TenantSuspended: EHttpException;
 begin
-  Result := EAuthError.Create(401, CODE_INVALID_REFRESH_TOKEN, MSG_INVALID_REFRESH_TOKEN);
-end;
-
-function TenantSuspended: EAuthError;
-begin
-  Result := EAuthError.Create(403, CODE_TENANT_SUSPENDED, TApiMessages.Current.TenantSuspended);
+  Result := EHttpException.Create(403, TApiMessages.Current.TenantSuspended,
+    CODE_TENANT_SUSPENDED);
 end;
 
 { TAuthOptions }
@@ -421,8 +407,8 @@ begin
     Result := Issue(LInfo, LUser, LQuery, LFamily);
     LTx.Commit;
   except
-    on E: EAuthError do
-      raise;
+    on E: EHttpException do
+      raise; // the race: already rolled back
     on E: Exception do
     begin
       LTx.Rollback;

@@ -17,7 +17,8 @@ git submodule update --init      # no --recursive: the libraries' own external/ 
 ```
 
 The libraries are pinned in `external/`, one copy each: pascal-common-faa 1.18.0,
-pascal-jsonmapper-faa 0.6.0, pascal-db-faa 0.15.0, pascal-api-infra-faa 0.16.0, Horse 3.3.12.
+pascal-jsonmapper-faa 0.6.0, pascal-db-faa 0.15.0, pascal-api-infra-faa at `f1d0aaf` (after 0.16.0: the error codes
+and the `CreateFmt` fix, unreleased), Horse 3.3.12.
 
 ## Building and testing
 
