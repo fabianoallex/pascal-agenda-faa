@@ -1,6 +1,6 @@
 # pascal-agenda-faa — design
 
-Status: scope agreed with the user on 2026-10-18. Nothing built yet.
+Status: scope agreed with the user on 2026-10-18. M0 built (see "Progress").
 
 ## Why this application exists
 
@@ -149,3 +149,33 @@ two libraries would share goes to pascal-common-faa.
 
 When a candidate is found or promoted, record it here and in pascal-api-infra-faa's
 `docs/plan.md` ("Candidates from pascal-agenda-faa").
+
+## Progress
+
+### M0 — skeleton (2026-10-18)
+
+`api/AgendaApi.dpr` (one source, `.lpi` and `.dproj`), `src/Agenda.Schema` (SQL by name,
+migrations: `SCHEMA_MIGRATIONS`, `TENANTS`), `src/Agenda.Database` (SQLite through
+pascal-db-faa, readiness check). Middlewares: error handler, logger (JSON), metrics. Routes:
+`/health/live`, `/health/ready` (database), `/metrics`, `/swagger`. `tools/http_scenarios.sh`
+(15 checks) plus a second start that must apply no migration.
+
+| Build | Result |
+|---|---|
+| FPC 3.2.2, Windows (lazbuild) | 15/15, second start ok |
+| FPC 3.2.2, Linux (Docker, plain fpc) | 15/15, OpenAPI valid, promtool ok, second start ok |
+| Delphi 12, Win32 / Win64 | pending (IDE) |
+
+What setting it up as a consumer showed:
+
+- The `.lpi` naming every package with `Prefer="True"` worked as documented: the build log
+  has no path inside `external/pascal-api-infra-faa/external` (the library's own, empty,
+  submodules).
+- The middlewares' `{$I pascalapi.inc}` needs pascal-api-infra-faa's `src` as an include
+  path; the guide says so (`docs/guide/getting-started.md`), it was missed here first.
+- `promtool check metrics` fails on any application that uses pascal-db-faa's pool
+  (`db_client_connection_count`, the "_count" lint). The library's
+  `tools/promtool_check.sh`, which accepts only that lint, is used straight from the
+  submodule. Its observability guide could say a consumer can do that.
+- No unit tests yet: M0 has no logic of its own. The test project (DUnitX masters, FPCUnit
+  mirrors) comes with M1's first logic (password hashing).

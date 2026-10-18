@@ -1,0 +1,15 @@
+[submodule "external/pascal-common-faa"]
+	path = external/pascal-common-faa
+	url = https://github.com/fabianoallex/pascal-common-faa.git
+[submodule "external/pascal-jsonmapper-faa"]
+	path = external/pascal-jsonmapper-faa
+	url = https://github.com/fabianoallex/pascal-jsonmapper-faa.git
+[submodule "external/pascal-db-faa"]
+	path = external/pascal-db-faa
+	url = https://github.com/fabianoallex/pascal-db-faa.git
+[submodule "external/pascal-api-infra-faa"]
+	path = external/pascal-api-infra-faa
+	url = https://github.com/fabianoallex/pascal-api-infra-faa.git
+[submodule "external/horse"]
+	path = external/horse
+	url = https://github.com/HashLoad/horse.git

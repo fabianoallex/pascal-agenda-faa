@@ -1,0 +1,29 @@
+# Build output
+lib/
+*.exe
+*.dcu
+*.o
+*.ppu
+*.rsm
+*.res
+*.local
+*.identcache
+*.dproj.local
+**/Win32/
+**/Win64/
+__history/
+__recovery/
+build.log
+/api/AgendaApi
+
+# Runtime
+*.sqlite
+*.log
+.env
+api/sqlite3.dll
+
+# Local dependencies (sqlite.org's sqlite3.dll for FPC on Windows)
+.deps/
+
+# lazbuild may leave one when building a package alone
+packagefiles.xml
