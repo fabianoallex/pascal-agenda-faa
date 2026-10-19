@@ -25,9 +25,13 @@
 interface
 
 uses
+  SysUtils, // ExceptClass
   DUnitX.TestFramework;
 
 type
+  /// Same name and signature as FPCUnit's TRunMethod.
+  TRunMethod = procedure of object;
+
   TAssert = class
   public
     class procedure AssertEquals(const AExpected, AActual: string); overload;
@@ -49,6 +53,10 @@ type
     class procedure AssertFalse(const AMessage: string; ACondition: Boolean); overload;
 
     class procedure Fail(const AMessage: string);
+
+    class procedure AssertException(AExceptionClass: ExceptClass; AMethod: TRunMethod); overload;
+    class procedure AssertException(const AMessage: string; AExceptionClass: ExceptClass;
+      AMethod: TRunMethod); overload;
   end;
 
 implementation
@@ -137,6 +145,17 @@ end;
 class procedure TAssert.Fail(const AMessage: string);
 begin
   Assert.Fail(AMessage);
+end;
+
+class procedure TAssert.AssertException(AExceptionClass: ExceptClass; AMethod: TRunMethod);
+begin
+  Assert.WillRaise(AMethod, AExceptionClass);
+end;
+
+class procedure TAssert.AssertException(const AMessage: string; AExceptionClass: ExceptClass;
+  AMethod: TRunMethod);
+begin
+  Assert.WillRaise(AMethod, AExceptionClass, AMessage);
 end;
 
 end.

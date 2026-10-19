@@ -440,6 +440,11 @@ libraries); 323 HTTP checks (4 new) on FPC Windows and Linux, OpenAPI valid; Del
 pascal-common-faa v1.20.0, pascal-jsonmapper-faa v0.7.0, pascal-db-faa v0.16.0 and
 pascal-api-infra-faa v0.19.0 (each green on Delphi 12 Win32/Win64 too: 342, 135, 217 and 380
 unit tests; api-infra's samples 195 + 95 + 107 + 31 checks); the submodules pin those tags.
+pascal-api-infra-faa v0.19.1 (2026-10-19) followed: a sample and a guide for the refresh tokens,
+which found a race in `TRefreshTokens.Rotate` (the loser's revoke could land before the
+winner stored its next token, leaving a live token of a revoked family; now the winner reads the
+spent token again and refuses). This API pins it: 31 unit tests and 323 HTTP checks on FPC
+Windows and Linux.
 
 **Shared test kit**: the DUnitX-to-FPCUnit adapter (`*.DUnitXCompat.pas`) and
 `gen_fpc_mirror.py` exist as near-identical copies in pascal-common-faa, -jsonmapper-faa,
