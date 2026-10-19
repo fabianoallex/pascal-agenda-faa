@@ -340,7 +340,8 @@ on FPC Windows.
 
 Checks: 28 unit tests (4 new, the phone) on FPC Windows and Linux; 247 HTTP checks (94 new in
 `tools/http_scenarios_people.sh`) on FPC Windows and Linux (Docker), plus the restart; OpenAPI
-valid, promtool ok. **Delphi 12 Win32/Win64: not yet run** for this step.
+valid, promtool ok. Delphi 12 Win32/Win64: 28 unit tests (0 leaks) and 247 checks each, with the
+restart.
 
 What it showed about the libraries:
 
