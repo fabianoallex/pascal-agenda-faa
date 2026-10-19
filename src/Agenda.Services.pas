@@ -40,6 +40,10 @@ type
     function GetDurationMinutes: Integer;
     function GetBufferMinutes: IOptInteger;
     function GetPrice: Currency;
+    property Name: string read GetName;
+    property DurationMinutes: Integer read GetDurationMinutes;
+    property BufferMinutes: IOptInteger read GetBufferMinutes;
+    property Price: Currency read GetPrice;
   end;
 
   /// PATCH: every member may be absent (left as it is); none may be null.
@@ -50,10 +54,27 @@ type
     function GetBufferMinutes: IOptInteger;
     function GetPrice: IOptCurrency;
     function GetActive: IOptBoolean;
+    property Name: IOptString read GetName;
+    property DurationMinutes: IOptInteger read GetDurationMinutes;
+    property BufferMinutes: IOptInteger read GetBufferMinutes;
+    property Price: IOptCurrency read GetPrice;
+    property Active: IOptBoolean read GetActive;
   end;
 
   IService = interface(IResponseDTOBase)
     ['{3FDC5BEC-FEDB-48F4-9235-8A758D66FCD3}']
+    function GetId: string;
+    function GetName: string;
+    function GetDurationMinutes: Integer;
+    function GetBufferMinutes: Integer;
+    function GetPrice: Currency;
+    function GetActive: Boolean;
+    property Id: string read GetId;
+    property Name: string read GetName;
+    property DurationMinutes: Integer read GetDurationMinutes;
+    property BufferMinutes: Integer read GetBufferMinutes;
+    property Price: Currency read GetPrice;
+    property Active: Boolean read GetActive;
   end;
 
   /// GET /services: page, limit, orderBy, search (in the name, ignoring case
@@ -61,7 +82,7 @@ type
   IServiceFind = interface(IFindPaginationDTOBase)
     ['{47937802-211D-4792-B57C-0731C1D70C8A}']
     function GetActive: IOptBoolean;
-    procedure SetActive(const AValue: IOptBoolean);
+    property Active: IOptBoolean read GetActive;
   end;
 
 {$M+}
@@ -109,6 +130,13 @@ type
     FDurationMinutes, FBufferMinutes: Integer;
     FPrice: Currency;
     FActive: Boolean;
+  public
+    function GetId: string;
+    function GetName: string;
+    function GetDurationMinutes: Integer;
+    function GetBufferMinutes: Integer;
+    function GetPrice: Currency;
+    function GetActive: Boolean;
   published
     property Id: string read FId write FId;
     property Name: string read FName write FName;
@@ -123,7 +151,6 @@ type
     FActive: IOptBoolean;
   public
     function GetActive: IOptBoolean;
-    procedure SetActive(const AValue: IOptBoolean);
   published
     property Active: IOptBoolean read FActive write FActive;
   end;
@@ -229,9 +256,34 @@ begin
   Result := TOptionals.Safe(FActive);
 end;
 
-procedure TServiceFind.SetActive(const AValue: IOptBoolean);
+function TService.GetId: string;
 begin
-  FActive := AValue;
+  Result := FId;
+end;
+
+function TService.GetName: string;
+begin
+  Result := FName;
+end;
+
+function TService.GetDurationMinutes: Integer;
+begin
+  Result := FDurationMinutes;
+end;
+
+function TService.GetBufferMinutes: Integer;
+begin
+  Result := FBufferMinutes;
+end;
+
+function TService.GetPrice: Currency;
+begin
+  Result := FPrice;
+end;
+
+function TService.GetActive: Boolean;
+begin
+  Result := FActive;
 end;
 
 { validation }
@@ -298,15 +350,15 @@ function Filtered(const ASql: TSQLResult; const AFind: IServiceFind): TSQLResult
 begin
   Result := ASql
     .ProcessTag('SEARCH', AFind.Search.HasValue and (FoldForSearch(AFind.Search.Value) <> ''))
-    .ProcessTag('ACTIVE', AFind.GetActive.HasValue);
+    .ProcessTag('ACTIVE', AFind.Active.HasValue);
 end;
 
 procedure BindFilters(const AQuery: IQuery; const AFind: IServiceFind);
 begin
   if AFind.Search.HasValue and (FoldForSearch(AFind.Search.Value) <> '') then
     AQuery.Params.Strings['SEARCH'] := LikeContains(FoldForSearch(AFind.Search.Value));
-  if AFind.GetActive.HasValue then
-    AQuery.Params.Integers['ACTIVE'] := Ord(AFind.GetActive.Value);
+  if AFind.Active.HasValue then
+    AQuery.Params.Integers['ACTIVE'] := Ord(AFind.Active.Value);
 end;
 
 function TServiceRepository.FindPage(const AFind: IServiceFind;
@@ -376,11 +428,11 @@ var
   LQuery: IQuery;
   LTx: IScopeTransaction;
 begin
-  LName := CheckName(AService.GetName);
-  CheckDuration(AService.GetDurationMinutes);
-  LBuffer := AService.GetBufferMinutes.ValueOr(0);
+  LName := CheckName(AService.Name);
+  CheckDuration(AService.DurationMinutes);
+  LBuffer := AService.BufferMinutes.ValueOr(0);
   CheckBuffer(LBuffer);
-  LCents := CheckPrice(AService.GetPrice);
+  LCents := CheckPrice(AService.Price);
   LId := NewId;
   LNow := TJwt.UnixNow;
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
@@ -390,7 +442,7 @@ begin
     LQuery.Params.Strings['ID'] := LId;
     LQuery.Params.Strings['NAME'] := LName;
     LQuery.Params.Strings['NAME_KEY'] := FoldForSearch(LName);
-    LQuery.Params.Integers['DURATION_MINUTES'] := AService.GetDurationMinutes;
+    LQuery.Params.Integers['DURATION_MINUTES'] := AService.DurationMinutes;
     LQuery.Params.Integers['BUFFER_MINUTES'] := LBuffer;
     LQuery.Params.Int64s['PRICE_CENTS'] := LCents;
     LQuery.Params.Int64s['CREATED_AT'] := LNow;
@@ -413,37 +465,37 @@ var
   LRows: Int64;
 begin
   LName := '';
-  if APatch.GetName.HasValue then
-    LName := CheckName(APatch.GetName.Value);
-  if APatch.GetDurationMinutes.HasValue then
-    CheckDuration(APatch.GetDurationMinutes.Value);
-  if APatch.GetBufferMinutes.HasValue then
-    CheckBuffer(APatch.GetBufferMinutes.Value);
+  if APatch.Name.HasValue then
+    LName := CheckName(APatch.Name.Value);
+  if APatch.DurationMinutes.HasValue then
+    CheckDuration(APatch.DurationMinutes.Value);
+  if APatch.BufferMinutes.HasValue then
+    CheckBuffer(APatch.BufferMinutes.Value);
   LCents := 0;
-  if APatch.GetPrice.HasValue then
-    LCents := CheckPrice(APatch.GetPrice.Value);
+  if APatch.Price.HasValue then
+    LCents := CheckPrice(APatch.Price.Value);
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
   LTx.StartTransaction;
   try
     TTenantFilter.Prepare(LQuery, FScope, FScope.Factory.SqlLoader['SERVICE.UPDATE']
-      .ProcessTag('NAME', APatch.GetName.HasValue)
-      .ProcessTag('DURATION', APatch.GetDurationMinutes.HasValue)
-      .ProcessTag('BUFFER', APatch.GetBufferMinutes.HasValue)
-      .ProcessTag('PRICE', APatch.GetPrice.HasValue)
-      .ProcessTag('ACTIVE', APatch.GetActive.HasValue));
+      .ProcessTag('NAME', APatch.Name.HasValue)
+      .ProcessTag('DURATION', APatch.DurationMinutes.HasValue)
+      .ProcessTag('BUFFER', APatch.BufferMinutes.HasValue)
+      .ProcessTag('PRICE', APatch.Price.HasValue)
+      .ProcessTag('ACTIVE', APatch.Active.HasValue));
     LQuery.Params.Strings['ID'] := AId;
     LQuery.Params.Int64s['UPDATED_AT'] := TJwt.UnixNow;
-    if APatch.GetName.HasValue then
+    if APatch.Name.HasValue then
     begin
       LQuery.Params.Strings['NAME'] := LName;
       LQuery.Params.Strings['NAME_KEY'] := FoldForSearch(LName);
     end;
-    LQuery.Params.OptIntegers['DURATION_MINUTES'] := APatch.GetDurationMinutes;
-    LQuery.Params.OptIntegers['BUFFER_MINUTES'] := APatch.GetBufferMinutes;
-    if APatch.GetPrice.HasValue then
+    LQuery.Params.OptIntegers['DURATION_MINUTES'] := APatch.DurationMinutes;
+    LQuery.Params.OptIntegers['BUFFER_MINUTES'] := APatch.BufferMinutes;
+    if APatch.Price.HasValue then
       LQuery.Params.Int64s['PRICE_CENTS'] := LCents;
-    if APatch.GetActive.HasValue then
-      LQuery.Params.Integers['ACTIVE'] := Ord(APatch.GetActive.Value);
+    if APatch.Active.HasValue then
+      LQuery.Params.Integers['ACTIVE'] := Ord(APatch.Active.Value);
     LRows := LQuery.ExecSql;
     LTx.Commit;
   except

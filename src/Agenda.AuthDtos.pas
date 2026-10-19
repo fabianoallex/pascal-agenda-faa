@@ -18,19 +18,39 @@ type
     function GetTenant: string;
     function GetEmail: string;
     function GetPassword: string;
+    property Tenant: string read GetTenant;
+    property Email: string read GetEmail;
+    property Password: string read GetPassword;
   end;
 
   IRefreshRequest = interface(IInsertDTOBase)
     ['{35A5146D-690E-4564-ADC9-A6E864D58268}']
     function GetRefreshToken: string;
+    property RefreshToken: string read GetRefreshToken;
   end;
 
   ITokensResponse = interface(IResponseDTOBase)
     ['{1D4DFF5C-B2DA-43E4-BD57-BC0878D37B2E}']
+    function GetAccessToken: string;
+    function GetTokenType: string;
+    function GetExpiresIn: Int64;
+    function GetRefreshToken: string;
+    property AccessToken: string read GetAccessToken;
+    property TokenType: string read GetTokenType;
+    property ExpiresIn: Int64 read GetExpiresIn;
+    property RefreshToken: string read GetRefreshToken;
   end;
 
   IMeResponse = interface(IResponseDTOBase)
     ['{92703576-D254-4FA5-9BD8-8AC6489ED73E}']
+    function GetId: string;
+    function GetEmail: string;
+    function GetRole: string;
+    function GetTenant: string;
+    property Id: string read GetId;
+    property Email: string read GetEmail;
+    property Role: string read GetRole;
+    property Tenant: string read GetTenant;
   end;
 
 {$M+}
@@ -60,6 +80,11 @@ type
   private
     FAccessToken, FTokenType, FRefreshToken: string;
     FExpiresIn: Int64;
+  public
+    function GetAccessToken: string;
+    function GetTokenType: string;
+    function GetExpiresIn: Int64;
+    function GetRefreshToken: string;
   published
     property AccessToken: string read FAccessToken write FAccessToken;
     property TokenType: string read FTokenType write FTokenType;
@@ -70,6 +95,11 @@ type
   TMeResponse = class(TResponseDTOBase, IMeResponse)
   private
     FId, FEmail, FRole, FTenant: string;
+  public
+    function GetId: string;
+    function GetEmail: string;
+    function GetRole: string;
+    function GetTenant: string;
   published
     property Id: string read FId write FId;
     property Email: string read FEmail write FEmail;
@@ -102,6 +132,46 @@ end;
 function TRefreshRequest.GetRefreshToken: string;
 begin
   Result := FRefreshToken;
+end;
+
+function TTokensResponse.GetAccessToken: string;
+begin
+  Result := FAccessToken;
+end;
+
+function TTokensResponse.GetTokenType: string;
+begin
+  Result := FTokenType;
+end;
+
+function TTokensResponse.GetExpiresIn: Int64;
+begin
+  Result := FExpiresIn;
+end;
+
+function TTokensResponse.GetRefreshToken: string;
+begin
+  Result := FRefreshToken;
+end;
+
+function TMeResponse.GetId: string;
+begin
+  Result := FId;
+end;
+
+function TMeResponse.GetEmail: string;
+begin
+  Result := FEmail;
+end;
+
+function TMeResponse.GetRole: string;
+begin
+  Result := FRole;
+end;
+
+function TMeResponse.GetTenant: string;
+begin
+  Result := FTenant;
 end;
 
 initialization

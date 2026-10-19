@@ -29,6 +29,8 @@ type
     ['{70887D01-50F7-4B0A-A3ED-22EA9B3B4D71}']
     function GetName: string;
     function GetEmail: IOptString;
+    property Name: string read GetName;
+    property Email: IOptString read GetEmail;
   end;
 
   IProfessionalPatch = interface(IUpdateDTOBase)
@@ -36,16 +38,27 @@ type
     function GetName: IOptString;
     function GetEmail: IOptNullString;
     function GetActive: IOptBoolean;
+    property Name: IOptString read GetName;
+    property Email: IOptNullString read GetEmail;
+    property Active: IOptBoolean read GetActive;
   end;
 
   IProfessional = interface(IResponseDTOBase)
     ['{AAF886A5-D509-4176-AFA1-976DB4DD95F8}']
+    function GetId: string;
+    function GetName: string;
+    function GetEmail: INullString;
+    function GetActive: Boolean;
+    property Id: string read GetId;
+    property Name: string read GetName;
+    property Email: INullString read GetEmail;
+    property Active: Boolean read GetActive;
   end;
 
   IProfessionalFind = interface(IFindPaginationDTOBase)
     ['{9331C7F3-0740-445F-9AA0-AC337F1FC9DE}']
     function GetActive: IOptBoolean;
-    procedure SetActive(const AValue: IOptBoolean);
+    property Active: IOptBoolean read GetActive;
   end;
 
 {$M+}
@@ -81,6 +94,11 @@ type
     FId, FName: string;
     FEmail: INullString;
     FActive: Boolean;
+  public
+    function GetId: string;
+    function GetName: string;
+    function GetEmail: INullString;
+    function GetActive: Boolean;
   published
     property Id: string read FId write FId;
     property Name: string read FName write FName;
@@ -93,7 +111,6 @@ type
     FActive: IOptBoolean;
   public
     function GetActive: IOptBoolean;
-    procedure SetActive(const AValue: IOptBoolean);
   published
     property Active: IOptBoolean read FActive write FActive;
   end;
@@ -176,9 +193,24 @@ begin
   Result := TOptionals.Safe(FActive);
 end;
 
-procedure TProfessionalFind.SetActive(const AValue: IOptBoolean);
+function TProfessional.GetId: string;
 begin
-  FActive := AValue;
+  Result := FId;
+end;
+
+function TProfessional.GetName: string;
+begin
+  Result := FName;
+end;
+
+function TProfessional.GetEmail: INullString;
+begin
+  Result := TOptionals.Safe(FEmail);
+end;
+
+function TProfessional.GetActive: Boolean;
+begin
+  Result := FActive;
 end;
 
 { validation }
@@ -227,15 +259,15 @@ end;
 
 function Filtered(const ASql: TSQLResult; const AFind: IProfessionalFind): TSQLResult;
 begin
-  Result := ASql.ProcessTag('SEARCH', HasSearch(AFind)).ProcessTag('ACTIVE', AFind.GetActive.HasValue);
+  Result := ASql.ProcessTag('SEARCH', HasSearch(AFind)).ProcessTag('ACTIVE', AFind.Active.HasValue);
 end;
 
 procedure BindFilters(const AQuery: IQuery; const AFind: IProfessionalFind);
 begin
   if HasSearch(AFind) then
     AQuery.Params.Strings['SEARCH'] := LikeContains(FoldForSearch(AFind.Search.Value));
-  if AFind.GetActive.HasValue then
-    AQuery.Params.Integers['ACTIVE'] := Ord(AFind.GetActive.Value);
+  if AFind.Active.HasValue then
+    AQuery.Params.Integers['ACTIVE'] := Ord(AFind.Active.Value);
 end;
 
 function TProfessionalRepository.FindPage(const AFind: IProfessionalFind;
@@ -304,9 +336,9 @@ var
   LQuery: IQuery;
   LTx: IScopeTransaction;
 begin
-  LName := CheckName(AProfessional.GetName);
-  if AProfessional.GetEmail.HasValue then
-    LEmail := TOptNullString.From(CheckEmail(AProfessional.GetEmail.Value))
+  LName := CheckName(AProfessional.Name);
+  if AProfessional.Email.HasValue then
+    LEmail := TOptNullString.From(CheckEmail(AProfessional.Email.Value))
   else
     LEmail := TOptNullString.Null;
   LId := NewId;
@@ -340,29 +372,29 @@ var
   LRows: Int64;
 begin
   LName := '';
-  if APatch.GetName.HasValue then
-    LName := CheckName(APatch.GetName.Value);
+  if APatch.Name.HasValue then
+    LName := CheckName(APatch.Name.Value);
   // Absent: left; null: cleared; a value: checked and replaced.
-  LEmail := APatch.GetEmail;
+  LEmail := APatch.Email;
   if LEmail.HasValue and not LEmail.IsNull then
     LEmail := TOptNullString.From(CheckEmail(LEmail.Value));
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
   LTx.StartTransaction;
   try
     TTenantFilter.Prepare(LQuery, FScope, FScope.Factory.SqlLoader['PROFESSIONAL.UPDATE']
-      .ProcessTag('NAME', APatch.GetName.HasValue)
+      .ProcessTag('NAME', APatch.Name.HasValue)
       .ProcessTag('EMAIL', LEmail.HasValue)
-      .ProcessTag('ACTIVE', APatch.GetActive.HasValue));
+      .ProcessTag('ACTIVE', APatch.Active.HasValue));
     LQuery.Params.Strings['ID'] := AId;
     LQuery.Params.Int64s['UPDATED_AT'] := TJwt.UnixNow;
-    if APatch.GetName.HasValue then
+    if APatch.Name.HasValue then
     begin
       LQuery.Params.Strings['NAME'] := LName;
       LQuery.Params.Strings['NAME_KEY'] := FoldForSearch(LName);
     end;
     LQuery.Params.OptNullStrings['EMAIL'] := LEmail;
-    if APatch.GetActive.HasValue then
-      LQuery.Params.Integers['ACTIVE'] := Ord(APatch.GetActive.Value);
+    if APatch.Active.HasValue then
+      LQuery.Params.Integers['ACTIVE'] := Ord(APatch.Active.Value);
     LRows := LQuery.ExecSql;
     LTx.Commit;
   except

@@ -305,6 +305,13 @@ What it showed about the libraries:
   a sed `\1` became a control character): the HTTP checks caught the first, a scan for control
   characters the second.
 
+**DTO convention, pascal-api-infra-faa 0.18.0** (2026-10-19): every DTO interface mirrors its
+class's published properties, read-only (`property Name: string read GetName;`); the response
+DTOs gained getters; the Find DTOs lost `SetActive` and are filled through the class while the
+interface holds them (`LFill := TServiceFind.Create; LFind := LFill; LFill.Active := ...`).
+Repositories read `AFind.Active`, `APatch.Name` instead of the getters. 153 HTTP checks unchanged
+on FPC Windows.
+
 **Shared test kit**: the DUnitX-to-FPCUnit adapter (`*.DUnitXCompat.pas`) and
 `gen_fpc_mirror.py` exist as near-identical copies in pascal-common-faa, -jsonmapper-faa,
 -db-faa, -redis-faa, -api-infra-faa and three other projects; this is the eighth. A

@@ -218,8 +218,8 @@ var
   LBody: ILoginRequest;
 begin
   LBody := TJsonMapper.Shared.FromJson<ILoginRequest>(AReq.Body);
-  SendTokens(ARes, GAuth.Login(Required(LBody.GetTenant, 'tenant'),
-    Required(LBody.GetEmail, 'email'), Required(LBody.GetPassword, 'password')));
+  SendTokens(ARes, GAuth.Login(Required(LBody.Tenant, 'tenant'),
+    Required(LBody.Email, 'email'), Required(LBody.Password, 'password')));
 end;
 
 procedure PostRefresh(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
@@ -227,7 +227,7 @@ var
   LBody: IRefreshRequest;
 begin
   LBody := TJsonMapper.Shared.FromJson<IRefreshRequest>(AReq.Body);
-  SendTokens(ARes, GAuth.Refresh(Required(LBody.GetRefreshToken, 'refreshToken')));
+  SendTokens(ARes, GAuth.Refresh(Required(LBody.RefreshToken, 'refreshToken')));
 end;
 
 procedure PostLogout(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
@@ -235,7 +235,7 @@ var
   LBody: IRefreshRequest;
 begin
   LBody := TJsonMapper.Shared.FromJson<IRefreshRequest>(AReq.Body);
-  GAuth.Logout(Required(LBody.GetRefreshToken, 'refreshToken'));
+  GAuth.Logout(Required(LBody.RefreshToken, 'refreshToken'));
   ARes.Status(204).Send('');
 end;
 
@@ -320,16 +320,20 @@ end;
 
 procedure GetServices(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
 var
+  LFill: TServiceFind;
   LFind: IServiceFind;
   LRepo: TServiceRepository;
   LPage: TPage<IService>;
 begin
-  LFind := TServiceFind.Create;
-  LFind.Page := ParseQueryInt('page', AReq.Query['page']);
-  LFind.Limit := ParseQueryInt('limit', AReq.Query['limit']);
-  LFind.OrderBy := ParseQueryStr(AReq.Query['orderBy']);
-  LFind.Search := ParseQueryStr(AReq.Query['search']);
-  LFind.SetActive(ParseQueryBool('active', AReq.Query['active']));
+  // Filled through the class while the interface holds it (the DTO
+  // convention, pascal-api-infra-faa 0.18.0).
+  LFill := TServiceFind.Create;
+  LFind := LFill;
+  LFill.Page := ParseQueryInt('page', AReq.Query['page']);
+  LFill.Limit := ParseQueryInt('limit', AReq.Query['limit']);
+  LFill.OrderBy := ParseQueryStr(AReq.Query['orderBy']);
+  LFill.Search := ParseQueryStr(AReq.Query['search']);
+  LFill.Active := ParseQueryBool('active', AReq.Query['active']);
   LRepo := TServiceRepository.Create(ScopeOf(AReq));
   try
     LPage := LRepo.FindPage(LFind, PageRequestFrom(LFind.Page, LFind.Limit,
@@ -397,16 +401,20 @@ end;
 
 procedure GetProfessionals(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
 var
+  LFill: TProfessionalFind;
   LFind: IProfessionalFind;
   LRepo: TProfessionalRepository;
   LPage: TPage<IProfessional>;
 begin
-  LFind := TProfessionalFind.Create;
-  LFind.Page := ParseQueryInt('page', AReq.Query['page']);
-  LFind.Limit := ParseQueryInt('limit', AReq.Query['limit']);
-  LFind.OrderBy := ParseQueryStr(AReq.Query['orderBy']);
-  LFind.Search := ParseQueryStr(AReq.Query['search']);
-  LFind.SetActive(ParseQueryBool('active', AReq.Query['active']));
+  // Filled through the class while the interface holds it (the DTO
+  // convention, pascal-api-infra-faa 0.18.0).
+  LFill := TProfessionalFind.Create;
+  LFind := LFill;
+  LFill.Page := ParseQueryInt('page', AReq.Query['page']);
+  LFill.Limit := ParseQueryInt('limit', AReq.Query['limit']);
+  LFill.OrderBy := ParseQueryStr(AReq.Query['orderBy']);
+  LFill.Search := ParseQueryStr(AReq.Query['search']);
+  LFill.Active := ParseQueryBool('active', AReq.Query['active']);
   LRepo := TProfessionalRepository.Create(ScopeOf(AReq));
   try
     LPage := LRepo.FindPage(LFind, PageRequestFrom(LFind.Page, LFind.Limit,
