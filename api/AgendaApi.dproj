@@ -75,6 +75,8 @@
         <DCCReference Include="..\src\Agenda.Money.pas"/>
         <DCCReference Include="..\src\Agenda.Services.pas"/>
         <DCCReference Include="..\src\Agenda.Professionals.pas"/>
+        <DCCReference Include="..\src\Agenda.Customers.pas"/>
+        <DCCReference Include="..\src\Agenda.Users.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>

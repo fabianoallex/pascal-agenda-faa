@@ -129,6 +129,31 @@ begin
       'CONSTRAINT PK_PROFESSIONALS PRIMARY KEY (TENANT_ID, ID), ' +
       'CONSTRAINT FK_PROFESSIONALS_TENANT FOREIGN KEY (TENANT_ID) REFERENCES TENANTS (ID));' +
       'CREATE INDEX IX_PROFESSIONALS_NAME ON PROFESSIONALS (TENANT_ID, NAME_KEY);')
+    // SEARCH_KEY: NAME_KEY|EMAIL|the phone's digits, one column for one
+    // LIKE (Agenda.Customers). PHONE: Agenda.Text's NormalizePhone.
+    .Add(SQLITE_DIR, 'MIG.0008',
+      'CREATE TABLE CUSTOMERS (' +
+      'TENANT_ID VARCHAR(40) NOT NULL, ' +
+      'ID VARCHAR(32) NOT NULL, ' +
+      'NAME VARCHAR(100) NOT NULL, ' +
+      'NAME_KEY VARCHAR(100) NOT NULL, ' +
+      'PHONE VARCHAR(16), ' +
+      'EMAIL VARCHAR(254), ' +
+      'SEARCH_KEY VARCHAR(400) NOT NULL, ' +
+      'CREATED_AT BIGINT NOT NULL, ' +
+      'UPDATED_AT BIGINT NOT NULL, ' +
+      'CONSTRAINT PK_CUSTOMERS PRIMARY KEY (TENANT_ID, ID), ' +
+      'CONSTRAINT FK_CUSTOMERS_TENANT FOREIGN KEY (TENANT_ID) REFERENCES TENANTS (ID));' +
+      'CREATE INDEX IX_CUSTOMERS_NAME ON CUSTOMERS (TENANT_ID, NAME_KEY);' +
+      'CREATE INDEX IX_CUSTOMERS_PHONE ON CUSTOMERS (TENANT_ID, PHONE);')
+    // A user may be one of the tenant's professionals, and a professional at
+    // most one user (NULLs don't collide in a unique index, on SQLite and
+    // PostgreSQL alike). The application checks the professional exists:
+    // ADD COLUMN can't add a two-column foreign key.
+    .Add(SQLITE_DIR, 'MIG.0009',
+      'ALTER TABLE USERS ADD COLUMN PROFESSIONAL_ID VARCHAR(32);' +
+      'ALTER TABLE USERS ADD COLUMN UPDATED_AT BIGINT;' +
+      'CREATE UNIQUE INDEX UQ_USERS_PROFESSIONAL ON USERS (TENANT_ID, PROFESSIONAL_ID);')
 
     // --- operations
     .Add(SQLITE_DIR, 'HEALTH.PING', 'SELECT 1 AS ONE')
@@ -156,10 +181,37 @@ begin
     .Add(SQLITE_DIR, 'USER.BY_ID',
       'SELECT ID, EMAIL, PASSWORD_HASH, ROLE, ACTIVE FROM USERS WHERE ID = :ID AND ${TENANT}')
     .Add(SQLITE_DIR, 'USER.INSERT',
-      'INSERT INTO USERS (TENANT_ID, ID, EMAIL, PASSWORD_HASH, ROLE, ACTIVE, CREATED_AT) ' +
-      'VALUES (:TENANT_ID, :ID, :EMAIL, :PASSWORD_HASH, :ROLE, 1, :CREATED_AT)')
+      'INSERT INTO USERS (TENANT_ID, ID, EMAIL, PASSWORD_HASH, ROLE, ACTIVE, PROFESSIONAL_ID, ' +
+      'CREATED_AT, UPDATED_AT) VALUES (:TENANT_ID, :ID, :EMAIL, :PASSWORD_HASH, :ROLE, 1, ' +
+      ':PROFESSIONAL_ID, :CREATED_AT, :UPDATED_AT)')
     .Add(SQLITE_DIR, 'USER.SET_PASSWORD_HASH',
       'UPDATE USERS SET PASSWORD_HASH = :PASSWORD_HASH WHERE ID = :ID AND ${TENANT}')
+    // The users API (Agenda.Users): never the password hash.
+    .Add(SQLITE_DIR, 'USER.COUNT',
+      'SELECT COUNT(*) AS TOTAL FROM USERS WHERE ${TENANT} ' +
+      '[SEARCH {] AND EMAIL LIKE :SEARCH ESCAPE ''\'' [} SEARCH] ' +
+      '[ROLE {] AND ROLE = :ROLE [} ROLE] ' +
+      '[ACTIVE {] AND ACTIVE = :ACTIVE [} ACTIVE]')
+    .Add(SQLITE_DIR, 'USER.PAGE',
+      'SELECT ID, EMAIL, ROLE, ACTIVE, PROFESSIONAL_ID FROM USERS WHERE ${TENANT} ' +
+      '[SEARCH {] AND EMAIL LIKE :SEARCH ESCAPE ''\'' [} SEARCH] ' +
+      '[ROLE {] AND ROLE = :ROLE [} ROLE] ' +
+      '[ACTIVE {] AND ACTIVE = :ACTIVE [} ACTIVE] ORDER BY ${ORDER} ${PAGE}')
+    .Add(SQLITE_DIR, 'USER.VIEW',
+      'SELECT ID, EMAIL, ROLE, ACTIVE, PROFESSIONAL_ID FROM USERS WHERE ID = :ID AND ${TENANT}')
+    .Add(SQLITE_DIR, 'USER.UPDATE',
+      'UPDATE USERS SET UPDATED_AT = :UPDATED_AT ' +
+      '[EMAIL {], EMAIL = :EMAIL [} EMAIL] ' +
+      '[PASSWORD {], PASSWORD_HASH = :PASSWORD_HASH [} PASSWORD] ' +
+      '[ROLE {], ROLE = :ROLE [} ROLE] ' +
+      '[ACTIVE {], ACTIVE = :ACTIVE [} ACTIVE] ' +
+      '[PROFESSIONAL {], PROFESSIONAL_ID = :PROFESSIONAL_ID [} PROFESSIONAL] ' +
+      'WHERE ID = :ID AND ${TENANT}')
+    .Add(SQLITE_DIR, 'USER.DELETE', 'DELETE FROM USERS WHERE ID = :ID AND ${TENANT}')
+    // A professional deleted: the user linked to it stays, unlinked.
+    .Add(SQLITE_DIR, 'USER.UNLINK_PROFESSIONAL',
+      'UPDATE USERS SET PROFESSIONAL_ID = NULL WHERE PROFESSIONAL_ID = :PROFESSIONAL_ID ' +
+      'AND ${TENANT}')
 
     // --- refresh tokens (a tenant's rows)
     .Add(SQLITE_DIR, 'REFRESH.INSERT',
@@ -177,6 +229,13 @@ begin
     .Add(SQLITE_DIR, 'REFRESH.REVOKE_FAMILY',
       'UPDATE REFRESH_TOKENS SET REVOKED_AT = :REVOKED_AT WHERE FAMILY_ID = :FAMILY_ID ' +
       'AND REVOKED_AT IS NULL AND ${TENANT}')
+    // A user's password changed, or the user deactivated: every login ends.
+    .Add(SQLITE_DIR, 'REFRESH.REVOKE_USER',
+      'UPDATE REFRESH_TOKENS SET REVOKED_AT = :REVOKED_AT WHERE USER_ID = :USER_ID ' +
+      'AND REVOKED_AT IS NULL AND ${TENANT}')
+    // Before the user's row (the foreign key, enforced on PostgreSQL).
+    .Add(SQLITE_DIR, 'REFRESH.DELETE_USER',
+      'DELETE FROM REFRESH_TOKENS WHERE USER_ID = :USER_ID AND ${TENANT}')
 
     // --- services (a tenant's rows). [SEARCH] and [ACTIVE] are kept only
     // when that filter came (ProcessTag); ${ORDER} comes from
@@ -227,7 +286,29 @@ begin
       '[ACTIVE {], ACTIVE = :ACTIVE [} ACTIVE] ' +
       'WHERE ID = :ID AND ${TENANT}')
     .Add(SQLITE_DIR, 'PROFESSIONAL.DELETE',
-      'DELETE FROM PROFESSIONALS WHERE ID = :ID AND ${TENANT}');
+      'DELETE FROM PROFESSIONALS WHERE ID = :ID AND ${TENANT}')
+
+    // --- customers (a tenant's rows)
+    .Add(SQLITE_DIR, 'CUSTOMER.COUNT',
+      'SELECT COUNT(*) AS TOTAL FROM CUSTOMERS WHERE ${TENANT} ' +
+      '[SEARCH {] AND SEARCH_KEY LIKE :SEARCH ESCAPE ''\'' [} SEARCH]')
+    .Add(SQLITE_DIR, 'CUSTOMER.PAGE',
+      'SELECT ID, NAME, PHONE, EMAIL FROM CUSTOMERS WHERE ${TENANT} ' +
+      '[SEARCH {] AND SEARCH_KEY LIKE :SEARCH ESCAPE ''\'' [} SEARCH] ' +
+      'ORDER BY ${ORDER} ${PAGE}')
+    .Add(SQLITE_DIR, 'CUSTOMER.BY_ID',
+      'SELECT ID, NAME, PHONE, EMAIL FROM CUSTOMERS WHERE ID = :ID AND ${TENANT}')
+    .Add(SQLITE_DIR, 'CUSTOMER.INSERT',
+      'INSERT INTO CUSTOMERS (TENANT_ID, ID, NAME, NAME_KEY, PHONE, EMAIL, SEARCH_KEY, ' +
+      'CREATED_AT, UPDATED_AT) VALUES (:TENANT_ID, :ID, :NAME, :NAME_KEY, :PHONE, :EMAIL, ' +
+      ':SEARCH_KEY, :CREATED_AT, :UPDATED_AT)')
+    // Every column: the search key depends on all of them, so a PATCH writes
+    // the merged row.
+    .Add(SQLITE_DIR, 'CUSTOMER.UPDATE',
+      'UPDATE CUSTOMERS SET NAME = :NAME, NAME_KEY = :NAME_KEY, PHONE = :PHONE, ' +
+      'EMAIL = :EMAIL, SEARCH_KEY = :SEARCH_KEY, UPDATED_AT = :UPDATED_AT ' +
+      'WHERE ID = :ID AND ${TENANT}')
+    .Add(SQLITE_DIR, 'CUSTOMER.DELETE', 'DELETE FROM CUSTOMERS WHERE ID = :ID AND ${TENANT}');
 end;
 
 function AgendaMigrations: TArray<TMigrationItem>;
@@ -243,7 +324,7 @@ function AgendaMigrations: TArray<TMigrationItem>;
 
 begin
   Result := nil;
-  SetLength(Result, 7);
+  SetLength(Result, 9);
   Result[0] := Item(1, 'MIG.0001');
   Result[1] := Item(2, 'MIG.0002');
   Result[2] := Item(3, 'MIG.0003');
@@ -251,6 +332,8 @@ begin
   Result[4] := Item(5, 'MIG.0005');
   Result[5] := Item(6, 'MIG.0006');
   Result[6] := Item(7, 'MIG.0007');
+  Result[7] := Item(8, 'MIG.0008');
+  Result[8] := Item(9, 'MIG.0009');
 end;
 
 end.

@@ -114,6 +114,7 @@ function CreateUser(const ACatalog: ITenantCatalog; const AResolver: ITenantData
 implementation
 
 uses
+  PascalCommon.Optionals,
   PascalJsonMapper.Json,
   PascalApi.Jwt,
   PascalApi.Http,
@@ -504,7 +505,9 @@ begin
     LQuery.Params.Strings['EMAIL'] := LEmail;
     LQuery.Params.Strings['PASSWORD_HASH'] := LHash;
     LQuery.Params.Strings['ROLE'] := ARole;
+    LQuery.Params.OptNullStrings['PROFESSIONAL_ID'] := TOptNullString.Null;
     LQuery.Params.Int64s['CREATED_AT'] := TJwt.UnixNow;
+    LQuery.Params.Int64s['UPDATED_AT'] := TJwt.UnixNow;
     LQuery.ExecSql;
     LTx.Commit;
   except

@@ -29,6 +29,10 @@ type
     procedure Fold_Spaces;
     procedure Fold_KeepsWhatItDoesntKnow;
     procedure Like_EscapesWildcards;
+    procedure Phone_DigitsAsTyped;
+    procedure Phone_NotAPhone;
+    procedure Phone_Normalized;
+    procedure Phone_Length;
   end;
 
 implementation
@@ -79,6 +83,44 @@ begin
   TAssert.AssertEquals('%a\_b%', LikeContains('a_b'));
   TAssert.AssertEquals('%c:\\x%', LikeContains('c:\x'));
   TAssert.AssertEquals('%%', LikeContains(''));
+end;
+
+procedure TTextTests.Phone_DigitsAsTyped;
+var
+  LDigits: string;
+begin
+  TAssert.AssertTrue(TryPhoneDigits(' +55 (11) 9999-0000 ', LDigits));
+  TAssert.AssertEquals('551199990000', LDigits);
+  TAssert.AssertTrue(TryPhoneDigits('11.9999', LDigits));
+  TAssert.AssertEquals('119999', LDigits);
+  TAssert.AssertTrue(TryPhoneDigits('7', LDigits));
+  TAssert.AssertEquals('7', LDigits);
+end;
+
+procedure TTextTests.Phone_NotAPhone;
+var
+  LDigits: string;
+begin
+  TAssert.AssertFalse(TryPhoneDigits('ana 99', LDigits));
+  TAssert.AssertFalse(TryPhoneDigits('11+99', LDigits));
+  TAssert.AssertFalse(TryPhoneDigits('( - )', LDigits));
+  TAssert.AssertFalse(TryPhoneDigits('', LDigits));
+  TAssert.AssertEquals('', LDigits);
+end;
+
+procedure TTextTests.Phone_Normalized;
+begin
+  TAssert.AssertEquals('+5511999990000', NormalizePhone('+55 (11) 99999-0000'));
+  TAssert.AssertEquals('11999990000', NormalizePhone('(11) 99999.0000'));
+  TAssert.AssertEquals('', NormalizePhone('call me'));
+end;
+
+procedure TTextTests.Phone_Length;
+begin
+  TAssert.AssertEquals('12345678', NormalizePhone('1234-5678'));
+  TAssert.AssertEquals('', NormalizePhone('123-4567'));
+  TAssert.AssertEquals('+123456789012345', NormalizePhone('+123456789012345'));
+  TAssert.AssertEquals('', NormalizePhone('+1234567890123456'));
 end;
 
 initialization

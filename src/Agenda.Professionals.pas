@@ -415,6 +415,10 @@ begin
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
   LTx.StartTransaction;
   try
+    // The user who was this professional stays, unlinked (Agenda.Users).
+    TTenantFilter.Prepare(LQuery, FScope, 'USER.UNLINK_PROFESSIONAL');
+    LQuery.Params.Strings['PROFESSIONAL_ID'] := AId;
+    LQuery.ExecSql;
     TTenantFilter.Prepare(LQuery, FScope, 'PROFESSIONAL.DELETE');
     LQuery.Params.Strings['ID'] := AId;
     LRows := LQuery.ExecSql;

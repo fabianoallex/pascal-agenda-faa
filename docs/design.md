@@ -147,6 +147,10 @@ two libraries would share goes to pascal-common-faa.
 
 **Found while building** (not in the first list):
 
+- Filling a Find DTO from the query string, and the paged query (count + page through the same
+  filters): both repeated in every list route (see "Progress", M1, customers and users).
+- Phone normalization, next to the accent-insensitive search key (pascal-common-faa).
+
 - A shared test kit: the DUnitX-to-FPCUnit adapter and the mirror generator, copied in every
   repository of the family (see "Progress", M1).
 
@@ -311,6 +315,45 @@ DTOs gained getters; the Find DTOs lost `SetActive` and are filled through the c
 interface holds them (`LFill := TServiceFind.Create; LFind := LFill; LFill.Active := ...`).
 Repositories read `AFind.Active`, `APatch.Name` instead of the getters. 153 HTTP checks unchanged
 on FPC Windows.
+
+**Customers and users** (2026-10-19): `src/Agenda.Customers`, `src/Agenda.Users`; migrations
+8 (`CUSTOMERS`) and 9 (`USERS.PROFESSIONAL_ID`, `USERS.UPDATED_AT`, a unique index on the link);
+`NormalizePhone`/`TryPhoneDigits` in `src/Agenda.Text`. Routes `/customers`, `/customers/:id`,
+`/users`, `/users/:id` (GET, POST, PATCH, DELETE).
+
+- Customers: any user reads, creates and changes (the front desk registers customers); the owner
+  deletes. Name required; phone and email optional, neither unique (a family shares a phone):
+  public booking (M3) decides how it finds a returning customer. Phone stored as `+` and 8 to 15
+  digits. Search through one stored key, `SEARCH_KEY` = `NAME_KEY|EMAIL|digits`: a search typed
+  like a phone matches by its digits, anything else is folded like a name. A PATCH reads the row
+  and writes it whole, so the key always follows the values.
+- Users: the owner only. The owner sets the password (at least 8 characters, `password_too_short`);
+  it is never returned. A new password or a deactivation revokes the user's refresh tokens
+  (`REFRESH.REVOKE_USER`); deleting a user deletes them first (the foreign key, enforced on
+  PostgreSQL). A user may be one professional and a professional at most one user (409);
+  an unknown professional is 400 `unknown_professional`; deleting the professional unlinks the
+  user. The acting owner can't change their own role, deactivate or delete themselves (409
+  `own_account`), so a tenant keeps an active owner. **Known gap:** two owners demoting each
+  other at the same moment could leave none; a guarded `UPDATE` (another active owner exists)
+  closes it if it matters.
+- `--create-user` writes the new columns (no professional).
+
+Checks: 28 unit tests (4 new, the phone) on FPC Windows and Linux; 247 HTTP checks (94 new in
+`tools/http_scenarios_people.sh`) on FPC Windows and Linux (Docker), plus the restart; OpenAPI
+valid, promtool ok. **Delphi 12 Win32/Win64: not yet run** for this step.
+
+What it showed about the libraries:
+
+- The 0.18.0 DTO convention held on four more DTO families with nothing new to learn; the read-only
+  interface made the repositories read `APatch.Phone`, `AFind.Role` naturally.
+- **Candidate, stronger now:** filling a Find DTO from the query string. Four list handlers copy
+  `page`, `limit`, `orderBy`, `search` by hand, plus their own filters.
+- **Candidate (probable):** the paged query. Four repositories repeat the same `FindPage`: the
+  count and the page through the same tags and binds, the order spec, `PdbPagingClause`, reading
+  the rows. A helper taking the two SQL names, a "filter" callback and a row reader would fit
+  pascal-api-infra-faa (it already joins `TTenantFilter`, `TOrderBySpec` and paging).
+- **Candidate:** phone normalization (digits, `+`, length) next to the search key in
+  pascal-common-faa's normalizers.
 
 **Shared test kit**: the DUnitX-to-FPCUnit adapter (`*.DUnitXCompat.pas`) and
 `gen_fpc_mirror.py` exist as near-identical copies in pascal-common-faa, -jsonmapper-faa,

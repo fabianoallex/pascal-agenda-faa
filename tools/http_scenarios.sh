@@ -12,6 +12,11 @@
 # - services and professionals (tools/http_scenarios_catalog.sh): roles,
 #   validation, names unique by their search key, search ignoring accents,
 #   ordering, paging, the active filter, null, another tenant's rows;
+# - customers and users (tools/http_scenarios_people.sh): the phone and the
+#   email normalized, search by name, email or phone, null clearing a
+#   contact; users managed by the owner only, a password never returned, a
+#   new password or a deactivation ending the sessions, the owner unable to
+#   lock themselves out, the professional link;
 # - the rate limit on /auth/ by client address (last: it uses the window).
 #
 #   sh tools/http_scenarios.sh [port]   (default 9400; AgendaApi must be running,
@@ -227,6 +232,8 @@ fi
 
 # --- services and professionals (their own file, same helpers)
 . "$(dirname "$0")/http_scenarios_catalog.sh"
+# --- customers and users (after the catalog: a user links to its professional)
+. "$(dirname "$0")/http_scenarios_people.sh"
 
 # --- OpenAPI document and Swagger UI
 req GET /swagger/doc.json ""
@@ -238,6 +245,9 @@ body_has '"securitySchemes":{"bearerAuth":' "OpenAPI: the bearer scheme, from th
 body_has '"LoginRequest":{"type":"object","description":"Credentials of a user of one tenant"' "OpenAPI: the login body"
 body_has '"/services/{id}":{"get":{' "OpenAPI: services, with the path parameter"
 body_has '{"name":"active","in":"query","description":"true or false' "OpenAPI: the active filter, from the Find DTO"
+body_has '"/customers/{id}":{"get":{' "OpenAPI: customers"
+body_has '"/users/{id}":{"get":{' "OpenAPI: users"
+body_lacks '"passwordHash"' "OpenAPI: no password hash anywhere"
 [ -n "$OPENAPI_OUT" ] && cp "$T/body" "$OPENAPI_OUT"
 req GET /swagger ""
 status_is 200 "Swagger UI"

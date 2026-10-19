@@ -40,6 +40,12 @@ program AgendaApi;
                          (ignoring case and accents), active=true|false
     POST /services, PATCH|DELETE /services/:id, and the same for
     /professionals       the tenant's owner only (403 "owner_only")
+    GET|POST /customers, GET|PATCH /customers/:id
+                         any user of the tenant; search in the name, email
+                         or phone; DELETE /customers/:id the owner only
+    /users, /users/:id   the owner only: list, create (with a password),
+                         change, delete; never their own role, active or
+                         account (409 "own_account")
     GET  /health/live, /health/ready, /metrics, /swagger (/swagger/doc.json)
 
   Signing keys: one rotating ring per tenant (TTenantJwtKeyRing), kept and
@@ -86,7 +92,9 @@ uses
   Agenda.Text in '..\src\Agenda.Text.pas',
   Agenda.Money in '..\src\Agenda.Money.pas',
   Agenda.Services in '..\src\Agenda.Services.pas',
-  Agenda.Professionals in '..\src\Agenda.Professionals.pas';
+  Agenda.Professionals in '..\src\Agenda.Professionals.pas',
+  Agenda.Customers in '..\src\Agenda.Customers.pas',
+  Agenda.Users in '..\src\Agenda.Users.pas';
 
 const
   APP_NAME = 'agenda-api';
@@ -122,6 +130,7 @@ var
   GKeys: IJwtKeyRing;
   GAuth: TAuthService;
   GAuthLimit: Integer;
+  GPasswordIterations: Integer;
 
 { TAgendaHooks }
 
@@ -283,23 +292,29 @@ begin
   Result := GResolver.ScopeFor(TTenantMiddleware.Current(AReq));
 end;
 
-// Writes are the owner's: a staff member reads. The role comes from the
-// verified token (Agenda.Auth writes it at login).
-procedure RequireOwner(AReq: THorseRequest);
+// A string claim of the verified token; '' when absent or not a string.
+function ClaimString(AReq: THorseRequest; const AName: string): string;
 var
-  LClaims, LRole: TJsonValue;
-  LOwner: Boolean;
+  LClaims, LValue: TJsonValue;
 begin
+  Result := '';
   LClaims := TJwtMiddleware.Claims(AReq);
   try
-    LRole := nil;
+    LValue := nil;
     if LClaims <> nil then
-      LRole := LClaims.Find('role');
-    LOwner := (LRole <> nil) and (LRole.Kind = jkString) and (LRole.AsString = ROLE_OWNER);
+      LValue := LClaims.Find(AName);
+    if (LValue <> nil) and (LValue.Kind = jkString) then
+      Result := LValue.AsString;
   finally
     LClaims.Free;
   end;
-  if not LOwner then
+end;
+
+// Writes are the owner's: a staff member reads. The role comes from the
+// verified token (Agenda.Auth writes it at login).
+procedure RequireOwner(AReq: THorseRequest);
+begin
+  if ClaimString(AReq, 'role') <> ROLE_OWNER then
     raise EHttpException.Create(403, 'Only the tenant''s owner can change this.', 'owner_only');
 end;
 
@@ -481,6 +496,182 @@ begin
   ARes.Status(204).Send('');
 end;
 
+{ Customers: any user reads and writes; the owner deletes }
+
+procedure GetCustomers(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LFill: TCustomerFind;
+  LFind: ICustomerFind;
+  LRepo: TCustomerRepository;
+  LPage: TPage<ICustomer>;
+begin
+  LFill := TCustomerFind.Create;
+  LFind := LFill;
+  LFill.Page := ParseQueryInt('page', AReq.Query['page']);
+  LFill.Limit := ParseQueryInt('limit', AReq.Query['limit']);
+  LFill.OrderBy := ParseQueryStr(AReq.Query['orderBy']);
+  LFill.Search := ParseQueryStr(AReq.Query['search']);
+  LRepo := TCustomerRepository.Create(ScopeOf(AReq));
+  try
+    LPage := LRepo.FindPage(LFind, PageRequestFrom(LFind.Page, LFind.Limit,
+      PAGE_DEFAULT_LIMIT, PAGE_MAX_LIMIT));
+  finally
+    LRepo.Free;
+  end;
+  TJsonSend.Send(ARes, PageEnvelopeJson(LPage.Meta,
+    TJsonMapper.Shared.Serialize<TCustomerArray>(LPage.Items)));
+end;
+
+procedure GetCustomer(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LRepo: TCustomerRepository;
+begin
+  LRepo := TCustomerRepository.Create(ScopeOf(AReq));
+  try
+    TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<ICustomer>(LRepo.FindById(AReq.Params['id'])));
+  finally
+    LRepo.Free;
+  end;
+end;
+
+procedure PostCustomer(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LRepo: TCustomerRepository;
+begin
+  LRepo := TCustomerRepository.Create(ScopeOf(AReq));
+  try
+    TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<ICustomer>(
+      LRepo.Insert(TJsonMapper.Shared.FromJson<ICustomerInsert>(AReq.Body))), 201);
+  finally
+    LRepo.Free;
+  end;
+end;
+
+procedure PatchCustomer(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LRepo: TCustomerRepository;
+begin
+  LRepo := TCustomerRepository.Create(ScopeOf(AReq));
+  try
+    TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<ICustomer>(LRepo.Update(AReq.Params['id'],
+      TJsonMapper.Shared.FromJson<ICustomerPatch>(AReq.Body))));
+  finally
+    LRepo.Free;
+  end;
+end;
+
+procedure DeleteCustomer(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LRepo: TCustomerRepository;
+begin
+  RequireOwner(AReq);
+  LRepo := TCustomerRepository.Create(ScopeOf(AReq));
+  try
+    LRepo.Delete(AReq.Params['id']);
+  finally
+    LRepo.Free;
+  end;
+  ARes.Status(204).Send('');
+end;
+
+{ Users: the owner only }
+
+// ?role=owner|staff; absent when not given (the repository checks the value).
+function ParseQueryRole(const AText: string): IOptString;
+begin
+  if AText = '' then
+    Result := TOptNullString.Undefined
+  else
+    Result := TOptNullString.From(AText);
+end;
+
+function NewUserRepository(AReq: THorseRequest): TUserRepository;
+begin
+  Result := TUserRepository.Create(ScopeOf(AReq), GPasswordIterations);
+end;
+
+procedure GetUsers(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LFill: TUserFind;
+  LFind: IUserFind;
+  LRepo: TUserRepository;
+  LPage: TPage<IUser>;
+begin
+  RequireOwner(AReq);
+  LFill := TUserFind.Create;
+  LFind := LFill;
+  LFill.Page := ParseQueryInt('page', AReq.Query['page']);
+  LFill.Limit := ParseQueryInt('limit', AReq.Query['limit']);
+  LFill.OrderBy := ParseQueryStr(AReq.Query['orderBy']);
+  LFill.Search := ParseQueryStr(AReq.Query['search']);
+  LFill.Role := ParseQueryRole(AReq.Query['role']);
+  LFill.Active := ParseQueryBool('active', AReq.Query['active']);
+  LRepo := NewUserRepository(AReq);
+  try
+    LPage := LRepo.FindPage(LFind, PageRequestFrom(LFind.Page, LFind.Limit,
+      PAGE_DEFAULT_LIMIT, PAGE_MAX_LIMIT));
+  finally
+    LRepo.Free;
+  end;
+  TJsonSend.Send(ARes, PageEnvelopeJson(LPage.Meta,
+    TJsonMapper.Shared.Serialize<TUserArray>(LPage.Items)));
+end;
+
+procedure GetUser(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LRepo: TUserRepository;
+begin
+  RequireOwner(AReq);
+  LRepo := NewUserRepository(AReq);
+  try
+    TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IUser>(LRepo.FindById(AReq.Params['id'])));
+  finally
+    LRepo.Free;
+  end;
+end;
+
+procedure PostUser(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LRepo: TUserRepository;
+begin
+  RequireOwner(AReq);
+  LRepo := NewUserRepository(AReq);
+  try
+    TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IUser>(
+      LRepo.Insert(TJsonMapper.Shared.FromJson<IUserInsert>(AReq.Body))), 201);
+  finally
+    LRepo.Free;
+  end;
+end;
+
+procedure PatchUser(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LRepo: TUserRepository;
+begin
+  RequireOwner(AReq);
+  LRepo := NewUserRepository(AReq);
+  try
+    TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IUser>(LRepo.Update(ClaimString(AReq, 'sub'),
+      AReq.Params['id'], TJsonMapper.Shared.FromJson<IUserPatch>(AReq.Body))));
+  finally
+    LRepo.Free;
+  end;
+end;
+
+procedure DeleteUser(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LRepo: TUserRepository;
+begin
+  RequireOwner(AReq);
+  LRepo := NewUserRepository(AReq);
+  try
+    LRepo.Delete(ClaimString(AReq, 'sub'), AReq.Params['id']);
+  finally
+    LRepo.Free;
+  end;
+  ARes.Status(204).Send('');
+end;
+
 { Setup }
 
 function OpenKeys: IJwtKeyRing;
@@ -632,6 +823,7 @@ begin
     GAuth := TAuthService.Create(GCatalog, GResolver, GHooks.SignClaims, AuthOptions,
       GHooks.Security);
     GAuthLimit := TAppConfig.GetInt('AUTH_RATE_LIMIT', 10);
+    GPasswordIterations := AuthOptions.PasswordIterations;
 
     if TAppConfig.Get('OTEL_EXPORTER_OTLP_ENDPOINT', '') <> '' then
       TPcTracing.Start(TPcTracingOptions.FromEnvironment(APP_NAME, APP_VERSION, ReadAppConfig),
@@ -742,6 +934,71 @@ begin
       .Error(403, 'owner_only')
       .Error(404, 'The tenant has no professional with this id')
       .Register(DeleteProfessional);
+
+    TRouteDoc.Get('/customers').Summary('The tenant''s customers, a page at a time')
+      .Tag('customers')
+      .QueryParams<ICustomerFind>
+      .ResponsePaged<ICustomer>(200, 'A page of customers')
+      .Error(400, 'A parameter or an order field that is not allowed')
+      .Register(GetCustomers);
+    TRouteDoc.Get('/customers/:id').Summary('One customer').Tag('customers')
+      .PathParam('id', 'The customer''s id')
+      .Response<ICustomer>(200)
+      .Error(404, 'The tenant has no customer with this id')
+      .Register(GetCustomer);
+    TRouteDoc.Post('/customers').Summary('Create a customer').Tag('customers')
+      .Body<ICustomerInsert>
+      .Response<ICustomer>(201, 'Created')
+      .Error(400, 'Invalid data')
+      .Register(PostCustomer);
+    TRouteDoc.Patch('/customers/:id').Summary('Change a customer').Tag('customers')
+      .PathParam('id', 'The customer''s id')
+      .Body<ICustomerPatch>
+      .Response<ICustomer>(200, 'The customer after the change')
+      .Error(400, 'Invalid data')
+      .Error(404, 'The tenant has no customer with this id')
+      .Register(PatchCustomer);
+    TRouteDoc.Delete('/customers/:id').Summary('Delete a customer (owner)').Tag('customers')
+      .PathParam('id', 'The customer''s id')
+      .NoContent(204, 'Deleted')
+      .Error(403, 'owner_only')
+      .Error(404, 'The tenant has no customer with this id')
+      .Register(DeleteCustomer);
+    TRouteDoc.Get('/users').Summary('The tenant''s users, a page at a time (owner)').Tag('users')
+      .QueryParams<IUserFind>
+      .ResponsePaged<IUser>(200, 'A page of users')
+      .Error(400, 'A parameter or an order field that is not allowed')
+      .Error(403, 'owner_only')
+      .Register(GetUsers);
+    TRouteDoc.Get('/users/:id').Summary('One user (owner)').Tag('users')
+      .PathParam('id', 'The user''s id')
+      .Response<IUser>(200)
+      .Error(403, 'owner_only')
+      .Error(404, 'The tenant has no user with this id')
+      .Register(GetUser);
+    TRouteDoc.Post('/users').Summary('Create a user (owner)').Tag('users')
+      .Body<IUserInsert>
+      .Response<IUser>(201, 'Created')
+      .Error(400, 'Invalid data; password_too_short; unknown_professional')
+      .Error(403, 'owner_only')
+      .Error(409, 'The email, or the professional, belongs to another user')
+      .Register(PostUser);
+    TRouteDoc.Patch('/users/:id').Summary('Change a user (owner)').Tag('users')
+      .PathParam('id', 'The user''s id')
+      .Body<IUserPatch>
+      .Response<IUser>(200, 'The user after the change')
+      .Error(400, 'Invalid data; password_too_short; unknown_professional')
+      .Error(403, 'owner_only')
+      .Error(404, 'The tenant has no user with this id')
+      .Error(409, 'own_account: your own role or active; or the email or professional is taken')
+      .Register(PatchUser);
+    TRouteDoc.Delete('/users/:id').Summary('Delete a user (owner)').Tag('users')
+      .PathParam('id', 'The user''s id')
+      .NoContent(204, 'Deleted; the user''s sessions end')
+      .Error(403, 'owner_only')
+      .Error(404, 'The tenant has no user with this id')
+      .Error(409, 'own_account: you can''t delete yourself')
+      .Register(DeleteUser);
 
     TMetricsEndpoint.Register;
     THealthEndpoint.AddCheck('database', GHooks.DatabaseReady);
