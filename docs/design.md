@@ -153,7 +153,11 @@ two libraries would share goes to pascal-common-faa.
 - An instant type for the mapper: zone required on input, `Z` on output (pascal-jsonmapper-faa).
 
 - A shared test kit: the DUnitX-to-FPCUnit adapter and the mirror generator, copied in every
-  repository of the family (see "Progress", M1).
+  repository of the family. **Done 2026-10-19 in the skill** (the user's choice):
+  `dual-compiler-delphi-lazarus/scripts/gen_fpc_mirror.py` (canonical, copied unchanged into
+  `tools/`), `assets/DUnitXCompat.pas.template`, `scripts/check_test_kit.py`. Adopted here and in
+  pascal-common-faa, -jsonmapper-faa, -db-faa, -api-infra-faa; redis, amqp and pipes still to
+  adopt, each in its own session.
 
 **Not library material**: email/SMS sending, agenda rules, free-slot computation.
 
