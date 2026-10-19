@@ -301,28 +301,44 @@ begin
       [MAX_NAME_CHARS]);
 end;
 
-procedure CheckDuration(AMinutes: Integer);
+// The checks are functions from a value to the value to store, raising a 400
+// for one that breaks the rule: the shape of pascal-common-faa's TPcStringFunc
+// and TPcIntegerFunc, so an optional member goes through one with Map, which
+// calls it only when the member came (no "if HasValue").
+function CheckDuration(const AMinutes: Integer): Integer;
 begin
   if (AMinutes < MIN_DURATION_MINUTES) or (AMinutes > MAX_DURATION_MINUTES) or
     (AMinutes mod 5 <> 0) then
     raise EValidationException.CreateFmt(
       '"durationMinutes" must be a multiple of 5 from %d to %d.',
       [MIN_DURATION_MINUTES, MAX_DURATION_MINUTES]);
+  Result := AMinutes;
 end;
 
-procedure CheckBuffer(AMinutes: Integer);
+function CheckBuffer(const AMinutes: Integer): Integer;
 begin
   if (AMinutes < 0) or (AMinutes > MAX_BUFFER_MINUTES) or (AMinutes mod 5 <> 0) then
     raise EValidationException.CreateFmt(
       '"bufferMinutes" must be a multiple of 5 from 0 to %d.', [MAX_BUFFER_MINUTES]);
+  Result := AMinutes;
 end;
 
-function CheckPrice(APrice: Currency): Int64;
+function CheckPrice(const APrice: Currency): Currency;
+var
+  LCents: Int64;
+begin
+  if not TryCurrencyToCents(APrice, LCents) then
+    raise EValidationException.Create('"price" can''t have a fraction of a cent.');
+  if (LCents < 0) or (LCents > 10000000) then
+    raise EValidationException.Create('"price" must be from 0 to 100000.');
+  Result := APrice;
+end;
+
+// A price CheckPrice accepted, in cents.
+function CentsOf(const APrice: Currency): Int64;
 begin
   if not TryCurrencyToCents(APrice, Result) then
     raise EValidationException.Create('"price" can''t have a fraction of a cent.');
-  if (Result < 0) or (Result > 10000000) then
-    raise EValidationException.Create('"price" must be from 0 to 100000.');
 end;
 
 { TServiceRepository }
@@ -395,16 +411,16 @@ end;
 function TServiceRepository.Insert(const AService: IServiceInsert): IService;
 var
   LName, LId: string;
-  LBuffer: Integer;
-  LCents, LNow: Int64;
+  LDuration, LBuffer: Integer;
+  LPrice: Currency;
+  LNow: Int64;
   LQuery: IQuery;
   LTx: IScopeTransaction;
 begin
   LName := CheckName(AService.Name);
-  CheckDuration(AService.DurationMinutes);
-  LBuffer := AService.BufferMinutes.ValueOr(0);
-  CheckBuffer(LBuffer);
-  LCents := CheckPrice(AService.Price);
+  LDuration := CheckDuration(AService.DurationMinutes);
+  LBuffer := CheckBuffer(AService.BufferMinutes.ValueOr(0));
+  LPrice := CheckPrice(AService.Price);
   LId := NewId;
   LNow := TJwt.UnixNow;
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
@@ -414,9 +430,9 @@ begin
     LQuery.Params.Strings['ID'] := LId;
     LQuery.Params.Strings['NAME'] := LName;
     LQuery.Params.Strings['NAME_KEY'] := PcFoldForSearch(LName);
-    LQuery.Params.Integers['DURATION_MINUTES'] := AService.DurationMinutes;
+    LQuery.Params.Integers['DURATION_MINUTES'] := LDuration;
     LQuery.Params.Integers['BUFFER_MINUTES'] := LBuffer;
-    LQuery.Params.Int64s['PRICE_CENTS'] := LCents;
+    LQuery.Params.Int64s['PRICE_CENTS'] := CentsOf(LPrice);
     LQuery.Params.Int64s['CREATED_AT'] := LNow;
     LQuery.Params.Int64s['UPDATED_AT'] := LNow;
     LQuery.ExecSql; // a name the tenant has: EConstraintViolationException -> 409
@@ -430,44 +446,41 @@ end;
 
 function TServiceRepository.Update(const AId: string; const APatch: IServicePatch): IService;
 var
-  LName: string;
-  LCents: Int64;
+  LName: IOptString;
+  LDuration, LBuffer: IOptInteger;
+  LPrice: IOptCurrency;
   LQuery: IQuery;
   LTx: IScopeTransaction;
   LRows: Int64;
 begin
-  LName := '';
-  if APatch.Name.HasValue then
-    LName := CheckName(APatch.Name.Value);
-  if APatch.DurationMinutes.HasValue then
-    CheckDuration(APatch.DurationMinutes.Value);
-  if APatch.BufferMinutes.HasValue then
-    CheckBuffer(APatch.BufferMinutes.Value);
-  LCents := 0;
-  if APatch.Price.HasValue then
-    LCents := CheckPrice(APatch.Price.Value);
+  // Checked through Map: only the members that came, each a 400 when it
+  // breaks its rule; an absent one stays absent.
+  LName := APatch.Name.Map(CheckName);
+  LDuration := APatch.DurationMinutes.Map(CheckDuration);
+  LBuffer := APatch.BufferMinutes.Map(CheckBuffer);
+  LPrice := APatch.Price.Map(CheckPrice);
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
   LTx.StartTransaction;
   try
+    // Each block kept exactly when its optional came, and the optional bound
+    // as it is: an absent one binds nothing (its block is gone).
     TTenantFilter.Prepare(LQuery, FScope, FScope.Factory.SqlLoader['SERVICE.UPDATE']
-      .ProcessTag('NAME', APatch.Name.HasValue)
-      .ProcessTag('DURATION', APatch.DurationMinutes.HasValue)
-      .ProcessTag('BUFFER', APatch.BufferMinutes.HasValue)
-      .ProcessTag('PRICE', APatch.Price.HasValue)
+      .ProcessTag('NAME', LName.HasValue)
+      .ProcessTag('DURATION', LDuration.HasValue)
+      .ProcessTag('BUFFER', LBuffer.HasValue)
+      .ProcessTag('PRICE', LPrice.HasValue)
       .ProcessTag('ACTIVE', APatch.Active.HasValue));
     LQuery.Params.Strings['ID'] := AId;
     LQuery.Params.Int64s['UPDATED_AT'] := TJwt.UnixNow;
-    if APatch.Name.HasValue then
-    begin
-      LQuery.Params.Strings['NAME'] := LName;
-      LQuery.Params.Strings['NAME_KEY'] := PcFoldForSearch(LName);
-    end;
-    LQuery.Params.OptIntegers['DURATION_MINUTES'] := APatch.DurationMinutes;
-    LQuery.Params.OptIntegers['BUFFER_MINUTES'] := APatch.BufferMinutes;
-    if APatch.Price.HasValue then
-      LQuery.Params.Int64s['PRICE_CENTS'] := LCents;
-    if APatch.Active.HasValue then
-      LQuery.Params.Integers['ACTIVE'] := Ord(APatch.Active.Value);
+    LQuery.Params.OptStrings['NAME'] := LName;
+    LQuery.Params.OptStrings['NAME_KEY'] := LName.Map(PcFoldForSearch);
+    LQuery.Params.OptIntegers['DURATION_MINUTES'] := LDuration;
+    LQuery.Params.OptIntegers['BUFFER_MINUTES'] := LBuffer;
+    LQuery.Params.OptBooleans['ACTIVE'] := APatch.Active;
+    // The one if left: the price is stored in cents, and Map keeps the type
+    // (an IOptCurrency can't become an IOptInt64).
+    if LPrice.HasValue then
+      LQuery.Params.Int64s['PRICE_CENTS'] := CentsOf(LPrice.Value);
     LRows := LQuery.ExecSql;
     LTx.Commit;
   except

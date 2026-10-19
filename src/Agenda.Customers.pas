@@ -261,38 +261,31 @@ end;
 { the stored row }
 
 type
+  // A customer as stored: the contacts null or a value (never '' for none).
   TCustomerRow = record
     Name: string;
-    Phone: string; // '' = none
-    Email: string; // '' = none
+    Phone: INullString;
+    Email: INullString;
   end;
 
-function SearchKey(const ARow: TCustomerRow): string;
+// NAME_KEY|EMAIL|the phone's digits ('' for a contact there isn't).
+function SearchKey(const AName, APhone, AEmail: string): string;
 var
   LDigits: string;
 begin
-  if not TryPhoneDigits(ARow.Phone, LDigits) then
+  if not TryPhoneDigits(APhone, LDigits) then
     LDigits := '';
-  Result := PcFoldForSearch(ARow.Name) + '|' + ARow.Email + '|' + LDigits;
+  Result := PcFoldForSearch(AName) + '|' + AEmail + '|' + LDigits;
 end;
 
-function NullIfEmpty(const AText: string): IOptNullString;
+// A PATCH member over the stored value: the stored one when the member is
+// absent, else what came (null clears it).
+function Merged(const APatch: IOptNullString; const AStored: INullString): INullString;
 begin
-  if AText = '' then
-    Result := TOptNullString.Null
+  if APatch.HasValue then
+    Result := APatch as INullString
   else
-    Result := TOptNullString.From(AText);
-end;
-
-// The row's columns, through TTenantFilter.Prepare already done.
-procedure BindRow(const AQuery: IQuery; const ARow: TCustomerRow);
-begin
-  AQuery.Params.Strings['NAME'] := ARow.Name;
-  AQuery.Params.Strings['NAME_KEY'] := PcFoldForSearch(ARow.Name);
-  AQuery.Params.OptNullStrings['PHONE'] := NullIfEmpty(ARow.Phone);
-  AQuery.Params.OptNullStrings['EMAIL'] := NullIfEmpty(ARow.Email);
-  AQuery.Params.Strings['SEARCH_KEY'] := SearchKey(ARow);
-  AQuery.Params.Int64s['UPDATED_AT'] := TJwt.UnixNow;
+    Result := AStored;
 end;
 
 function ReadCustomer(const AResult: IQueryResult): ICustomer;
@@ -358,26 +351,36 @@ end;
 
 function TCustomerRepository.Insert(const ACustomer: ICustomerInsert): ICustomer;
 var
-  LRow: TCustomerRow;
-  LId: string;
+  LName, LId: string;
+  LPhone, LEmail: IOptString;
+  LNow: Int64;
   LQuery: IQuery;
   LTx: IScopeTransaction;
 begin
-  LRow.Name := CheckName(ACustomer.Name);
-  LRow.Phone := '';
-  if ACustomer.Phone.HasValue then
-    LRow.Phone := CheckPhone(ACustomer.Phone.Value);
-  LRow.Email := '';
-  if ACustomer.Email.HasValue then
-    LRow.Email := CheckEmail(ACustomer.Email.Value);
+  // Normalized and checked through Map: a contact that didn't come stays
+  // absent, one that came is stored as CheckPhone/CheckEmail give it, or is a
+  // 400. No "if HasValue".
+  LName := CheckName(ACustomer.Name);
+  LPhone := ACustomer.Phone.Map(CheckPhone);
+  LEmail := ACustomer.Email.Map(CheckEmail);
   LId := NewId;
+  LNow := TJwt.UnixNow;
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
   LTx.StartTransaction;
   try
-    TTenantFilter.Prepare(LQuery, FScope, 'CUSTOMER.INSERT');
+    // A column per optional contact, kept exactly when it came; absent, the
+    // database writes NULL. The tag and the parameter go together.
+    TTenantFilter.Prepare(LQuery, FScope, FScope.Factory.SqlLoader['CUSTOMER.INSERT']
+      .ProcessTag('PHONE', LPhone.HasValue)
+      .ProcessTag('EMAIL', LEmail.HasValue));
     LQuery.Params.Strings['ID'] := LId;
-    BindRow(LQuery, LRow);
-    LQuery.Params.Int64s['CREATED_AT'] := TJwt.UnixNow;
+    LQuery.Params.Strings['NAME'] := LName;
+    LQuery.Params.Strings['NAME_KEY'] := PcFoldForSearch(LName);
+    LQuery.Params.OptStrings['PHONE'] := LPhone;
+    LQuery.Params.OptStrings['EMAIL'] := LEmail;
+    LQuery.Params.Strings['SEARCH_KEY'] := SearchKey(LName, LPhone.ValueOr(''), LEmail.ValueOr(''));
+    LQuery.Params.Int64s['CREATED_AT'] := LNow;
+    LQuery.Params.Int64s['UPDATED_AT'] := LNow;
     LQuery.ExecSql;
     LTx.Commit;
   except
@@ -389,43 +392,43 @@ end;
 
 function TCustomerRepository.Update(const AId: string; const APatch: ICustomerPatch): ICustomer;
 var
+  LName: IOptString;
+  LPhone, LEmail: IOptNullString;
   LRow: TCustomerRow;
   LQuery: IQuery;
   LTx: IScopeTransaction;
   LResult: IQueryResult;
   LFound: Boolean;
 begin
-  // Checked before the transaction: a 400 touches nothing.
-  if APatch.Name.HasValue then
-    LRow.Name := CheckName(APatch.Name.Value);
-  if APatch.Phone.HasValue and not APatch.Phone.IsNull then
-    LRow.Phone := CheckPhone(APatch.Phone.Value);
-  if APatch.Email.HasValue and not APatch.Email.IsNull then
-    LRow.Email := CheckEmail(APatch.Email.Value);
+  // Checked before the transaction, through Map: a 400 touches nothing; null
+  // and absent pass through unchanged.
+  LName := APatch.Name.Map(CheckName);
+  LPhone := APatch.Phone.Map(CheckPhone);
+  LEmail := APatch.Email.Map(CheckEmail);
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
   LTx.StartTransaction;
   try
+    // The search key depends on every column, so the row is read and written
+    // whole: what came over what is stored.
     TTenantFilter.Prepare(LQuery, FScope, 'CUSTOMER.BY_ID');
     LQuery.Params.Strings['ID'] := AId;
     LResult := LQuery.Open;
     LFound := not LResult.Eof;
     if LFound then
     begin
-      // Absent: the stored value; null: none; a value: the checked one.
-      if not APatch.Name.HasValue then
-        LRow.Name := LResult.Strings['NAME'];
-      if not APatch.Phone.HasValue then
-        LRow.Phone := LResult.NullableStrings['PHONE'].ValueOr('')
-      else if APatch.Phone.IsNull then
-        LRow.Phone := '';
-      if not APatch.Email.HasValue then
-        LRow.Email := LResult.NullableStrings['EMAIL'].ValueOr('')
-      else if APatch.Email.IsNull then
-        LRow.Email := '';
+      LRow.Name := LName.ValueOr(LResult.Strings['NAME']);
+      LRow.Phone := Merged(LPhone, LResult.NullableStrings['PHONE']);
+      LRow.Email := Merged(LEmail, LResult.NullableStrings['EMAIL']);
       LResult := nil;
       TTenantFilter.Prepare(LQuery, FScope, 'CUSTOMER.UPDATE');
       LQuery.Params.Strings['ID'] := AId;
-      BindRow(LQuery, LRow);
+      LQuery.Params.Strings['NAME'] := LRow.Name;
+      LQuery.Params.Strings['NAME_KEY'] := PcFoldForSearch(LRow.Name);
+      LQuery.Params.NullStrings['PHONE'] := LRow.Phone;
+      LQuery.Params.NullStrings['EMAIL'] := LRow.Email;
+      LQuery.Params.Strings['SEARCH_KEY'] := SearchKey(LRow.Name, LRow.Phone.ValueOr(''),
+        LRow.Email.ValueOr(''));
+      LQuery.Params.Int64s['UPDATED_AT'] := TJwt.UnixNow;
       LQuery.ExecSql;
     end;
     LResult := nil;

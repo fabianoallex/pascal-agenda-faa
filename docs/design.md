@@ -446,6 +446,31 @@ winner stored its next token, leaving a live token of a revoked family; now the 
 spent token again and refuses). This API pins it: 31 unit tests and 323 HTTP checks on FPC
 Windows and Linux.
 
+**Repositories on the optionals' own tools** (2026-10-19, the user's review): the checks are
+functions from a value to the value to store that raise a 400 (`CheckName`, `CheckEmail`,
+`CheckPhone`, `CheckDuration`, `CheckPrice`, `CheckRole`: the shape of pascal-common-faa's
+`TPcStringFunc`/`TPcIntegerFunc`/`TPcCurrencyFunc`), so an optional member goes through one with
+`Map`, which calls it only when the member came and keeps absent and null as they are. A rule
+that needs context is a normalizer object taken by `Normalize` (`THashPassword` with the
+iterations, `TExistingProfessional` with the tenant's scope). The optional is then bound as it is
+(`OptStrings`, `OptNullStrings`, `OptBooleans`...) next to a `ProcessTag` on the same
+`HasValue`, in UPDATEs and now in INSERTs too (an absent contact leaves its column out and the
+database writes NULL). `Insert`/`Update` lost their `if HasValue`: across the four repositories,
+`if` 83 -> 54 and `HasValue` 59 -> 37 (what remains is inside the checks, the search filters and
+business decisions such as the owner's own account). Customers keep reading the row before an
+update (the search key depends on every column), merged with `ValueOr` and one helper.
+323 HTTP checks unchanged on FPC Windows and Linux.
+
+Found while doing it (candidates, not built):
+- `Map` keeps the type: an `IOptCurrency` price can't become the `IOptInt64` of its cents, so
+  that member keeps one `if`. A cross-type map (or `OptInt64s` from a function) would remove it.
+- "What came, else what is stored" for a nullable member (`Merged` here): an
+  `IOptNullString` over an `INullString`. `ValueOr` covers a non-nullable one; the nullable case
+  needs a combinator (absent -> the stored value, null -> null, value -> value).
+- pascal-api-infra-faa's sample 02 says a normalizer shouldn't validate (it would hide a
+  mistake); that holds for `Normalize`. A check that raises goes through `Map`, which says what it
+  is. The guide could tell the two apart.
+
 **Shared test kit**: the DUnitX-to-FPCUnit adapter (`*.DUnitXCompat.pas`) and
 `gen_fpc_mirror.py` exist as near-identical copies in pascal-common-faa, -jsonmapper-faa,
 -db-faa, -redis-faa, -api-infra-faa and three other projects; this is the eighth. A

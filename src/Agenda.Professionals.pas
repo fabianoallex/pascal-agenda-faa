@@ -335,26 +335,25 @@ end;
 function TProfessionalRepository.Insert(const AProfessional: IProfessionalInsert): IProfessional;
 var
   LName, LId: string;
-  LEmail: IOptNullString;
+  LEmail: IOptString;
   LNow: Int64;
   LQuery: IQuery;
   LTx: IScopeTransaction;
 begin
   LName := CheckName(AProfessional.Name);
-  if AProfessional.Email.HasValue then
-    LEmail := TOptNullString.From(CheckEmail(AProfessional.Email.Value))
-  else
-    LEmail := TOptNullString.Null;
+  LEmail := AProfessional.Email.Map(CheckEmail); // absent stays absent
   LId := NewId;
   LNow := TJwt.UnixNow;
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
   LTx.StartTransaction;
   try
-    TTenantFilter.Prepare(LQuery, FScope, 'PROFESSIONAL.INSERT');
+    // The EMAIL column only when it came; absent, the database writes NULL.
+    TTenantFilter.Prepare(LQuery, FScope, FScope.Factory.SqlLoader['PROFESSIONAL.INSERT']
+      .ProcessTag('EMAIL', LEmail.HasValue));
     LQuery.Params.Strings['ID'] := LId;
     LQuery.Params.Strings['NAME'] := LName;
     LQuery.Params.Strings['NAME_KEY'] := PcFoldForSearch(LName);
-    LQuery.Params.OptNullStrings['EMAIL'] := LEmail;
+    LQuery.Params.OptStrings['EMAIL'] := LEmail;
     LQuery.Params.Int64s['CREATED_AT'] := LNow;
     LQuery.Params.Int64s['UPDATED_AT'] := LNow;
     LQuery.ExecSql;
@@ -369,36 +368,29 @@ end;
 function TProfessionalRepository.Update(const AId: string;
   const APatch: IProfessionalPatch): IProfessional;
 var
-  LName: string;
+  LName: IOptString;
   LEmail: IOptNullString;
   LQuery: IQuery;
   LTx: IScopeTransaction;
   LRows: Int64;
 begin
-  LName := '';
-  if APatch.Name.HasValue then
-    LName := CheckName(APatch.Name.Value);
-  // Absent: left; null: cleared; a value: checked and replaced.
-  LEmail := APatch.Email;
-  if LEmail.HasValue and not LEmail.IsNull then
-    LEmail := TOptNullString.From(CheckEmail(LEmail.Value));
+  // Through Map: absent stays absent (left), null stays null (cleared), a
+  // value is checked (a 400) and normalized.
+  LName := APatch.Name.Map(CheckName);
+  LEmail := APatch.Email.Map(CheckEmail);
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
   LTx.StartTransaction;
   try
     TTenantFilter.Prepare(LQuery, FScope, FScope.Factory.SqlLoader['PROFESSIONAL.UPDATE']
-      .ProcessTag('NAME', APatch.Name.HasValue)
+      .ProcessTag('NAME', LName.HasValue)
       .ProcessTag('EMAIL', LEmail.HasValue)
       .ProcessTag('ACTIVE', APatch.Active.HasValue));
     LQuery.Params.Strings['ID'] := AId;
     LQuery.Params.Int64s['UPDATED_AT'] := TJwt.UnixNow;
-    if APatch.Name.HasValue then
-    begin
-      LQuery.Params.Strings['NAME'] := LName;
-      LQuery.Params.Strings['NAME_KEY'] := PcFoldForSearch(LName);
-    end;
+    LQuery.Params.OptStrings['NAME'] := LName;
+    LQuery.Params.OptStrings['NAME_KEY'] := LName.Map(PcFoldForSearch);
     LQuery.Params.OptNullStrings['EMAIL'] := LEmail;
-    if APatch.Active.HasValue then
-      LQuery.Params.Integers['ACTIVE'] := Ord(APatch.Active.Value);
+    LQuery.Params.OptBooleans['ACTIVE'] := APatch.Active;
     LRows := LQuery.ExecSql;
     LTx.Commit;
   except

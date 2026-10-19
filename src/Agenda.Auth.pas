@@ -406,12 +406,12 @@ begin
   LTx := LScope.Factory.GetPool.AcquireQuery(LQuery);
   LTx.StartTransaction;
   try
-    TTenantFilter.Prepare(LQuery, LScope, 'USER.INSERT');
+    TTenantFilter.Prepare(LQuery, LScope, LScope.Factory.SqlLoader['USER.INSERT']
+      .ProcessTag('PROFESSIONAL', False));
     LQuery.Params.Strings['ID'] := Result;
     LQuery.Params.Strings['EMAIL'] := LEmail;
     LQuery.Params.Strings['PASSWORD_HASH'] := LHash;
     LQuery.Params.Strings['ROLE'] := ARole;
-    LQuery.Params.OptNullStrings['PROFESSIONAL_ID'] := TOptNullString.Null;
     LQuery.Params.Int64s['CREATED_AT'] := TJwt.UnixNow;
     LQuery.Params.Int64s['UPDATED_AT'] := TJwt.UnixNow;
     LQuery.ExecSql;
