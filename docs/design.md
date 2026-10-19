@@ -378,7 +378,7 @@ user reads, the owner changes.
 
 Checks: 41 unit tests (13 new) on FPC Windows and Linux; 319 HTTP checks (72 new in
 `tools/http_scenarios_schedule.sh`) on FPC Windows and Linux (Docker), plus the restart; OpenAPI
-valid. **Delphi 12 Win32/Win64: not yet run** for this step.
+valid. Delphi 12 Win32/Win64: 41 unit tests (0 leaks) and 319 checks each, with the restart.
 
 What it showed about the libraries:
 
