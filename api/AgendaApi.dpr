@@ -324,37 +324,14 @@ begin
     raise EHttpException.Create(403, 'Only the tenant''s owner can change this.', 'owner_only');
 end;
 
-// ?active=true|false; absent when not given; 400 for anything else.
-function ParseQueryBool(const AName, AText: string): IOptBoolean;
-begin
-  if AText = '' then
-    Result := TOptNullBoolean.Undefined
-  // TrueValue/FalseValue, not From: From returns IOptNullBoolean, which
-  // doesn't go into an IOptBoolean (pascal-common-faa 1.19.0's notes).
-  else if AText = 'true' then
-    Result := TOptNullBoolean.TrueValue
-  else if AText = 'false' then
-    Result := TOptNullBoolean.FalseValue
-  else
-    raise EValidationException.CreateFmt('"%s" must be true or false.', [AName]);
-end;
-
 procedure GetServices(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
 var
-  LFill: TServiceFind;
   LFind: IServiceFind;
   LRepo: TServiceRepository;
   LPage: TPage<IService>;
 begin
-  // Filled through the class while the interface holds it (the DTO
-  // convention, pascal-api-infra-faa 0.18.0).
-  LFill := TServiceFind.Create;
-  LFind := LFill;
-  LFill.Page := ParseQueryInt('page', AReq.Query['page']);
-  LFill.Limit := ParseQueryInt('limit', AReq.Query['limit']);
-  LFill.OrderBy := ParseQueryStr(AReq.Query['orderBy']);
-  LFill.Search := ParseQueryStr(AReq.Query['search']);
-  LFill.Active := ParseQueryBool('active', AReq.Query['active']);
+  // The members QueryParams<IServiceFind> documents (pascal-api-infra-faa 0.19.0).
+  LFind := THorseQueryParams.Read<IServiceFind>(AReq);
   LRepo := TServiceRepository.Create(ScopeOf(AReq));
   try
     LPage := LRepo.FindPage(LFind, PageRequestFrom(LFind.Page, LFind.Limit,
@@ -422,20 +399,12 @@ end;
 
 procedure GetProfessionals(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
 var
-  LFill: TProfessionalFind;
   LFind: IProfessionalFind;
   LRepo: TProfessionalRepository;
   LPage: TPage<IProfessional>;
 begin
-  // Filled through the class while the interface holds it (the DTO
-  // convention, pascal-api-infra-faa 0.18.0).
-  LFill := TProfessionalFind.Create;
-  LFind := LFill;
-  LFill.Page := ParseQueryInt('page', AReq.Query['page']);
-  LFill.Limit := ParseQueryInt('limit', AReq.Query['limit']);
-  LFill.OrderBy := ParseQueryStr(AReq.Query['orderBy']);
-  LFill.Search := ParseQueryStr(AReq.Query['search']);
-  LFill.Active := ParseQueryBool('active', AReq.Query['active']);
+  // The members QueryParams<IProfessionalFind> documents (pascal-api-infra-faa 0.19.0).
+  LFind := THorseQueryParams.Read<IProfessionalFind>(AReq);
   LRepo := TProfessionalRepository.Create(ScopeOf(AReq));
   try
     LPage := LRepo.FindPage(LFind, PageRequestFrom(LFind.Page, LFind.Limit,
@@ -506,17 +475,12 @@ end;
 
 procedure GetCustomers(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
 var
-  LFill: TCustomerFind;
   LFind: ICustomerFind;
   LRepo: TCustomerRepository;
   LPage: TPage<ICustomer>;
 begin
-  LFill := TCustomerFind.Create;
-  LFind := LFill;
-  LFill.Page := ParseQueryInt('page', AReq.Query['page']);
-  LFill.Limit := ParseQueryInt('limit', AReq.Query['limit']);
-  LFill.OrderBy := ParseQueryStr(AReq.Query['orderBy']);
-  LFill.Search := ParseQueryStr(AReq.Query['search']);
+  // The members QueryParams<ICustomerFind> documents (pascal-api-infra-faa 0.19.0).
+  LFind := THorseQueryParams.Read<ICustomerFind>(AReq);
   LRepo := TCustomerRepository.Create(ScopeOf(AReq));
   try
     LPage := LRepo.FindPage(LFind, PageRequestFrom(LFind.Page, LFind.Limit,
@@ -582,15 +546,6 @@ end;
 
 { Users: the owner only }
 
-// ?role=owner|staff; absent when not given (the repository checks the value).
-function ParseQueryRole(const AText: string): IOptString;
-begin
-  if AText = '' then
-    Result := TOptNullString.Undefined
-  else
-    Result := TOptNullString.From(AText);
-end;
-
 function NewUserRepository(AReq: THorseRequest): TUserRepository;
 begin
   Result := TUserRepository.Create(ScopeOf(AReq), GPasswordIterations);
@@ -598,20 +553,13 @@ end;
 
 procedure GetUsers(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
 var
-  LFill: TUserFind;
   LFind: IUserFind;
   LRepo: TUserRepository;
   LPage: TPage<IUser>;
 begin
   RequireOwner(AReq);
-  LFill := TUserFind.Create;
-  LFind := LFill;
-  LFill.Page := ParseQueryInt('page', AReq.Query['page']);
-  LFill.Limit := ParseQueryInt('limit', AReq.Query['limit']);
-  LFill.OrderBy := ParseQueryStr(AReq.Query['orderBy']);
-  LFill.Search := ParseQueryStr(AReq.Query['search']);
-  LFill.Role := ParseQueryRole(AReq.Query['role']);
-  LFill.Active := ParseQueryBool('active', AReq.Query['active']);
+  // The members QueryParams<IUserFind> documents (pascal-api-infra-faa 0.19.0).
+  LFind := THorseQueryParams.Read<IUserFind>(AReq);
   LRepo := NewUserRepository(AReq);
   try
     LPage := LRepo.FindPage(LFind, PageRequestFrom(LFind.Page, LFind.Limit,
@@ -708,18 +656,12 @@ end;
 
 procedure GetTimeOffList(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
 var
-  LFill: TTimeOffFind;
   LFind: ITimeOffFind;
   LRepo: TTimeOffRepository;
   LPage: TPage<ITimeOff>;
 begin
-  LFill := TTimeOffFind.Create;
-  LFind := LFill;
-  LFill.Page := ParseQueryInt('page', AReq.Query['page']);
-  LFill.Limit := ParseQueryInt('limit', AReq.Query['limit']);
-  LFill.OrderBy := ParseQueryStr(AReq.Query['orderBy']);
-  LFill.From := ParseQueryStr(AReq.Query['from']);
-  LFill.To_ := ParseQueryStr(AReq.Query['to']);
+  // The members QueryParams<ITimeOffFind> documents (pascal-api-infra-faa 0.19.0).
+  LFind := THorseQueryParams.Read<ITimeOffFind>(AReq);
   LRepo := TTimeOffRepository.Create(ScopeOf(AReq));
   try
     LPage := LRepo.FindPage(AReq.Params['id'], LFind, PageRequestFrom(LFind.Page, LFind.Limit,

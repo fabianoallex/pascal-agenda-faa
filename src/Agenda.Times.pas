@@ -3,16 +3,15 @@ unit Agenda.Times;
 {$I agenda.inc}
 
 { Times as the API writes them: a clock time of the tenant ("09:30", minutes
-  since midnight) and an instant (ISO 8601 in UTC, Unix seconds).
+  since midnight), the week's check, and instants between the database
+  (Unix seconds) and pascal-jsonmapper-faa's TUtcDateTime.
 
-  An instant must say its zone. pascal-jsonmapper-faa's TDateTime reads
-  "2026-12-24T13:00" without one as is, and writes no zone back: for a value
-  stored in UTC a client couldn't tell either way. So the API carries
-  instants as strings: TryParseInstant refuses a text without "Z" or an
-  offset (the offset converts to UTC, through the mapper's own parser), and
-  InstantToStr always writes "Z". The output is built from the Unix seconds
-  with integer arithmetic, never through a fraction of a day, so no second is
-  lost to rounding. A library candidate (docs/design.md). }
+  Instants used to travel as strings, through a parser and a writer of this
+  unit: the mapper's TDateTime took a text without a zone as is and wrote no
+  zone back. pascal-jsonmapper-faa 0.7.0 added TUtcDateTime (a zone required
+  on input, "Z" written, exact to the millisecond), so the DTOs declare that,
+  and only the conversion to and from Unix seconds stays here, with
+  TryParseInstant for a query-string value (the mapper's own parser). }
 
 interface
 
@@ -41,11 +40,15 @@ function TryParseClock(const AText: string; out AMinutes: Integer): Boolean;
 function ClockToStr(AMinutes: Integer): string;
 
 /// An ISO 8601 date and time with "Z" or an offset (+hh:mm, -hh:mm), into
-/// Unix seconds (UTC); False for anything else, a time before 1970 included.
+/// Unix seconds (UTC), rounded to the second; False for anything else, a
+/// time before 1970 included. pascal-jsonmapper-faa's JsonStrToUtcDateTime.
 function TryParseInstant(const AText: string; out AUnix: Int64): Boolean;
 
-/// Unix seconds as "YYYY-MM-DDTHH:MM:SSZ".
-function InstantToStr(AUnix: Int64): string;
+/// Unix seconds as a UTC TDateTime (for a TUtcDateTime member).
+function UnixToUtc(AUnix: Int64): TDateTime;
+
+/// A UTC TDateTime as Unix seconds, rounded to the second.
+function UtcToUnix(AValue: TDateTime): Int64;
 
 /// Sorts AIntervals by weekday and start, and returns what is wrong with
 /// them as a week ('' when nothing): a weekday outside 1-7, a time not a
@@ -86,49 +89,29 @@ begin
   Result := Format('%.2d:%.2d', [AMinutes div 60, AMinutes mod 60]);
 end;
 
-// True when the time part (after the date's "T") ends in a zone: "Z", or a
-// sign after the clock.
-function HasZone(const AText: string): Boolean;
-var
-  I: Integer;
-begin
-  Result := False;
-  if Length(AText) < 17 then // YYYY-MM-DDTHH:MM and a zone
-    Exit;
-  if not CharInSet(AText[11], ['T', 't']) then
-    Exit;
-  for I := 12 to Length(AText) do
-    if CharInSet(AText[I], ['Z', 'z', '+', '-']) then
-      Exit(True);
-end;
-
 function TryParseInstant(const AText: string; out AUnix: Int64): Boolean;
 var
-  LText: string;
   LValue: TDateTime;
 begin
   AUnix := 0;
-  LText := Trim(AText);
-  Result := HasZone(LText);
-  if not Result then
-    Exit;
   try
-    LValue := JsonStrToDateTime(LText);
+    LValue := JsonStrToUtcDateTime(AText);
   except
     on EJsonError do
       Exit(False);
   end;
-  AUnix := Round((LValue - UNIX_EPOCH_DAYS) * SECONDS_PER_DAY);
+  AUnix := UtcToUnix(LValue);
   Result := AUnix >= 0;
 end;
 
-function InstantToStr(AUnix: Int64): string;
-var
-  LSeconds: Integer;
+function UnixToUtc(AUnix: Int64): TDateTime;
 begin
-  LSeconds := Integer(AUnix mod SECONDS_PER_DAY);
-  Result := JsonDateToStr(UNIX_EPOCH_DAYS + AUnix div SECONDS_PER_DAY) +
-    Format('T%.2d:%.2d:%.2dZ', [LSeconds div 3600, LSeconds div 60 mod 60, LSeconds mod 60]);
+  Result := UNIX_EPOCH_DAYS + AUnix / SECONDS_PER_DAY;
+end;
+
+function UtcToUnix(AValue: TDateTime): Int64;
+begin
+  Result := Round((AValue - UNIX_EPOCH_DAYS) * SECONDS_PER_DAY);
 end;
 
 function WeekProblem(var AIntervals: TClockIntervalArray): string;

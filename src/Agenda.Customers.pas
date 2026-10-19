@@ -152,7 +152,9 @@ uses
   PascalApi.Http,
   PascalApi.Text,
   PascalApi.Jwt,
+  PascalApi.PagedQuery,
   Agenda.Auth,
+  PascalCommon.Text,
   Agenda.Text,
   Agenda.Tokens;
 
@@ -175,7 +177,7 @@ begin
   if TryPhoneDigits(AText, LDigits) then
     Result := LDigits
   else
-    Result := FoldForSearch(AText);
+    Result := PcFoldForSearch(AText);
 end;
 
 { DTOs }
@@ -235,7 +237,7 @@ end;
 function CheckName(const AName: string): string;
 begin
   Result := Trim(AName);
-  if FoldForSearch(Result) = '' then
+  if PcFoldForSearch(Result) = '' then
     raise EValidationException.Create('"name" is required.', 'name_required');
   if PaCharCount(Result) > MAX_NAME_CHARS then
     raise EValidationException.CreateFmt('"name" must have at most %d characters.',
@@ -271,7 +273,7 @@ var
 begin
   if not TryPhoneDigits(ARow.Phone, LDigits) then
     LDigits := '';
-  Result := FoldForSearch(ARow.Name) + '|' + ARow.Email + '|' + LDigits;
+  Result := PcFoldForSearch(ARow.Name) + '|' + ARow.Email + '|' + LDigits;
 end;
 
 function NullIfEmpty(const AText: string): IOptNullString;
@@ -286,7 +288,7 @@ end;
 procedure BindRow(const AQuery: IQuery; const ARow: TCustomerRow);
 begin
   AQuery.Params.Strings['NAME'] := ARow.Name;
-  AQuery.Params.Strings['NAME_KEY'] := FoldForSearch(ARow.Name);
+  AQuery.Params.Strings['NAME_KEY'] := PcFoldForSearch(ARow.Name);
   AQuery.Params.OptNullStrings['PHONE'] := NullIfEmpty(ARow.Phone);
   AQuery.Params.OptNullStrings['EMAIL'] := NullIfEmpty(ARow.Email);
   AQuery.Params.Strings['SEARCH_KEY'] := SearchKey(ARow);
@@ -323,45 +325,18 @@ end;
 function TCustomerRepository.FindPage(const AFind: ICustomerFind;
   const APage: TPageRequest): TPage<ICustomer>;
 var
-  LQuery: IQuery;
-  LTx: IScopeTransaction;
-  LResult: IQueryResult;
   LOrder, LSearch: string;
-  LCount: Integer;
+  LArgs: TQueryArgs;
 begin
   LOrder := CustomerOrderSpec.Build(AFind.OrderBy.ValueOr(''));
   LSearch := SearchOf(AFind);
-  LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
-  LTx.StartTransaction;
-  try
-    TTenantFilter.Prepare(LQuery, FScope,
-      FScope.Factory.SqlLoader['CUSTOMER.COUNT'].ProcessTag('SEARCH', LSearch <> ''));
-    if LSearch <> '' then
-      LQuery.Params.Strings['SEARCH'] := LikeContains(LSearch);
-    Result.Meta := TPageMeta.Create(APage, LQuery.Open.Int64s['TOTAL']);
-
-    TTenantFilter.Prepare(LQuery, FScope,
-      FScope.Factory.SqlLoader['CUSTOMER.PAGE'].ProcessTag('SEARCH', LSearch <> '')
-        .ReplaceLiteral('ORDER', LOrder)
-        .ReplaceLiteral('PAGE', PdbPagingClause(LTx, APage)));
-    if LSearch <> '' then
-      LQuery.Params.Strings['SEARCH'] := LikeContains(LSearch);
-    LResult := LQuery.Open;
-    Result.Items := nil;
-    SetLength(Result.Items, LResult.RecordCount);
-    LCount := 0;
-    while not LResult.Eof do
-    begin
-      Result.Items[LCount] := ReadCustomer(LResult);
-      Inc(LCount);
-      LResult.Next;
-    end;
-    SetLength(Result.Items, LCount);
-    LTx.Commit;
-  except
-    LTx.Rollback;
-    raise;
-  end;
+  LArgs := TQueryArgs.New;
+  if LSearch <> '' then
+    LArgs := LArgs.Strings('SEARCH', PdbLikeContains(LSearch));
+  Result := TTenantPagedQuery.Run<ICustomer>(FScope,
+    FScope.Factory.SqlLoader['CUSTOMER.COUNT'].ProcessTag('SEARCH', LSearch <> ''),
+    FScope.Factory.SqlLoader['CUSTOMER.PAGE'].ProcessTag('SEARCH', LSearch <> ''),
+    LOrder, APage, LArgs, ReadCustomer);
 end;
 
 function TCustomerRepository.FindById(const AId: string): ICustomer;

@@ -195,6 +195,7 @@ uses
   PascalApi.Http,
   PascalApi.Text,
   PascalApi.Jwt,
+  PascalApi.PagedQuery,
   Agenda.Auth,
   Agenda.Passwords,
   Agenda.Text,
@@ -373,58 +374,30 @@ begin
     .ProcessTag('ACTIVE', AFind.Active.HasValue);
 end;
 
-procedure BindFilters(const AQuery: IQuery; const AFind: IUserFind);
+function FilterArgs(const AFind: IUserFind): TQueryArgs;
 begin
+  Result := TQueryArgs.New;
   // Emails are stored lower case (ASCII): the search is too.
   if HasSearch(AFind) then
-    AQuery.Params.Strings['SEARCH'] := LikeContains(LowerCase(Trim(AFind.Search.Value)));
+    Result := Result.Strings('SEARCH', PdbLikeContains(LowerCase(Trim(AFind.Search.Value))));
   if AFind.Role.HasValue then
-    AQuery.Params.Strings['ROLE'] := AFind.Role.Value;
+    Result := Result.Strings('ROLE', AFind.Role.Value);
   if AFind.Active.HasValue then
-    AQuery.Params.Integers['ACTIVE'] := Ord(AFind.Active.Value);
+    Result := Result.Integers('ACTIVE', Ord(AFind.Active.Value));
 end;
 
 function TUserRepository.FindPage(const AFind: IUserFind;
   const APage: TPageRequest): TPage<IUser>;
 var
-  LQuery: IQuery;
-  LTx: IScopeTransaction;
-  LResult: IQueryResult;
   LOrder: string;
-  LCount: Integer;
 begin
   LOrder := UserOrderSpec.Build(AFind.OrderBy.ValueOr(''));
   if AFind.Role.HasValue then
     CheckRole(AFind.Role.Value);
-  LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
-  LTx.StartTransaction;
-  try
-    TTenantFilter.Prepare(LQuery, FScope,
-      Filtered(FScope.Factory.SqlLoader['USER.COUNT'], AFind));
-    BindFilters(LQuery, AFind);
-    Result.Meta := TPageMeta.Create(APage, LQuery.Open.Int64s['TOTAL']);
-
-    TTenantFilter.Prepare(LQuery, FScope,
-      Filtered(FScope.Factory.SqlLoader['USER.PAGE'], AFind)
-        .ReplaceLiteral('ORDER', LOrder)
-        .ReplaceLiteral('PAGE', PdbPagingClause(LTx, APage)));
-    BindFilters(LQuery, AFind);
-    LResult := LQuery.Open;
-    Result.Items := nil;
-    SetLength(Result.Items, LResult.RecordCount);
-    LCount := 0;
-    while not LResult.Eof do
-    begin
-      Result.Items[LCount] := ReadUserDto(LResult);
-      Inc(LCount);
-      LResult.Next;
-    end;
-    SetLength(Result.Items, LCount);
-    LTx.Commit;
-  except
-    LTx.Rollback;
-    raise;
-  end;
+  Result := TTenantPagedQuery.Run<IUser>(FScope,
+    Filtered(FScope.Factory.SqlLoader['USER.COUNT'], AFind),
+    Filtered(FScope.Factory.SqlLoader['USER.PAGE'], AFind), LOrder, APage, FilterArgs(AFind),
+    ReadUserDto);
 end;
 
 function TUserRepository.FindById(const AId: string): IUser;

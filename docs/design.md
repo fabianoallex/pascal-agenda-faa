@@ -394,6 +394,37 @@ What it showed about the libraries:
 - Arrays of DTOs as a published member (`intervals`) mapped both ways on both compilers.
 - The paged query is now in five repositories (see the candidate above).
 
+**Candidates promoted to the libraries** (2026-10-19, the user's decision: "attack the
+candidates"). Built there with their own tests, then adopted here against the new commits:
+
+| Candidate | Library | What it replaced here |
+|---|---|---|
+| Search key | pascal-common-faa 1.20.0 `PcFoldForSearch` | `Agenda.Text.FoldForSearch` |
+| LIKE pattern | pascal-db-faa 0.16.0 `PdbLikeContains`, escape `!` | `Agenda.Text.LikeContains` and `ESCAPE ''` |
+| Instant type | pascal-jsonmapper-faa 0.7.0 `TUtcDateTime` | time off's `startsAt`/`endsAt` as strings, `Agenda.Times`' parser and writer |
+| Find DTO from the query string | pascal-api-infra-faa 0.19.0 `THorseQueryParams.Read<I>` | five handlers copying each member, `ParseQueryBool`, `ParseQueryRole` |
+| Paged query | pascal-api-infra-faa 0.19.0 `TTenantPagedQuery.Run<T>` + `TQueryArgs` | five `FindPage` bodies (about 35 lines each) |
+
+The phone stays here (`Agenda.Text`): pascal-common-faa's normalizers leave business rules to the
+application.
+
+- **Bug found while promoting** (pascal-db-faa's gotcha 26, already documented there): with
+  `ESCAPE ''`, SQLdb's SQLite3 and PostgreSQL connectors read `'` as an escaped quote while
+  looking for parameters and lose every parameter after it. `GET /services?search=c&active=true`
+  and `GET /users?search=demo&role=staff` answered **500** (`Parameter "ACTIVE" not found`,
+  measured on FPC Windows); no scenario combined a search with a filter. Now `ESCAPE '!'` through
+  `PdbLikeContains`, and two scenarios combine them. The library's documentation had the warning
+  as text and a `StringReplace` chain to copy; a function that carries the escape is what keeps a
+  consumer from it.
+- Time off's `startsAt` without a zone is now refused by the mapper (`startsAt: Invalid UTC
+  date/time ...`, 400) instead of this API's `invalid_instant` code; the query's `from`/`to` keep
+  `invalid_instant` (read by `TryParseInstant`, now on the mapper's parser).
+- An invalid query value keeps its 400 and message (`"active" must be true or false.`, the
+  library's `InvalidQueryBoolean`, the same text as before).
+
+Checks: 35 unit tests (the 6 search-key and LIKE tests moved to the libraries); 323 HTTP checks
+(4 new) on FPC Windows and Linux, OpenAPI valid. Delphi: not yet run for this step.
+
 **Shared test kit**: the DUnitX-to-FPCUnit adapter (`*.DUnitXCompat.pas`) and
 `gen_fpc_mirror.py` exist as near-identical copies in pascal-common-faa, -jsonmapper-faa,
 -db-faa, -redis-faa, -api-infra-faa and three other projects; this is the eighth. A

@@ -155,7 +155,9 @@ uses
   PascalApi.Http,
   PascalApi.Text,
   PascalApi.Jwt,
+  PascalApi.PagedQuery,
   Agenda.Auth,
+  PascalCommon.Text,
   Agenda.Text,
   Agenda.Tokens;
 
@@ -250,7 +252,7 @@ end;
 function CheckName(const AName: string): string;
 begin
   Result := Trim(AName);
-  if FoldForSearch(Result) = '' then
+  if PcFoldForSearch(Result) = '' then
     raise EValidationException.Create('"name" is required.', 'name_required');
   if PaCharCount(Result) > MAX_NAME_CHARS then
     raise EValidationException.CreateFmt('"name" must have at most %d characters.',
@@ -286,7 +288,7 @@ end;
 
 function HasSearch(const AFind: IProfessionalFind): Boolean;
 begin
-  Result := AFind.Search.HasValue and (FoldForSearch(AFind.Search.Value) <> '');
+  Result := AFind.Search.HasValue and (PcFoldForSearch(AFind.Search.Value) <> '');
 end;
 
 function Filtered(const ASql: TSQLResult; const AFind: IProfessionalFind): TSQLResult;
@@ -294,53 +296,23 @@ begin
   Result := ASql.ProcessTag('SEARCH', HasSearch(AFind)).ProcessTag('ACTIVE', AFind.Active.HasValue);
 end;
 
-procedure BindFilters(const AQuery: IQuery; const AFind: IProfessionalFind);
+function FilterArgs(const AFind: IProfessionalFind): TQueryArgs;
 begin
+  Result := TQueryArgs.New;
   if HasSearch(AFind) then
-    AQuery.Params.Strings['SEARCH'] := LikeContains(FoldForSearch(AFind.Search.Value));
+    Result := Result.Strings('SEARCH', PdbLikeContains(PcFoldForSearch(AFind.Search.Value)));
   if AFind.Active.HasValue then
-    AQuery.Params.Integers['ACTIVE'] := Ord(AFind.Active.Value);
+    Result := Result.Integers('ACTIVE', Ord(AFind.Active.Value));
 end;
 
 function TProfessionalRepository.FindPage(const AFind: IProfessionalFind;
   const APage: TPageRequest): TPage<IProfessional>;
-var
-  LQuery: IQuery;
-  LTx: IScopeTransaction;
-  LResult: IQueryResult;
-  LOrder: string;
-  LCount: Integer;
 begin
-  LOrder := ProfessionalOrderSpec.Build(AFind.OrderBy.ValueOr(''));
-  LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
-  LTx.StartTransaction;
-  try
-    TTenantFilter.Prepare(LQuery, FScope,
-      Filtered(FScope.Factory.SqlLoader['PROFESSIONAL.COUNT'], AFind));
-    BindFilters(LQuery, AFind);
-    Result.Meta := TPageMeta.Create(APage, LQuery.Open.Int64s['TOTAL']);
-
-    TTenantFilter.Prepare(LQuery, FScope,
-      Filtered(FScope.Factory.SqlLoader['PROFESSIONAL.PAGE'], AFind)
-        .ReplaceLiteral('ORDER', LOrder)
-        .ReplaceLiteral('PAGE', PdbPagingClause(LTx, APage)));
-    BindFilters(LQuery, AFind);
-    LResult := LQuery.Open;
-    Result.Items := nil;
-    SetLength(Result.Items, LResult.RecordCount);
-    LCount := 0;
-    while not LResult.Eof do
-    begin
-      Result.Items[LCount] := ReadProfessional(LResult);
-      Inc(LCount);
-      LResult.Next;
-    end;
-    SetLength(Result.Items, LCount);
-    LTx.Commit;
-  except
-    LTx.Rollback;
-    raise;
-  end;
+  Result := TTenantPagedQuery.Run<IProfessional>(FScope,
+    Filtered(FScope.Factory.SqlLoader['PROFESSIONAL.COUNT'], AFind),
+    Filtered(FScope.Factory.SqlLoader['PROFESSIONAL.PAGE'], AFind),
+    ProfessionalOrderSpec.Build(AFind.OrderBy.ValueOr('')), APage, FilterArgs(AFind),
+    ReadProfessional);
 end;
 
 function TProfessionalRepository.FindById(const AId: string): IProfessional;
@@ -381,7 +353,7 @@ begin
     TTenantFilter.Prepare(LQuery, FScope, 'PROFESSIONAL.INSERT');
     LQuery.Params.Strings['ID'] := LId;
     LQuery.Params.Strings['NAME'] := LName;
-    LQuery.Params.Strings['NAME_KEY'] := FoldForSearch(LName);
+    LQuery.Params.Strings['NAME_KEY'] := PcFoldForSearch(LName);
     LQuery.Params.OptNullStrings['EMAIL'] := LEmail;
     LQuery.Params.Int64s['CREATED_AT'] := LNow;
     LQuery.Params.Int64s['UPDATED_AT'] := LNow;
@@ -422,7 +394,7 @@ begin
     if APatch.Name.HasValue then
     begin
       LQuery.Params.Strings['NAME'] := LName;
-      LQuery.Params.Strings['NAME_KEY'] := FoldForSearch(LName);
+      LQuery.Params.Strings['NAME_KEY'] := PcFoldForSearch(LName);
     end;
     LQuery.Params.OptNullStrings['EMAIL'] := LEmail;
     if APatch.Active.HasValue then

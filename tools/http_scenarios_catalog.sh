@@ -97,6 +97,12 @@ req GET "/services?active=false" "" -H "$STAFF"
 body_has '"total":1,' "services: only the inactive"
 req GET "/services?active=true" "" -H "$STAFF"
 body_has '"total":2,' "services: only the active"
+# A search and a filter together: with ESCAPE '' SQLdb lost the parameter
+# after it and this was a 500 (pascal-db-faa's gotcha 26; fixed with
+# PdbLikeContains and ESCAPE '!').
+req GET "/services?search=c&active=true" "" -H "$STAFF"
+status_is 200 "services: search and active together"
+body_has '"total":1,' "services: search and active together, the right row"
 req PATCH "/services/$CUT" '{"name":"barba"}' -H "$OWNER"
 status_is 409 "services: patch to another service's name"
 req PATCH "/services/$CUT" '{}' -H "$OWNER"

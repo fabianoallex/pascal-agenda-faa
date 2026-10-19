@@ -7,10 +7,10 @@ unit Agenda.TimeOff;
   for, and a repository on a tenant's scope.
 
   - Instants, not the local clock: "from 24 Dec 13:00 to 26 Dec 09:00" is one
-    span whatever the daylight saving rules do in between. They travel as
-    ISO 8601 strings that must say their zone ("Z" or an offset) and come
-    back in UTC with "Z" (Agenda.Times: pascal-jsonmapper-faa's TDateTime
-    would accept a text without a zone and write none back).
+    span whatever the daylight saving rules do in between. They are
+    pascal-jsonmapper-faa's TUtcDateTime: ISO 8601 that must say its zone
+    ("Z" or an offset), written back in UTC with "Z". Until its 0.7.0 they
+    were strings checked here.
   - Whole minutes, start before end, at most MAX_SPAN_DAYS long. Spans may
     overlap: two reasons for one afternoon off harm nothing, and the
     free-slot computation (M2) subtracts each.
@@ -26,6 +26,7 @@ interface
 
 uses
   PascalCommon.Optionals,
+  PascalJsonMapper.Json,
   PascalDb.Paging,
   PascalApi.OrderBy,
   PascalApi.Dto,
@@ -38,23 +39,23 @@ const
 type
   ITimeOffInsert = interface(IInsertDTOBase)
     ['{EB69F22C-852D-4568-B288-0D474C51C3E1}']
-    function GetStartsAt: string;
-    function GetEndsAt: string;
+    function GetStartsAt: TUtcDateTime;
+    function GetEndsAt: TUtcDateTime;
     function GetReason: IOptString;
-    property StartsAt: string read GetStartsAt;
-    property EndsAt: string read GetEndsAt;
+    property StartsAt: TUtcDateTime read GetStartsAt;
+    property EndsAt: TUtcDateTime read GetEndsAt;
     property Reason: IOptString read GetReason;
   end;
 
   ITimeOff = interface(IResponseDTOBase)
     ['{27603AAC-EE3F-4737-B11D-A3B96B339640}']
     function GetId: string;
-    function GetStartsAt: string;
-    function GetEndsAt: string;
+    function GetStartsAt: TUtcDateTime;
+    function GetEndsAt: TUtcDateTime;
     function GetReason: INullString;
     property Id: string read GetId;
-    property StartsAt: string read GetStartsAt;
-    property EndsAt: string read GetEndsAt;
+    property StartsAt: TUtcDateTime read GetStartsAt;
+    property EndsAt: TUtcDateTime read GetEndsAt;
     property Reason: INullString read GetReason;
   end;
 
@@ -70,31 +71,32 @@ type
 {$M+}
   TTimeOffInsert = class(TInsertDTOBase, ITimeOffInsert)
   private
-    FStartsAt, FEndsAt: string;
+    FStartsAt, FEndsAt: TUtcDateTime;
     FReason: IOptString;
   public
-    function GetStartsAt: string;
-    function GetEndsAt: string;
+    function GetStartsAt: TUtcDateTime;
+    function GetEndsAt: TUtcDateTime;
     function GetReason: IOptString;
   published
-    property StartsAt: string read FStartsAt write FStartsAt;
-    property EndsAt: string read FEndsAt write FEndsAt;
+    property StartsAt: TUtcDateTime read FStartsAt write FStartsAt;
+    property EndsAt: TUtcDateTime read FEndsAt write FEndsAt;
     property Reason: IOptString read FReason write FReason;
   end;
 
   TTimeOff = class(TResponseDTOBase, ITimeOff)
   private
-    FId, FStartsAt, FEndsAt: string;
+    FId: string;
+    FStartsAt, FEndsAt: TUtcDateTime;
     FReason: INullString;
   public
     function GetId: string;
-    function GetStartsAt: string;
-    function GetEndsAt: string;
+    function GetStartsAt: TUtcDateTime;
+    function GetEndsAt: TUtcDateTime;
     function GetReason: INullString;
   published
     property Id: string read FId write FId;
-    property StartsAt: string read FStartsAt write FStartsAt;
-    property EndsAt: string read FEndsAt write FEndsAt;
+    property StartsAt: TUtcDateTime read FStartsAt write FStartsAt;
+    property EndsAt: TUtcDateTime read FEndsAt write FEndsAt;
     property Reason: INullString read FReason write FReason;
   end;
 
@@ -141,6 +143,7 @@ uses
   PascalApi.Http,
   PascalApi.Text,
   PascalApi.Jwt,
+  PascalApi.PagedQuery,
   Agenda.Times,
   Agenda.Tokens,
   Agenda.Professionals;
@@ -155,12 +158,12 @@ end;
 
 { DTOs }
 
-function TTimeOffInsert.GetStartsAt: string;
+function TTimeOffInsert.GetStartsAt: TUtcDateTime;
 begin
   Result := FStartsAt;
 end;
 
-function TTimeOffInsert.GetEndsAt: string;
+function TTimeOffInsert.GetEndsAt: TUtcDateTime;
 begin
   Result := FEndsAt;
 end;
@@ -175,12 +178,12 @@ begin
   Result := FId;
 end;
 
-function TTimeOff.GetStartsAt: string;
+function TTimeOff.GetStartsAt: TUtcDateTime;
 begin
   Result := FStartsAt;
 end;
 
-function TTimeOff.GetEndsAt: string;
+function TTimeOff.GetEndsAt: TUtcDateTime;
 begin
   Result := FEndsAt;
 end;
@@ -218,8 +221,8 @@ begin
   LTimeOff := TTimeOff.Create;
   Result := LTimeOff;
   LTimeOff.Id := AResult.Strings['ID'];
-  LTimeOff.StartsAt := InstantToStr(AResult.Int64s['START_UTC']);
-  LTimeOff.EndsAt := InstantToStr(AResult.Int64s['END_UTC']);
+  LTimeOff.StartsAt := UnixToUtc(AResult.Int64s['START_UTC']);
+  LTimeOff.EndsAt := UnixToUtc(AResult.Int64s['END_UTC']);
   LTimeOff.Reason := AResult.NullableStrings['REASON'];
 end;
 
@@ -234,64 +237,25 @@ end;
 function TTimeOffRepository.FindPage(const AProfessionalId: string; const AFind: ITimeOffFind;
   const APage: TPageRequest): TPage<ITimeOff>;
 var
-  LQuery: IQuery;
-  LTx: IScopeTransaction;
-  LResult: IQueryResult;
   LOrder: string;
-  LFrom, LTo: Int64;
-  LCount: Integer;
+  LArgs: TQueryArgs;
 
   function Filtered(const ASql: TSQLResult): TSQLResult;
   begin
     Result := ASql.ProcessTag('FROM', AFind.From.HasValue).ProcessTag('TO', AFind.To_.HasValue);
   end;
 
-  procedure Bind;
-  begin
-    LQuery.Params.Strings['PROFESSIONAL_ID'] := AProfessionalId;
-    if AFind.From.HasValue then
-      LQuery.Params.Int64s['FROM_UTC'] := LFrom;
-    if AFind.To_.HasValue then
-      LQuery.Params.Int64s['TO_UTC'] := LTo;
-  end;
-
 begin
   LOrder := TimeOffOrderSpec.Build(AFind.OrderBy.ValueOr(''));
-  LFrom := 0;
-  LTo := 0;
+  LArgs := TQueryArgs.New.Strings('PROFESSIONAL_ID', AProfessionalId);
   if AFind.From.HasValue then
-    LFrom := CheckInstant(AFind.From.Value, 'from');
+    LArgs := LArgs.Int64s('FROM_UTC', CheckInstant(AFind.From.Value, 'from'));
   if AFind.To_.HasValue then
-    LTo := CheckInstant(AFind.To_.Value, 'to');
+    LArgs := LArgs.Int64s('TO_UTC', CheckInstant(AFind.To_.Value, 'to'));
   RequireProfessional(FScope, AProfessionalId);
-  LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
-  LTx.StartTransaction;
-  try
-    TTenantFilter.Prepare(LQuery, FScope, Filtered(FScope.Factory.SqlLoader['TIME_OFF.COUNT']));
-    Bind;
-    Result.Meta := TPageMeta.Create(APage, LQuery.Open.Int64s['TOTAL']);
-
-    TTenantFilter.Prepare(LQuery, FScope, Filtered(FScope.Factory.SqlLoader['TIME_OFF.PAGE'])
-      .ReplaceLiteral('ORDER', LOrder)
-      .ReplaceLiteral('PAGE', PdbPagingClause(LTx, APage)));
-    Bind;
-    LResult := LQuery.Open;
-    Result.Items := nil;
-    SetLength(Result.Items, LResult.RecordCount);
-    LCount := 0;
-    while not LResult.Eof do
-    begin
-      Result.Items[LCount] := ReadTimeOff(LResult);
-      Inc(LCount);
-      LResult.Next;
-    end;
-    SetLength(Result.Items, LCount);
-    LResult := nil;
-    LTx.Commit;
-  except
-    LTx.Rollback;
-    raise;
-  end;
+  Result := TTenantPagedQuery.Run<ITimeOff>(FScope,
+    Filtered(FScope.Factory.SqlLoader['TIME_OFF.COUNT']),
+    Filtered(FScope.Factory.SqlLoader['TIME_OFF.PAGE']), LOrder, APage, LArgs, ReadTimeOff);
 end;
 
 function TTimeOffRepository.FindById(const AProfessionalId, AId: string): ITimeOff;
@@ -321,8 +285,14 @@ var
   LQuery: IQuery;
   LTx: IScopeTransaction;
 begin
-  LStart := CheckInstant(ATimeOff.StartsAt, 'startsAt');
-  LEnd := CheckInstant(ATimeOff.EndsAt, 'endsAt');
+  // The mapper already refused a text without its zone (TUtcDateTime); an
+  // absent member is 0, 1899.
+  LStart := UtcToUnix(ATimeOff.StartsAt);
+  LEnd := UtcToUnix(ATimeOff.EndsAt);
+  if LStart < 0 then
+    raise EValidationException.Create('"startsAt" is required.');
+  if LEnd < 0 then
+    raise EValidationException.Create('"endsAt" is required.');
   if (LStart mod 60 <> 0) or (LEnd mod 60 <> 0) then
     raise EValidationException.Create('"startsAt" and "endsAt" must be whole minutes.');
   if LStart >= LEnd then

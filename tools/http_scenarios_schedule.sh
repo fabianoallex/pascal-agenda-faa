@@ -83,7 +83,8 @@ OVERLAP="$(id_of)"
 
 req POST "/professionals/$PRO/time-off" '{"startsAt":"2026-11-10T14:00:00","endsAt":"2026-11-10T15:00:00Z"}' -H "$OWNER"
 status_is 400 "time off: an instant without its zone"
-body_has '"code":"invalid_instant"' "time off: invalid_instant"
+# Refused by the mapper (TUtcDateTime, pascal-jsonmapper-faa 0.7.0), with the member's path.
+body_has 'startsAt: Invalid UTC date/time' "time off: the mapper refuses it"
 body_has 'startsAt' "time off: the member, named"
 req POST "/professionals/$PRO/time-off" '{"startsAt":"2026-11-10","endsAt":"2026-11-11"}' -H "$OWNER"
 status_is 400 "time off: dates only"

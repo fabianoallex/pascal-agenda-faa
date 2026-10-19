@@ -190,6 +190,8 @@ uses
   PascalApi.Http,
   PascalApi.Text,
   PascalApi.Jwt,
+  PascalApi.PagedQuery,
+  PascalCommon.Text,
   Agenda.Text,
   Agenda.Money,
   Agenda.Tokens;
@@ -292,7 +294,7 @@ end;
 function CheckName(const AName: string): string;
 begin
   Result := Trim(AName);
-  if FoldForSearch(Result) = '' then
+  if PcFoldForSearch(Result) = '' then
     raise EValidationException.Create('"name" is required.', 'name_required');
   if PaCharCount(Result) > MAX_NAME_CHARS then
     raise EValidationException.CreateFmt('"name" must have at most %d characters.',
@@ -349,58 +351,28 @@ end;
 function Filtered(const ASql: TSQLResult; const AFind: IServiceFind): TSQLResult;
 begin
   Result := ASql
-    .ProcessTag('SEARCH', AFind.Search.HasValue and (FoldForSearch(AFind.Search.Value) <> ''))
+    .ProcessTag('SEARCH', AFind.Search.HasValue and (PcFoldForSearch(AFind.Search.Value) <> ''))
     .ProcessTag('ACTIVE', AFind.Active.HasValue);
 end;
 
-procedure BindFilters(const AQuery: IQuery; const AFind: IServiceFind);
+function FilterArgs(const AFind: IServiceFind): TQueryArgs;
 begin
-  if AFind.Search.HasValue and (FoldForSearch(AFind.Search.Value) <> '') then
-    AQuery.Params.Strings['SEARCH'] := LikeContains(FoldForSearch(AFind.Search.Value));
+  Result := TQueryArgs.New;
+  if AFind.Search.HasValue and (PcFoldForSearch(AFind.Search.Value) <> '') then
+    Result := Result.Strings('SEARCH', PdbLikeContains(PcFoldForSearch(AFind.Search.Value)));
   if AFind.Active.HasValue then
-    AQuery.Params.Integers['ACTIVE'] := Ord(AFind.Active.Value);
+    Result := Result.Integers('ACTIVE', Ord(AFind.Active.Value));
 end;
 
 function TServiceRepository.FindPage(const AFind: IServiceFind;
   const APage: TPageRequest): TPage<IService>;
-var
-  LQuery: IQuery;
-  LTx: IScopeTransaction;
-  LResult: IQueryResult;
-  LOrder: string;
-  LCount: Integer;
 begin
-  // 400 for a field not allowed, before touching the database.
-  LOrder := ServiceOrderSpec.Build(AFind.OrderBy.ValueOr(''));
-  LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
-  LTx.StartTransaction;
-  try
-    TTenantFilter.Prepare(LQuery, FScope,
-      Filtered(FScope.Factory.SqlLoader['SERVICE.COUNT'], AFind));
-    BindFilters(LQuery, AFind);
-    Result.Meta := TPageMeta.Create(APage, LQuery.Open.Int64s['TOTAL']);
-
-    TTenantFilter.Prepare(LQuery, FScope,
-      Filtered(FScope.Factory.SqlLoader['SERVICE.PAGE'], AFind)
-        .ReplaceLiteral('ORDER', LOrder)
-        .ReplaceLiteral('PAGE', PdbPagingClause(LTx, APage)));
-    BindFilters(LQuery, AFind);
-    LResult := LQuery.Open;
-    Result.Items := nil;
-    SetLength(Result.Items, LResult.RecordCount);
-    LCount := 0;
-    while not LResult.Eof do
-    begin
-      Result.Items[LCount] := ReadService(LResult);
-      Inc(LCount);
-      LResult.Next;
-    end;
-    SetLength(Result.Items, LCount);
-    LTx.Commit;
-  except
-    LTx.Rollback;
-    raise;
-  end;
+  // The order is built first: a field not allowed is a 400 before any
+  // database work.
+  Result := TTenantPagedQuery.Run<IService>(FScope,
+    Filtered(FScope.Factory.SqlLoader['SERVICE.COUNT'], AFind),
+    Filtered(FScope.Factory.SqlLoader['SERVICE.PAGE'], AFind),
+    ServiceOrderSpec.Build(AFind.OrderBy.ValueOr('')), APage, FilterArgs(AFind), ReadService);
 end;
 
 function TServiceRepository.FindById(const AId: string): IService;
@@ -441,7 +413,7 @@ begin
     TTenantFilter.Prepare(LQuery, FScope, 'SERVICE.INSERT');
     LQuery.Params.Strings['ID'] := LId;
     LQuery.Params.Strings['NAME'] := LName;
-    LQuery.Params.Strings['NAME_KEY'] := FoldForSearch(LName);
+    LQuery.Params.Strings['NAME_KEY'] := PcFoldForSearch(LName);
     LQuery.Params.Integers['DURATION_MINUTES'] := AService.DurationMinutes;
     LQuery.Params.Integers['BUFFER_MINUTES'] := LBuffer;
     LQuery.Params.Int64s['PRICE_CENTS'] := LCents;
@@ -488,7 +460,7 @@ begin
     if APatch.Name.HasValue then
     begin
       LQuery.Params.Strings['NAME'] := LName;
-      LQuery.Params.Strings['NAME_KEY'] := FoldForSearch(LName);
+      LQuery.Params.Strings['NAME_KEY'] := PcFoldForSearch(LName);
     end;
     LQuery.Params.OptIntegers['DURATION_MINUTES'] := APatch.DurationMinutes;
     LQuery.Params.OptIntegers['BUFFER_MINUTES'] := APatch.BufferMinutes;

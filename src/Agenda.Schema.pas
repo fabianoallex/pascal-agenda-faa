@@ -214,12 +214,12 @@ begin
     // The users API (Agenda.Users): never the password hash.
     .Add(SQLITE_DIR, 'USER.COUNT',
       'SELECT COUNT(*) AS TOTAL FROM USERS WHERE ${TENANT} ' +
-      '[SEARCH {] AND EMAIL LIKE :SEARCH ESCAPE ''\'' [} SEARCH] ' +
+      '[SEARCH {] AND EMAIL LIKE :SEARCH ESCAPE ''!'' [} SEARCH] ' +
       '[ROLE {] AND ROLE = :ROLE [} ROLE] ' +
       '[ACTIVE {] AND ACTIVE = :ACTIVE [} ACTIVE]')
     .Add(SQLITE_DIR, 'USER.PAGE',
       'SELECT ID, EMAIL, ROLE, ACTIVE, PROFESSIONAL_ID FROM USERS WHERE ${TENANT} ' +
-      '[SEARCH {] AND EMAIL LIKE :SEARCH ESCAPE ''\'' [} SEARCH] ' +
+      '[SEARCH {] AND EMAIL LIKE :SEARCH ESCAPE ''!'' [} SEARCH] ' +
       '[ROLE {] AND ROLE = :ROLE [} ROLE] ' +
       '[ACTIVE {] AND ACTIVE = :ACTIVE [} ACTIVE] ORDER BY ${ORDER} ${PAGE}')
     .Add(SQLITE_DIR, 'USER.VIEW',
@@ -262,16 +262,17 @@ begin
     .Add(SQLITE_DIR, 'REFRESH.DELETE_USER',
       'DELETE FROM REFRESH_TOKENS WHERE USER_ID = :USER_ID AND ${TENANT}')
 
-    // --- services (a tenant's rows). [SEARCH] and [ACTIVE] are kept only
+    // --- services (a tenant's rows). LIKE ... ESCAPE '!': PdbLikeContains' escape;
+    // a backslash makes SQLdb lose the parameters after it (pascal-db-faa's gotcha 26). [SEARCH] and [ACTIVE] are kept only
     // when that filter came (ProcessTag); ${ORDER} comes from
     // ServiceOrderSpec, ${PAGE} from the connection's dialect.
     .Add(SQLITE_DIR, 'SERVICE.COUNT',
       'SELECT COUNT(*) AS TOTAL FROM SERVICES WHERE ${TENANT} ' +
-      '[SEARCH {] AND NAME_KEY LIKE :SEARCH ESCAPE ''\'' [} SEARCH] ' +
+      '[SEARCH {] AND NAME_KEY LIKE :SEARCH ESCAPE ''!'' [} SEARCH] ' +
       '[ACTIVE {] AND ACTIVE = :ACTIVE [} ACTIVE]')
     .Add(SQLITE_DIR, 'SERVICE.PAGE',
       'SELECT ID, NAME, DURATION_MINUTES, BUFFER_MINUTES, PRICE_CENTS, ACTIVE FROM SERVICES ' +
-      'WHERE ${TENANT} [SEARCH {] AND NAME_KEY LIKE :SEARCH ESCAPE ''\'' [} SEARCH] ' +
+      'WHERE ${TENANT} [SEARCH {] AND NAME_KEY LIKE :SEARCH ESCAPE ''!'' [} SEARCH] ' +
       '[ACTIVE {] AND ACTIVE = :ACTIVE [} ACTIVE] ORDER BY ${ORDER} ${PAGE}')
     .Add(SQLITE_DIR, 'SERVICE.BY_ID',
       'SELECT ID, NAME, DURATION_MINUTES, BUFFER_MINUTES, PRICE_CENTS, ACTIVE FROM SERVICES ' +
@@ -293,11 +294,11 @@ begin
     // --- professionals (a tenant's rows)
     .Add(SQLITE_DIR, 'PROFESSIONAL.COUNT',
       'SELECT COUNT(*) AS TOTAL FROM PROFESSIONALS WHERE ${TENANT} ' +
-      '[SEARCH {] AND NAME_KEY LIKE :SEARCH ESCAPE ''\'' [} SEARCH] ' +
+      '[SEARCH {] AND NAME_KEY LIKE :SEARCH ESCAPE ''!'' [} SEARCH] ' +
       '[ACTIVE {] AND ACTIVE = :ACTIVE [} ACTIVE]')
     .Add(SQLITE_DIR, 'PROFESSIONAL.PAGE',
       'SELECT ID, NAME, EMAIL, ACTIVE FROM PROFESSIONALS ' +
-      'WHERE ${TENANT} [SEARCH {] AND NAME_KEY LIKE :SEARCH ESCAPE ''\'' [} SEARCH] ' +
+      'WHERE ${TENANT} [SEARCH {] AND NAME_KEY LIKE :SEARCH ESCAPE ''!'' [} SEARCH] ' +
       '[ACTIVE {] AND ACTIVE = :ACTIVE [} ACTIVE] ORDER BY ${ORDER} ${PAGE}')
     .Add(SQLITE_DIR, 'PROFESSIONAL.BY_ID',
       'SELECT ID, NAME, EMAIL, ACTIVE FROM PROFESSIONALS WHERE ID = :ID AND ${TENANT}')
@@ -351,10 +352,10 @@ begin
     // --- customers (a tenant's rows)
     .Add(SQLITE_DIR, 'CUSTOMER.COUNT',
       'SELECT COUNT(*) AS TOTAL FROM CUSTOMERS WHERE ${TENANT} ' +
-      '[SEARCH {] AND SEARCH_KEY LIKE :SEARCH ESCAPE ''\'' [} SEARCH]')
+      '[SEARCH {] AND SEARCH_KEY LIKE :SEARCH ESCAPE ''!'' [} SEARCH]')
     .Add(SQLITE_DIR, 'CUSTOMER.PAGE',
       'SELECT ID, NAME, PHONE, EMAIL FROM CUSTOMERS WHERE ${TENANT} ' +
-      '[SEARCH {] AND SEARCH_KEY LIKE :SEARCH ESCAPE ''\'' [} SEARCH] ' +
+      '[SEARCH {] AND SEARCH_KEY LIKE :SEARCH ESCAPE ''!'' [} SEARCH] ' +
       'ORDER BY ${ORDER} ${PAGE}')
     .Add(SQLITE_DIR, 'CUSTOMER.BY_ID',
       'SELECT ID, NAME, PHONE, EMAIL FROM CUSTOMERS WHERE ID = :ID AND ${TENANT}')
