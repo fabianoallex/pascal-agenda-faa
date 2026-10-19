@@ -86,6 +86,7 @@ uses
   PascalApi.Horse.OpenApi,
   PascalApi.Horse.Observability,
   PascalApi.Horse.Tenancy,
+  PascalApi.RefreshTokens,
   Agenda.Schema in '..\src\Agenda.Schema.pas',
   Agenda.Database in '..\src\Agenda.Database.pas',
   Agenda.Passwords in '..\src\Agenda.Passwords.pas',
@@ -863,7 +864,7 @@ begin
       TAppConfig.GetInt('CATALOG_TTL', 30));
     GKeys := OpenKeys;
     GAuth := TAuthService.Create(GCatalog, GResolver, GHooks.SignClaims, AuthOptions,
-      GHooks.Security);
+      TDbRefreshTokenStore.Create(GDatabase.Factory), GHooks.Security);
     GAuthLimit := TAppConfig.GetInt('AUTH_RATE_LIMIT', 10);
     GPasswordIterations := AuthOptions.PasswordIterations;
 

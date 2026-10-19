@@ -15,22 +15,22 @@ unit Agenda.Auth;
   while the password is at hand.
 
   Tokens: a short access token (a JWT signed by the tenant's key ring:
-  sub = the user's id, tenant_id, role, iat, exp) and a refresh token
-  (Agenda.Tokens: "<tenant>.<secret>", only its SHA-256 stored), valid
-  RefreshSeconds. Each refresh token is used once: a refresh marks it used
-  and issues the next one in the same family. A token used twice means it
-  was copied: the whole family is revoked, the legitimate holder included,
-  and AOnSecurity hears of it. Two refreshes racing on one token are the
-  same case (only the first UPDATE matches; measured by the HTTP
-  scenarios). Logout revokes the family; it answers the same for any token.
+  sub = the user's id, tenant_id, role, iat, exp) and a refresh token,
+  pascal-api-infra-faa's TRefreshTokens (0.19.0; this unit's flow, moved
+  there at the user's choice): "<tenant>.<secret>", only its SHA-256
+  stored, used once; a copy that comes back, two refreshes racing on one
+  token, or a user gone or inactive revoke the family (AOnSecurity hears of
+  it). Logout revokes the family; it answers the same for any token. What
+  stays here: the tenant checked against the catalog before any lookup (a
+  suspended one is a 403), and the access token's claims.
 
   Every query on a tenant's rows goes through TTenantFilter.Prepare
   (pascal-api-infra-faa's rule): the tenant comes from the catalog first.
+  The refresh tokens' store binds TENANT_ID itself (TDbRefreshTokenStore).
 
   Refusals are pascal-api-infra-faa's exceptions with a code
   (EUnauthorizedException, EHttpException 403), answered by its error
-  handler with "error" and "code" members, a 401 with WWW-Authenticate. Until
-  that library's f1d0aaf the routes wrote them by hand (docs/design.md). }
+  handler with "error" and "code" members, a 401 with WWW-Authenticate. }
 
 interface
 
@@ -38,7 +38,8 @@ uses
   SysUtils,
   PascalCommon.Tracing,
   PascalDb.Interfaces,
-  PascalApi.Tenancy;
+  PascalApi.Tenancy,
+  PascalApi.RefreshTokens;
 
 const
   ROLE_OWNER = 'owner';
@@ -78,18 +79,20 @@ type
     FResolver: ITenantDataResolver;
     FSign: TSignClaimsFunc;
     FOptions: TAuthOptions;
-    FOnSecurity: TPcLogProc;
+    FRefresh: TRefreshTokens;
     FDummyHash: string;
-    function Issue(const ATenant: TTenantInfo; const AUser: TUserRow;
-      const AQuery: IQuery; const AFamily: string): TAuthTokens;
+    function Tokens(const ATenant: TTenantInfo; const AUser: TUserRow;
+      const ARefreshToken: string): TAuthTokens;
     function AccessToken(const ATenant: TTenantInfo; const AUser: TUserRow): string;
-    procedure RevokeFamily(const AScope: TTenantDataScope; const AFamily, AReason: string);
-    procedure Security(const ALine: string);
+    /// TRefreshTokens' user check: the user still exists and is active.
+    function UserActive(const AScope, AUserId: string): Boolean;
   public
-    /// Computes the dummy hash (one PBKDF2 at startup).
+    /// Computes the dummy hash (one PBKDF2 at startup). ARefreshStore keeps
+    /// the refresh tokens (TDbRefreshTokenStore on the REFRESH.* SQL).
     constructor Create(const ACatalog: ITenantCatalog; const AResolver: ITenantDataResolver;
       const ASign: TSignClaimsFunc; const AOptions: TAuthOptions;
-      const AOnSecurity: TPcLogProc = nil);
+      const ARefreshStore: IRefreshTokenStore; const AOnSecurity: TPcLogProc = nil);
+    destructor Destroy; override;
     function Login(const ATenant, AEmail, APassword: string): TAuthTokens;
     function Refresh(const ARefreshToken: string): TAuthTokens;
     /// Revokes the token's family; nothing (and no error) for anything else.
@@ -192,21 +195,22 @@ end;
 
 constructor TAuthService.Create(const ACatalog: ITenantCatalog;
   const AResolver: ITenantDataResolver; const ASign: TSignClaimsFunc;
-  const AOptions: TAuthOptions; const AOnSecurity: TPcLogProc);
+  const AOptions: TAuthOptions; const ARefreshStore: IRefreshTokenStore;
+  const AOnSecurity: TPcLogProc);
 begin
   inherited Create;
   FCatalog := ACatalog;
   FResolver := AResolver;
   FSign := ASign;
   FOptions := AOptions;
-  FOnSecurity := AOnSecurity;
+  FRefresh := TRefreshTokens.Create(ARefreshStore, AOptions.RefreshSeconds, AOnSecurity);
   FDummyHash := TPasswords.Hash(NewId, FOptions.PasswordIterations);
 end;
 
-procedure TAuthService.Security(const ALine: string);
+destructor TAuthService.Destroy;
 begin
-  if Assigned(FOnSecurity) then
-    FOnSecurity(ALine);
+  FRefresh.Free;
+  inherited;
 end;
 
 function TAuthService.AccessToken(const ATenant: TTenantInfo; const AUser: TUserRow): string;
@@ -235,27 +239,20 @@ begin
   end;
 end;
 
-// The access token and a new refresh token in AFamily, inserted through
-// AQuery (the caller's transaction).
-function TAuthService.Issue(const ATenant: TTenantInfo; const AUser: TUserRow;
-  const AQuery: IQuery; const AFamily: string): TAuthTokens;
-var
-  LScope: TTenantDataScope;
-  LNow: Int64;
+function TAuthService.Tokens(const ATenant: TTenantInfo; const AUser: TUserRow;
+  const ARefreshToken: string): TAuthTokens;
 begin
-  LScope := FResolver.ScopeFor(ATenant);
-  LNow := TJwt.UnixNow;
-  Result.RefreshToken := NewRefreshToken(ATenant.Id);
-  TTenantFilter.Prepare(AQuery, LScope, 'REFRESH.INSERT');
-  AQuery.Params.Strings['ID'] := NewId;
-  AQuery.Params.Strings['TOKEN_HASH'] := RefreshTokenHash(Result.RefreshToken);
-  AQuery.Params.Strings['USER_ID'] := AUser.Id;
-  AQuery.Params.Strings['FAMILY_ID'] := AFamily;
-  AQuery.Params.Int64s['CREATED_AT'] := LNow;
-  AQuery.Params.Int64s['EXPIRES_AT'] := LNow + FOptions.RefreshSeconds;
-  AQuery.ExecSql;
+  Result.RefreshToken := ARefreshToken;
   Result.AccessToken := AccessToken(ATenant, AUser);
   Result.ExpiresIn := FOptions.AccessSeconds;
+end;
+
+function TAuthService.UserActive(const AScope, AUserId: string): Boolean;
+var
+  LInfo: TTenantInfo;
+  LUser: TUserRow;
+begin
+  Result := FCatalog.Find(AScope, LInfo) and FindUser(LInfo, AUserId, LUser);
 end;
 
 function TAuthService.Login(const ATenant, AEmail, APassword: string): TAuthTokens;
@@ -293,64 +290,37 @@ begin
   if LCheck = tcSuspended then
     raise TenantSuspended;
 
-  // Hashed before the transaction: it holds no connection for 0.3 s.
-  LNewHash := '';
+  // A weaker stored hash is replaced while the password is at hand; hashed
+  // before the transaction, so it holds no connection for 0.3 s.
   if TPasswords.NeedsRehash(LUser.PasswordHash, FOptions.PasswordIterations) then
+  begin
     LNewHash := TPasswords.Hash(APassword, FOptions.PasswordIterations);
-  LTx := LScope.Factory.GetPool.AcquireQuery(LQuery);
-  LTx.StartTransaction;
-  try
-    if LNewHash <> '' then
-    begin
+    LTx := LScope.Factory.GetPool.AcquireQuery(LQuery);
+    LTx.StartTransaction;
+    try
       TTenantFilter.Prepare(LQuery, LScope, 'USER.SET_PASSWORD_HASH');
       LQuery.Params.Strings['PASSWORD_HASH'] := LNewHash;
       LQuery.Params.Strings['ID'] := LUser.Id;
       LQuery.ExecSql;
+      LTx.Commit;
+    except
+      LTx.Rollback;
+      raise;
     end;
-    Result := Issue(LInfo, LUser, LQuery, NewId);
-    LTx.Commit;
-  except
-    LTx.Rollback;
-    raise;
   end;
-end;
-
-procedure TAuthService.RevokeFamily(const AScope: TTenantDataScope; const AFamily, AReason: string);
-var
-  LQuery: IQuery;
-  LTx: IScopeTransaction;
-  LCount: Int64;
-begin
-  LTx := AScope.Factory.GetPool.AcquireQuery(LQuery);
-  LTx.StartTransaction;
-  try
-    TTenantFilter.Prepare(LQuery, AScope, 'REFRESH.REVOKE_FAMILY');
-    LQuery.Params.Int64s['REVOKED_AT'] := TJwt.UnixNow;
-    LQuery.Params.Strings['FAMILY_ID'] := AFamily;
-    LCount := LQuery.ExecSql;
-    LTx.Commit;
-  except
-    LTx.Rollback;
-    raise;
-  end;
-  if (LCount > 0) and (AReason <> '') then
-    Security(Format('refresh token family %s of tenant %s revoked: %s',
-      [AFamily, AScope.Discriminator, AReason]));
+  Result := Tokens(LInfo, LUser, FRefresh.Issue(LInfo.Id, LUser.Id));
 end;
 
 function TAuthService.Refresh(const ARefreshToken: string): TAuthTokens;
 var
-  LTenant, LId, LUserId, LFamily: string;
+  LTenant: string;
   LInfo: TTenantInfo;
-  LScope: TTenantDataScope;
-  LQuery: IQuery;
-  LTx: IScopeTransaction;
-  LResult: IQueryResult;
-  LUsed, LRevoked: Boolean;
-  LExpires: Int64;
+  LNext: TRotatedRefreshToken;
   LUser: TUserRow;
 begin
-  if not TryParseRefreshToken(ARefreshToken, LTenant) then
+  // The tenant is in the token, in clear: checked against the catalog before
+  // any lookup. Every token here names one (no scope '').
+  if not TRefreshTokens.TryParse(ARefreshToken, LTenant) or not IsTenantId(LTenant) then
     raise InvalidRefreshToken;
   case CheckTenant(FCatalog, LTenant, LInfo) of
     tcOk: ;
@@ -359,90 +329,26 @@ begin
   else
     raise InvalidRefreshToken;
   end;
-  LScope := FResolver.ScopeFor(LInfo);
-
-  LTx := LScope.Factory.GetPool.AcquireQuery(LQuery);
-  TTenantFilter.Prepare(LQuery, LScope, 'REFRESH.BY_HASH');
-  LQuery.Params.Strings['TOKEN_HASH'] := RefreshTokenHash(ARefreshToken);
-  LResult := LQuery.Open;
-  if LResult.Eof then
-    raise InvalidRefreshToken;
-  LId := LResult.Strings['ID'];
-  LUserId := LResult.Strings['USER_ID'];
-  LFamily := LResult.Strings['FAMILY_ID'];
-  LExpires := LResult.Int64s['EXPIRES_AT'];
-  LUsed := not LResult.NullableInt64['USED_AT'].IsNull;
-  LRevoked := not LResult.NullableInt64['REVOKED_AT'].IsNull;
-  LResult := nil;
-  LTx := nil;
-  LQuery := nil;
-
-  if LRevoked then
-    raise InvalidRefreshToken;
-  if LUsed then
-  begin
-    RevokeFamily(LScope, LFamily, 'a used refresh token came back (copied?)');
-    raise InvalidRefreshToken;
-  end;
-  if LExpires <= TJwt.UnixNow then
-    raise InvalidRefreshToken;
-  if not FindUser(LInfo, LUserId, LUser) then
-  begin
-    RevokeFamily(LScope, LFamily, 'the user is gone or inactive');
-    raise InvalidRefreshToken;
-  end;
-
-  LTx := LScope.Factory.GetPool.AcquireQuery(LQuery);
-  LTx.StartTransaction;
   try
-    TTenantFilter.Prepare(LQuery, LScope, 'REFRESH.MARK_USED');
-    LQuery.Params.Int64s['USED_AT'] := TJwt.UnixNow;
-    LQuery.Params.Strings['ID'] := LId;
-    if LQuery.ExecSql <> 1 then
-    begin
-      // Another request used it between the read and here.
-      LTx.Rollback;
-      RevokeFamily(LScope, LFamily, 'two refreshes raced on one token');
-      raise InvalidRefreshToken;
-    end;
-    Result := Issue(LInfo, LUser, LQuery, LFamily);
-    LTx.Commit;
+    LNext := FRefresh.Rotate(ARefreshToken, UserActive);
   except
-    on E: EHttpException do
-      raise; // the race: already rolled back
-    on E: Exception do
-    begin
-      LTx.Rollback;
-      raise;
-    end;
+    on E: ERefreshTokenRejected do
+      raise InvalidRefreshToken; // one answer, whatever the reason
   end;
+  if not FindUser(LInfo, LNext.UserId, LUser) then
+    raise InvalidRefreshToken; // removed between the check and here
+  Result := Tokens(LInfo, LUser, LNext.Token);
 end;
 
 procedure TAuthService.Logout(const ARefreshToken: string);
 var
-  LTenant, LFamily: string;
+  LTenant: string;
   LInfo: TTenantInfo;
-  LScope: TTenantDataScope;
-  LQuery: IQuery;
-  LTx: IScopeTransaction;
-  LResult: IQueryResult;
 begin
-  if not TryParseRefreshToken(ARefreshToken, LTenant) then
+  if not TRefreshTokens.TryParse(ARefreshToken, LTenant) or not IsTenantId(LTenant) then
     Exit;
-  if not (CheckTenant(FCatalog, LTenant, LInfo) in [tcOk, tcSuspended]) then
-    Exit;
-  LScope := FResolver.ScopeFor(LInfo);
-  LTx := LScope.Factory.GetPool.AcquireQuery(LQuery);
-  TTenantFilter.Prepare(LQuery, LScope, 'REFRESH.BY_HASH');
-  LQuery.Params.Strings['TOKEN_HASH'] := RefreshTokenHash(ARefreshToken);
-  LResult := LQuery.Open;
-  if LResult.Eof then
-    Exit;
-  LFamily := LResult.Strings['FAMILY_ID'];
-  LResult := nil;
-  LTx := nil;
-  LQuery := nil;
-  RevokeFamily(LScope, LFamily, '');
+  if CheckTenant(FCatalog, LTenant, LInfo) in [tcOk, tcSuspended] then
+    FRefresh.Revoke(ARefreshToken);
 end;
 
 function TAuthService.FindUser(const ATenant: TTenantInfo; const AUserId: string;

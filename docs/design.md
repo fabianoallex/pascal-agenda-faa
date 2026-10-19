@@ -404,6 +404,7 @@ candidates"). Built there with their own tests, then adopted here against the ne
 | Instant type | pascal-jsonmapper-faa 0.7.0 `TUtcDateTime` | time off's `startsAt`/`endsAt` as strings, `Agenda.Times`' parser and writer |
 | Find DTO from the query string | pascal-api-infra-faa 0.19.0 `THorseQueryParams.Read<I>` | five handlers copying each member, `ParseQueryBool`, `ParseQueryRole` |
 | Paged query | pascal-api-infra-faa 0.19.0 `TTenantPagedQuery.Run<T>` + `TQueryArgs` | five `FindPage` bodies (about 35 lines each) |
+| Refresh tokens (core) | pascal-api-infra-faa 0.19.0 `TRefreshTokens` + `TDbRefreshTokenStore` | `Agenda.Tokens`' format, parse and hash, and `Agenda.Auth`'s issue, rotate, reuse/race revocation and logout |
 
 The phone stays here (`Agenda.Text`): pascal-common-faa's normalizers leave business rules to the
 application.
@@ -422,8 +423,16 @@ application.
 - An invalid query value keeps its 400 and message (`"active" must be true or false.`, the
   library's `InvalidQueryBoolean`, the same text as before).
 
-Checks: 35 unit tests (the 6 search-key and LIKE tests moved to the libraries); 323 HTTP checks
-(4 new) on FPC Windows and Linux, OpenAPI valid. Delphi: not yet run for this step.
+- Refresh tokens: the user chose the core only (2026-10-19). What stays here is the tenant
+  checked against the catalog before any lookup (suspended: 403) and the access token's claims;
+  the user check is `UserActive`. The `REFRESH.*` SQL now names `TENANT_ID = :TENANT_ID` (the
+  store's contract; `TTenantFilter.Prepare` binds it too when `Agenda.Users` revokes a user's
+  tokens). The security line says "of scope demo" (was "of tenant demo"). Login no longer issues
+  the token in the rehash's transaction: each store call is its own (the library's rule).
+
+Checks: 31 unit tests (6 search-key and LIKE tests and 4 refresh-token tests moved to the
+libraries); 323 HTTP checks (4 new) on FPC Windows and Linux, OpenAPI valid. Delphi: not yet run
+for this step.
 
 **Shared test kit**: the DUnitX-to-FPCUnit adapter (`*.DUnitXCompat.pas`) and
 `gen_fpc_mirror.py` exist as near-identical copies in pascal-common-faa, -jsonmapper-faa,

@@ -238,26 +238,28 @@ begin
       'UPDATE USERS SET PROFESSIONAL_ID = NULL WHERE PROFESSIONAL_ID = :PROFESSIONAL_ID ' +
       'AND ${TENANT}')
 
-    // --- refresh tokens (a tenant's rows)
+    // --- refresh tokens (a tenant's rows): pascal-api-infra-faa's
+    // TDbRefreshTokenStore binds :TENANT_ID itself (its SQL contract), and
+    // TTenantFilter.Prepare binds it too when Agenda.Users runs them.
     .Add(SQLITE_DIR, 'REFRESH.INSERT',
       'INSERT INTO REFRESH_TOKENS (TENANT_ID, ID, TOKEN_HASH, USER_ID, FAMILY_ID, CREATED_AT, ' +
       'EXPIRES_AT) VALUES (:TENANT_ID, :ID, :TOKEN_HASH, :USER_ID, :FAMILY_ID, :CREATED_AT, ' +
       ':EXPIRES_AT)')
     .Add(SQLITE_DIR, 'REFRESH.BY_HASH',
       'SELECT ID, USER_ID, FAMILY_ID, EXPIRES_AT, USED_AT, REVOKED_AT FROM REFRESH_TOKENS ' +
-      'WHERE TOKEN_HASH = :TOKEN_HASH AND ${TENANT}')
+      'WHERE TOKEN_HASH = :TOKEN_HASH AND TENANT_ID = :TENANT_ID')
     // Only the first of two concurrent refreshes matches: the other one sees
     // 0 rows and is treated as a reuse.
     .Add(SQLITE_DIR, 'REFRESH.MARK_USED',
       'UPDATE REFRESH_TOKENS SET USED_AT = :USED_AT WHERE ID = :ID AND USED_AT IS NULL ' +
-      'AND REVOKED_AT IS NULL AND ${TENANT}')
+      'AND REVOKED_AT IS NULL AND TENANT_ID = :TENANT_ID')
     .Add(SQLITE_DIR, 'REFRESH.REVOKE_FAMILY',
       'UPDATE REFRESH_TOKENS SET REVOKED_AT = :REVOKED_AT WHERE FAMILY_ID = :FAMILY_ID ' +
-      'AND REVOKED_AT IS NULL AND ${TENANT}')
+      'AND REVOKED_AT IS NULL AND TENANT_ID = :TENANT_ID')
     // A user's password changed, or the user deactivated: every login ends.
     .Add(SQLITE_DIR, 'REFRESH.REVOKE_USER',
       'UPDATE REFRESH_TOKENS SET REVOKED_AT = :REVOKED_AT WHERE USER_ID = :USER_ID ' +
-      'AND REVOKED_AT IS NULL AND ${TENANT}')
+      'AND REVOKED_AT IS NULL AND TENANT_ID = :TENANT_ID')
     // Before the user's row (the foreign key, enforced on PostgreSQL).
     .Add(SQLITE_DIR, 'REFRESH.DELETE_USER',
       'DELETE FROM REFRESH_TOKENS WHERE USER_ID = :USER_ID AND ${TENANT}')

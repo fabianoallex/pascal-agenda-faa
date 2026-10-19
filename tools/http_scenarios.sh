@@ -160,7 +160,7 @@ body_is "$INVALID_REFRESH" "a spent refresh token"
 refresh "$REFRESH2"
 status_is 401 "after a reuse, the newest token of the family is revoked too"
 if [ -n "$SERVER_LOG" ]; then
-  grep -q "SECURITY refresh token family .* of tenant demo revoked: a used refresh token came back" \
+  grep -q "SECURITY refresh token family .* of scope demo revoked: a used refresh token came back" \
     "$SERVER_LOG" && ok || fail "the reuse is in the server's log"
 fi
 
