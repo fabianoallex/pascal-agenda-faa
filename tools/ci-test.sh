@@ -14,7 +14,7 @@ if [ -z "${FPC_IMAGE:-}" ]; then
   FPC_IMAGE=agenda-fpc322
   docker build -q -t "$FPC_IMAGE" - <<'DOCKERFILE' >/dev/null
 FROM debian:bookworm
-RUN apt-get update && apt-get install -y --no-install-recommends fpc curl ca-certificates libsqlite3-0 python3-pip && rm -rf /var/lib/apt/lists/* && pip3 install --no-cache-dir --break-system-packages openapi-spec-validator==0.7.1
+RUN apt-get update && apt-get install -y --no-install-recommends fpc curl ca-certificates libsqlite3-0 libpq5 python3-pip && rm -rf /var/lib/apt/lists/* && pip3 install --no-cache-dir --break-system-packages openapi-spec-validator==0.7.1
 RUN curl -fsSL https://github.com/prometheus/prometheus/releases/download/v2.53.0/prometheus-2.53.0.linux-amd64.tar.gz | tar -xz -C /usr/local/bin --strip-components=1 prometheus-2.53.0.linux-amd64/promtool
 DOCKERFILE
 fi
@@ -22,5 +22,7 @@ export FPC_IMAGE
 
 echo "== unit suite (FPC 3.2.2, Linux)"
 sh tools/test_fpc_docker.sh
-echo "== HTTP scenarios (FPC 3.2.2, Linux)"
+echo "== HTTP scenarios (FPC 3.2.2, Linux, SQLite)"
 sh tools/test_http_docker.sh
+echo "== HTTP scenarios (FPC 3.2.2, Linux, PostgreSQL 17)"
+DB_ENGINE=postgresql sh tools/test_http_docker.sh

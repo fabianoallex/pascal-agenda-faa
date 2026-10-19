@@ -8,7 +8,11 @@
 #
 # Plain fpc, not lazbuild: every path is given by hand (-Fu/-Fi), the same
 # copies the .lpi names. The image needs FPC 3.2.2, curl, libsqlite3-0,
-# python3, openapi-spec-validator and promtool; tools/ci-test.sh builds one.
+# libpq5, python3, openapi-spec-validator and promtool; tools/ci-test.sh
+# builds one.
+#
+# DB_ENGINE=postgresql runs the same steps on PostgreSQL: a postgres:17
+# container (PG_IMAGE) on a private network, removed at the end.
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IMAGE="${FPC_IMAGE:-agenda-fpc322}"
@@ -20,8 +24,37 @@ for D in pascal-common-faa pascal-jsonmapper-faa pascal-db-faa pascal-api-infra-
   [ -d "external/$D/src" ] || { echo "external/$D is empty: git submodule update --init"; exit 1; }
 done
 
-MSYS_NO_PATHCONV=1 docker run --rm -v "$MOUNT:/src:ro" \
+ENGINE="${DB_ENGINE:-sqlite}"
+NET=agenda-it-net
+PG=agenda-it-pg
+NETOPT=""
+if [ "$ENGINE" = postgresql ]; then
+  cleanup() {
+    docker rm -f "$PG" >/dev/null 2>&1 || true
+    docker network rm "$NET" >/dev/null 2>&1 || true
+  }
+  trap cleanup EXIT
+  cleanup
+  docker network create "$NET" >/dev/null
+  docker run -d --name "$PG" --network "$NET" -e POSTGRES_PASSWORD=postgres \
+    -e POSTGRES_DB=agenda_scenarios "${PG_IMAGE:-postgres:17}" >/dev/null
+  # Over TCP: during its first start the image's server listens on the
+  # socket only, and restarts once the database is created.
+  READY=""
+  for I in $(seq 1 60); do
+    docker exec "$PG" pg_isready -q -h 127.0.0.1 -U postgres -d agenda_scenarios && { READY=1; break; }
+    sleep 1
+  done
+  [ -n "$READY" ] || { echo "PostgreSQL didn't start"; docker logs "$PG" | tail -20; exit 1; }
+  NETOPT="--network $NET"
+fi
+echo "== engine: $ENGINE"
+
+# $NETOPT is unquoted on purpose: empty, or "--network <name>".
+MSYS_NO_PATHCONV=1 docker run --rm $NETOPT -v "$MOUNT:/src:ro" \
   -e DEV_MODE=true -e PASSWORD_ITERATIONS=20000 -e AUTH_RATE_LIMIT=60 \
+  -e DB_ENGINE="$ENGINE" -e DB_HOST="$PG" -e DB_NAME=agenda_scenarios \
+  -e DB_USER=postgres -e DB_PASSWORD=postgres \
   -e DB_FILE=/t/run/agenda.sqlite "$IMAGE" sh -c '
   set -e
   mkdir -p /t/units /t/run && cp -r /src/src /src/api /src/tools /src/external /t/

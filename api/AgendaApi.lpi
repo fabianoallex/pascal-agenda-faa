@@ -99,6 +99,10 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
+        <Filename Value="..\src\Agenda.Flags.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
         <Filename Value="..\src\Agenda.Services.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>

@@ -16,15 +16,15 @@ git clone <this repository>
 git submodule update --init      # no --recursive: the libraries' own external/ isn't needed
 ```
 
-The libraries are pinned in `external/`, one copy each: pascal-common-faa 1.19.0,
-pascal-jsonmapper-faa 0.6.0, pascal-db-faa 0.15.0, pascal-api-infra-faa 0.17.0, Horse 3.3.12.
+The libraries are pinned in `external/`, one copy each: pascal-common-faa 1.21.0,
+pascal-jsonmapper-faa 0.7.0, pascal-db-faa 0.16.0, pascal-api-infra-faa 0.20.1, Horse 3.3.12.
 
 ## Building and testing
 
 | Where | How |
 |---|---|
-| FPC on Windows | `sh tools/test_http.sh`: lazbuild `api/AgendaApi.lpi`, start, `tools/http_scenarios.sh`. Needs sqlite.org's `sqlite3.dll` in `.deps/` (or `SQLITE_DLL`) |
-| FPC on Linux (Docker) | `sh tools/ci-test.sh`: what CI runs; plain `fpc`, then the scenarios, the OpenAPI validator and promtool |
-| Delphi 12 | open `api/AgendaApi.dproj`, build Win32 and Win64; start `api\Win32\Debug\AgendaApi.exe 9400 --reset` and run `sh tools/http_scenarios.sh 9400` |
+| FPC on Windows | `sh tools/test_http.sh`: lazbuild `api/AgendaApi.lpi`, start, `tools/http_scenarios.sh`. Needs sqlite.org's `sqlite3.dll` in `.deps/` (or `SQLITE_DLL`). `DB_ENGINE=postgresql sh tools/test_http.sh`: the same on a throwaway `postgres:17` container (Docker) and a local 64-bit `libpq.dll` |
+| FPC on Linux (Docker) | `sh tools/ci-test.sh`: what CI runs; plain `fpc`, then the scenarios on SQLite and on PostgreSQL 17, the OpenAPI validator and promtool |
+| Delphi 12 | open `api/AgendaApi.dproj`, build Win32 and Win64; `AGENDA_EXE=api/Win32/Debug/AgendaApi.exe sh tools/test_http.sh` (and Win64); PostgreSQL on Win64 only (no 32-bit libpq): `DB_ENGINE=postgresql AGENDA_EXE=api/Win64/Debug/AgendaApi.exe sh tools/test_http.sh` |
 
 Settings: environment or `.env` next to the executable (`.env.example`).

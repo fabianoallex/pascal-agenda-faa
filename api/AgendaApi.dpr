@@ -16,7 +16,10 @@ program AgendaApi;
   Settings come from the environment or a .env file next to the executable
   (pascal-api-infra-faa's TAppConfig; .env.example lists them):
 
-    DB_FILE, SQLITE_CLIENT, DB_POOL_MAX   the database (Agenda.Database)
+    DB_ENGINE            sqlite (default) or postgresql (Agenda.Database)
+    DB_FILE, SQLITE_CLIENT                       SQLite
+    DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, PG_CLIENT   PostgreSQL
+    DB_POOL_MAX          connections in the pool (10)
     JWT_KEYS_MASTER_KEY  seals the JWT signing keys in the database
                          (AES-256-GCM); required unless DEV_MODE=true
     DEV_MODE             true: a development master key when none is set
@@ -26,7 +29,8 @@ program AgendaApi;
     OTEL_EXPORTER_OTLP_ENDPOINT  spans to an OpenTelemetry collector, when set
 
   On startup the database is brought to the latest migration, before the
-  server listens; --reset deletes the file first.
+  server listens; --reset deletes the SQLite file first (PostgreSQL: drop and
+  create the database instead).
 
   Routes:
     POST /auth/login     {"tenant","email","password"} -> tokens; 401
@@ -97,6 +101,7 @@ uses
   Agenda.Normalizers in '..\src\Agenda.Normalizers.pas',
   Agenda.Validators in '..\src\Agenda.Validators.pas',
   Agenda.Money in '..\src\Agenda.Money.pas',
+  Agenda.Flags in '..\src\Agenda.Flags.pas',
   Agenda.Services in '..\src\Agenda.Services.pas',
   Agenda.Professionals in '..\src\Agenda.Professionals.pas',
   Agenda.Customers in '..\src\Agenda.Customers.pas',
@@ -812,7 +817,7 @@ var
   GRateLimit: TRateLimitOptions;
   GPort, I: Integer;
   GReset: Boolean;
-  GFile, GCommand: string;
+  GCommand: string;
 
 begin
   {$IFDEF FPC}
@@ -835,15 +840,20 @@ begin
         GReset := True
       else
         GPort := StrToIntDef(ParamStr(I), GPort);
-  GFile := ExpandFileName(TAppConfig.Get('DB_FILE', ExtractFilePath(ParamStr(0)) + 'agenda.sqlite'));
-  // A file another process holds open can't be deleted on Windows: stop
-  // instead of starting on old data.
-  if GReset and FileExists(GFile) and not DeleteFile(GFile) then
-    raise Exception.CreateFmt('--reset: can''t delete %s (another instance using it?)', [GFile]);
+  if GReset then
+  begin
+    if TAgendaDatabase.ConfiguredEngine <> aeSQLite then
+      raise Exception.Create('--reset is for SQLite: drop and create the PostgreSQL database');
+    // A file another process holds open can't be deleted on Windows: stop
+    // instead of starting on old data.
+    if FileExists(TAgendaDatabase.SQLiteFile) and not DeleteFile(TAgendaDatabase.SQLiteFile) then
+      raise Exception.CreateFmt('--reset: can''t delete %s (another instance using it?)',
+        [TAgendaDatabase.SQLiteFile]);
+  end;
 
   GHooks := TAgendaHooks.Create;
   try
-    GDatabase := TAgendaDatabase.Create(GFile);
+    GDatabase := TAgendaDatabase.Create;
     GDatabase.Migrate(GHooks.Migration);
     GResolver := TTenantDataResolver.Create(GHooks.NewFactory);
     if GCommand <> '' then
@@ -860,7 +870,7 @@ begin
       end;
       Exit;
     end;
-    SafeWriteln('database %s at version %d', [GFile, GDatabase.Version]);
+    SafeWriteln('database %s at version %d', [GDatabase.Description, GDatabase.Version]);
 
     GCatalog := TCachedTenantCatalog.Create(TDbTenantCatalog.Create(GDatabase.Factory),
       TAppConfig.GetInt('CATALOG_TTL', 30));

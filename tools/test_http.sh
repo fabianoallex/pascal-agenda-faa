@@ -11,6 +11,12 @@
 #
 # For a Delphi build: AGENDA_EXE=api/Win32/Debug/AgendaApi.exe skips the
 # build and runs the same steps on that executable.
+#
+# DB_ENGINE=postgresql runs them on PostgreSQL: a fresh postgres:17 container
+# (PG_IMAGE) on port 55433 (PG_PORT), removed at the end, and the 64-bit
+# libpq.dll of the newest install under C:\Program Files\PostgreSQL
+# (PG_CLIENT to choose another). PostgreSQL has no 32-bit client: a Delphi
+# build for it is Win64.
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LAZBUILD="${LAZBUILD:-lazbuild}"
@@ -38,6 +44,36 @@ DIR="$(dirname "$EXE")"
 LOG="$DIR/server.log"
 export DB_FILE="$DIR/agenda-scenarios.sqlite"
 
+PG_CONTAINER=agenda-test-pg
+if [ "${DB_ENGINE:-sqlite}" = postgresql ]; then
+  if [ -z "$PG_CLIENT" ]; then
+    PG_CLIENT="$(ls -d "/c/Program Files/PostgreSQL/"*/bin/libpq.dll 2>/dev/null | sort -V | tail -1)"
+    [ -n "$PG_CLIENT" ] || { echo "no libpq.dll under C:/Program Files/PostgreSQL: set PG_CLIENT"; exit 1; }
+    PG_CLIENT="$(cygpath -w "$PG_CLIENT")"
+  fi
+  export DB_HOST=127.0.0.1 DB_PORT="${PG_PORT:-55433}" DB_NAME=agenda_scenarios
+  export DB_USER=postgres DB_PASSWORD=postgres PG_CLIENT
+  trap 'docker rm -f "$PG_CONTAINER" >/dev/null 2>&1 || true' EXIT
+fi
+
+# A fresh database: a new file, or a new PostgreSQL container. pg_isready
+# over TCP: during its first start the image's server listens on the socket
+# only, and restarts once the database is created.
+fresh_database() {
+  if [ "${DB_ENGINE:-sqlite}" = postgresql ]; then
+    docker rm -f "$PG_CONTAINER" >/dev/null 2>&1 || true
+    docker run -d --name "$PG_CONTAINER" -p "$DB_PORT:5432" -e POSTGRES_PASSWORD=postgres \
+      -e POSTGRES_DB="$DB_NAME" "${PG_IMAGE:-postgres:17}" >/dev/null
+    for I in $(seq 1 60); do
+      docker exec "$PG_CONTAINER" pg_isready -q -h 127.0.0.1 -U postgres -d "$DB_NAME" && return 0
+      sleep 1
+    done
+    echo "PostgreSQL didn't start"; docker logs "$PG_CONTAINER" | tail -20; exit 1
+  else
+    rm -f "$DB_FILE"
+  fi
+}
+
 # Only the executable this script started, by its path: another build
 # running elsewhere stays up. (taskkill by image name stopped one, 2026-10-18.)
 EXE_WIN="$(cygpath -w "$EXE" 2>/dev/null || echo "$EXE")"
@@ -54,8 +90,8 @@ start() {
   echo "the API didn't start"; cat "$LOG"; stop; exit 1
 }
 
-echo "== fresh database"
-rm -f "$DB_FILE"
+echo "== fresh database (${DB_ENGINE:-sqlite})"
+fresh_database
 sh tools/seed_scenarios.sh "$EXE"
 start
 # A token for after the restart, before the scenarios fill the /auth/ window.

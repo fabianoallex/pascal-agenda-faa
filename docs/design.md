@@ -151,14 +151,20 @@ two libraries would share goes to pascal-common-faa.
   filters): both repeated in every list route (see "Progress", M1, customers and users).
 - Phone normalization, next to the accent-insensitive search key (pascal-common-faa).
 - An instant type for the mapper: zone required on input, `Z` on output (pascal-jsonmapper-faa).
+- A Boolean parameter into an `INTEGER` column fails on PostgreSQL ("column ... is of type
+  integer but expression is of type boolean"); SQLite takes it, and pascal-db-faa's contract suite
+  only binds `Integers` to its flag column (it reads one back as a Boolean). pascal-db-faa: say it
+  in `docs/optionals.md`, or convert in the parameter (the dialect knows); pascal-api-infra-faa's
+  `TQueryArgs.Booleans` has the same trap. Here: `Agenda.Flags` (`OptFlag`, a cross-type map).
+- The refresh rotation in one transaction (pascal-api-infra-faa): **fixed in 0.20.1**, found by
+  the PostgreSQL run ("Migrations on two dialects", below).
 - Validation in the libraries (from `Agenda.Validation`'s three overloads per rule and the limits written twice, once in `Describe`): **designed 2026-10-19** in pascal-api-infra-faa's `docs/validation-design.md`; built in pascal-common-faa 1.21.0 and pascal-api-infra-faa 0.20.0, adopted here 2026-10-19 ("Validation from the libraries", below).
 
 - A shared test kit: the DUnitX-to-FPCUnit adapter and the mirror generator, copied in every
   repository of the family. **Done 2026-10-19 in the skill** (the user's choice):
   `dual-compiler-delphi-lazarus/scripts/gen_fpc_mirror.py` (canonical, copied unchanged into
   `tools/`), `assets/DUnitXCompat.pas.template`, `scripts/check_test_kit.py`. Adopted here and in
-  pascal-common-faa, -jsonmapper-faa, -db-faa, -api-infra-faa; redis, amqp and pipes still to
-  adopt, each in its own session.
+  pascal-common-faa, -jsonmapper-faa, -db-faa, -api-infra-faa, then redis, amqp and pipes.
 
 **Not library material**: email/SMS sending, agenda rules, free-slot computation.
 
@@ -517,3 +523,36 @@ repository, so a request that breaks a limit and a rule hears of the limit only.
 (`Agenda.NormalizersTests` tests `TValid` and the collector); 333 HTTP checks (10 new: three
 fields wrong at once, the document's ranges, the role's enum in a body and in the query) on FPC
 Windows and Linux, OpenAPI valid; Delphi 12 Win32/Win64: 40 unit tests (0 leaks) and 333 checks each.
+
+## Migrations on two dialects (M1, 2026-10-19)
+
+The API runs on SQLite or PostgreSQL 17, chosen by `DB_ENGINE` (`src/Agenda.Database`: the
+adapters' connection names for each engine; `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`,
+`DB_PASSWORD`, `PG_CLIENT`). **One SQL directory for both** (`AGENDA` in `src/Agenda.Schema`, was
+`SQLITE`): the ten migrations and every statement ran unchanged on PostgreSQL. The schema already
+kept to the common ground (VARCHAR, INTEGER, BIGINT, TIMESTAMP; Unix seconds, cents, INTEGER
+flags; paging through `${PAGE}`), and pascal-db-faa's SQLite adapters turn foreign keys on, so
+the deletes were already in the order PostgreSQL enforces. pascal-db-faa's samples keep one
+folder per database; when a statement has to differ here, a variant chosen in code (as its
+integration tests do) is the plan, not a second copy of a hundred statements.
+
+The scripts: `DB_ENGINE=postgresql sh tools/test_http.sh` (a throwaway `postgres:17` container on
+port 55433, the newest local `libpq.dll`), `DB_ENGINE=postgresql sh tools/test_http_docker.sh` (a
+container on a private network; the Linux image gains `libpq5`); `tools/ci-test.sh` runs both
+engines. `--reset` stays SQLite's (it deletes the file).
+
+What the first PostgreSQL run found:
+- **Flags**: every PATCH with `active` answered 500. `Params.OptBooleans` sends a boolean, which
+  PostgreSQL refuses for an `INTEGER` column. Now `Params.OptIntegers['ACTIVE'] :=
+  OptFlag(APatch.Active)` (`src/Agenda.Flags`), the filters `FlagOf`. The skill's
+  repository-patterns said `Booleans` into an integer column works everywhere, citing the
+  contract suite, which never binds one: corrected.
+- **The refresh race** (pascal-api-infra-faa 0.20.0): two refreshes on one token left the winner's
+  next token alive in 4 of 7 runs on Linux. The loser's family revoke, under READ COMMITTED, took
+  its snapshot before the next token was committed and committed after the winner's re-read (the
+  0.19.1 guard). Fixed in the library, 0.20.1: the token marked used and the next one stored in
+  one transaction (`IRefreshTokenAtomicRotation`), so the loser waits for the winner's commit. 6
+  of 6 clean runs after.
+
+Result: 40 unit tests; 333 HTTP checks on SQLite and on PostgreSQL 17, FPC Windows and Linux, with
+the restart (no migration on the second start, a token from before it verifies); OpenAPI valid.
