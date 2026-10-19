@@ -141,7 +141,7 @@ uses
   PascalCommon.JsonMapper.Optionals,
   PascalApi.OpenApi,
   PascalApi.Http,
-  PascalApi.Text,
+  PascalCommon.Validators,
   PascalApi.Jwt,
   PascalApi.PagedQuery,
   Agenda.Times,
@@ -214,6 +214,15 @@ begin
       'invalid_instant');
 end;
 
+// An end of the span: there (an absent member is 0, 1899) and whole minutes.
+procedure CheckEnd(const AField: string; AUnix: Int64; var ACheck: TPcValidation);
+begin
+  if AUnix < 0 then
+    ACheck.Fail(AField, PC_VALIDATION_REQUIRED, Format('"%s" is required.', [AField]))
+  else if AUnix mod 60 <> 0 then
+    ACheck.Fail(AField, 'not_whole_minutes', Format('"%s" must be whole minutes.', [AField]));
+end;
+
 function ReadTimeOff(const AResult: IQueryResult): ITimeOff;
 var
   LTimeOff: TTimeOff;
@@ -281,6 +290,7 @@ function TTimeOffRepository.Insert(const AProfessionalId: string;
 var
   LStart, LEnd: Int64;
   LReason: IOptNullString;
+  LCheck: TPcValidation;
   LId: string;
   LQuery: IQuery;
   LTx: IScopeTransaction;
@@ -289,24 +299,21 @@ begin
   // absent member is 0, 1899.
   LStart := UtcToUnix(ATimeOff.StartsAt);
   LEnd := UtcToUnix(ATimeOff.EndsAt);
-  if LStart < 0 then
-    raise EValidationException.Create('"startsAt" is required.');
-  if LEnd < 0 then
-    raise EValidationException.Create('"endsAt" is required.');
-  if (LStart mod 60 <> 0) or (LEnd mod 60 <> 0) then
-    raise EValidationException.Create('"startsAt" and "endsAt" must be whole minutes.');
-  if LStart >= LEnd then
-    raise EValidationException.Create('"startsAt" must come before "endsAt".');
-  if LEnd - LStart > Int64(MAX_SPAN_DAYS) * 86400 then
-    raise EValidationException.CreateFmt('Time off lasts at most %d days.', [MAX_SPAN_DAYS]);
+  // Every failing member in one 400; the span is checked once both ends are
+  // valid. The reason's length is the document's, enforced at the edge.
+  LCheck := TPcValidation.Create;
+  CheckEnd('startsAt', LStart, LCheck);
+  CheckEnd('endsAt', LEnd, LCheck);
+  if LCheck.IsValid then
+    if LStart >= LEnd then
+      LCheck.Fail('endsAt', 'before_start', '"startsAt" must come before "endsAt".')
+    else if LEnd - LStart > Int64(MAX_SPAN_DAYS) * 86400 then
+      LCheck.Fail('endsAt', 'span_too_long',
+        Format('Time off lasts at most %d days.', [MAX_SPAN_DAYS]));
+  LCheck.RaiseIfAny;
   LReason := TOptNullString.Null;
   if ATimeOff.Reason.HasValue and (Trim(ATimeOff.Reason.Value) <> '') then
-  begin
-    if PaCharCount(Trim(ATimeOff.Reason.Value)) > MAX_REASON_CHARS then
-      raise EValidationException.CreateFmt('"reason" must have at most %d characters.',
-        [MAX_REASON_CHARS]);
     LReason := TOptNullString.From(Trim(ATimeOff.Reason.Value));
-  end;
   LId := NewId;
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
   LTx.StartTransaction;

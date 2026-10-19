@@ -157,7 +157,8 @@ uses
   PascalApi.PagedQuery,
   PascalCommon.Text,
   Agenda.Normalizers,
-  Agenda.Validation,
+  PascalCommon.Validators,
+  Agenda.Validators,
   Agenda.Tokens;
 
 const
@@ -319,13 +320,17 @@ var
   LNow: Int64;
   LQuery: IQuery;
   LTx: IScopeTransaction;
+  LCheck: TPcValidation;
 begin
-  // Normalized (Agenda.Normalizers), then checked (Agenda.Validation): an
-  // absent email stays absent, with no if.
+  // Normalized (Agenda.Normalizers), then checked (Agenda.Validators; the
+  // document's limits were enforced at the edge): an absent email stays
+  // absent and isn't checked, with no if.
   LName := TNorm.DisplayName.Apply(AProfessional.Name);
   LEmail := TOptionals.Normalize(AProfessional.Email, TNorm.Email);
-  ValidateName(LName);
-  ValidateEmail(LEmail);
+  LCheck := TPcValidation.Create;
+  LCheck.Check('name', LName, TValid.DisplayName);
+  LCheck.Check('email', LEmail, TValid.Email);
+  LCheck.RaiseIfAny;
   LId := NewId;
   LNow := TJwt.UnixNow;
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
@@ -354,6 +359,7 @@ function TProfessionalRepository.Update(const AId: string;
 var
   LName: IOptString;
   LEmail: IOptNullString;
+  LCheck: TPcValidation;
   LQuery: IQuery;
   LTx: IScopeTransaction;
   LRows: Int64;
@@ -362,8 +368,10 @@ begin
   // null (the email cleared). Then the checks, for the members that came.
   LName := TOptionals.Normalize(APatch.Name, TNorm.DisplayName);
   LEmail := TOptionals.Normalize(APatch.Email, TNorm.Email);
-  ValidateName(LName);
-  ValidateEmail(LEmail);
+  LCheck := TPcValidation.Create;
+  LCheck.Check('name', LName, TValid.DisplayName);
+  LCheck.Check('email', LEmail, TValid.Email);
+  LCheck.RaiseIfAny;
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
   LTx.StartTransaction;
   try

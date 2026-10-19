@@ -91,7 +91,7 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
-        <Filename Value="..\src\Agenda.Validation.pas"/>
+        <Filename Value="..\src\Agenda.Validators.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>

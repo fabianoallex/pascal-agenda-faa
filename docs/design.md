@@ -151,7 +151,7 @@ two libraries would share goes to pascal-common-faa.
   filters): both repeated in every list route (see "Progress", M1, customers and users).
 - Phone normalization, next to the accent-insensitive search key (pascal-common-faa).
 - An instant type for the mapper: zone required on input, `Z` on output (pascal-jsonmapper-faa).
-- Validation in the libraries (from `Agenda.Validation`'s three overloads per rule and the limits written twice, once in `Describe`): **designed 2026-10-19** in pascal-api-infra-faa's `docs/validation-design.md`; this API adopts it in its phase F3.
+- Validation in the libraries (from `Agenda.Validation`'s three overloads per rule and the limits written twice, once in `Describe`): **designed 2026-10-19** in pascal-api-infra-faa's `docs/validation-design.md`; built in pascal-common-faa 1.21.0 and pascal-api-infra-faa 0.20.0, adopted here 2026-10-19 ("Validation from the libraries", below).
 
 - A shared test kit: the DUnitX-to-FPCUnit adapter and the mirror generator, copied in every
   repository of the family. **Done 2026-10-19 in the skill** (the user's choice):
@@ -485,3 +485,35 @@ Found while doing it (candidates, not built):
 `gen_fpc_mirror.py` exist as near-identical copies in pascal-common-faa, -jsonmapper-faa,
 -db-faa, -redis-faa, -api-infra-faa and three other projects; this is the eighth. A
 candidate for one shared copy (a `testing/` folder in pascal-common-faa, or the skill).
+
+## Validation from the libraries (F3, 2026-10-19)
+
+On pascal-common-faa 1.21.0 (`PascalCommon.Validators`) and pascal-api-infra-faa 0.20.0, the
+phase F3 of their `docs/validation-design.md`. Step 2 of "normalize, then validate, then bind"
+changed shape:
+
+- **The document's limits are enforced at the edge.** The handlers read bodies with
+  `THorseBody.Read<I>(AReq)` (services, professionals, customers, users, working hours, time off;
+  the auth routes keep `FromJson`), and `THorseQueryParams.Read` already ran the same check. Added
+  to the `Describe` declarations so each limit is written once: the price's `Maximum(100000)`, the
+  patch's duration, buffer and price ranges, the password's `MinLength(8)`, the role's
+  `Enum([owner, staff])` (insert, patch and the `role` filter). Gone from the repositories:
+  `ValidateDuration`/`ValidateBuffer`/`ValidatePrice` ranges, `ValidateRole`, `ValidatePassword`,
+  the name's 100 characters, the reason's 200.
+- **What the document can't say** is `src/Agenda.Validators` (`TValid = class(TPcStringValidators)`:
+  `DisplayName`, `Email`, `Phone`) plus the library's `TPcIntegerValidators.MultipleOf(5)` and
+  `TPcCurrencyValidators.MaxDecimals(2)`, run through `TPcValidation` after normalizing. One
+  `Check` per member whatever its shape (the "absent or null: not checked" rule is the library's),
+  `Fail` for a rule with context (`CheckProfessional`, the time off's span), `RaiseIfAny` once.
+  `src/Agenda.Validation` (three overloads per rule) is deleted.
+- **One 400 lists every failing field**: `{"error": <first message>, "code": "invalid_fields",
+  "fields": [{field, code, message}]}`. Changed codes: `name_required` is now the field's
+  `required`, `password_too_short` the document's `too_short`, `unknown_professional` moved into
+  `fields`. `own_account` and `invalid_week` stay single refusals (`EValidationException`).
+
+Observed: the edge checks the value as it came, so a time off's reason of 200 characters plus
+blanks around it is now refused (it was trimmed first); the edge also answers before the
+repository, so a request that breaks a limit and a rule hears of the limit only. 40 unit tests
+(`Agenda.NormalizersTests` tests `TValid` and the collector); 333 HTTP checks (10 new: three
+fields wrong at once, the document's ranges, the role's enum in a body and in the query) on FPC
+Windows and Linux, OpenAPI valid; Delphi 12 Win32/Win64: 40 unit tests (0 leaks) and 333 checks each.

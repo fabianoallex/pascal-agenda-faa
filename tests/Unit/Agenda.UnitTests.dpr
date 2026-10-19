@@ -19,7 +19,7 @@ uses
   Agenda.Tokens in '..\..\src\Agenda.Tokens.pas',
   Agenda.Text in '..\..\src\Agenda.Text.pas',
   Agenda.Normalizers in '..\..\src\Agenda.Normalizers.pas',
-  Agenda.Validation in '..\..\src\Agenda.Validation.pas',
+  Agenda.Validators in '..\..\src\Agenda.Validators.pas',
   Agenda.Money in '..\..\src\Agenda.Money.pas',
   Agenda.Times in '..\..\src\Agenda.Times.pas',
   Agenda.DUnitXCompat in 'Agenda.DUnitXCompat.pas',

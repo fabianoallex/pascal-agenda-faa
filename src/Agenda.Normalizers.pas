@@ -11,7 +11,7 @@ unit Agenda.Normalizers;
   A normalizer only changes a present value into the form the API stores:
   it never refuses one. A value that can't be made right (a phone with
   letters, a name of spaces) comes out as it went in, or empty, and
-  Agenda.Validation refuses it next. Kept apart on purpose: a normalizer that
+  Agenda.Validators refuses it next. Kept apart on purpose: a normalizer that
   cut a name at 100 characters would hide the client's mistake instead of
   answering 400.
 
@@ -35,7 +35,7 @@ type
     /// An email address: trimmed and lower case.
     class function Email: IPcStringNormalizer; static;
     /// A phone typed with spaces, "-", ".", "(" or ")": "+" (when first) and
-    /// its digits; any other text as it came (Agenda.Validation refuses it).
+    /// its digits; any other text as it came (Agenda.Validators refuses it).
     class function Phone: IPcStringNormalizer; static;
   end;
 

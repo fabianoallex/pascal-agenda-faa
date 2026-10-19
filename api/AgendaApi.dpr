@@ -95,7 +95,7 @@ uses
   Agenda.AuthDtos in '..\src\Agenda.AuthDtos.pas',
   Agenda.Text in '..\src\Agenda.Text.pas',
   Agenda.Normalizers in '..\src\Agenda.Normalizers.pas',
-  Agenda.Validation in '..\src\Agenda.Validation.pas',
+  Agenda.Validators in '..\src\Agenda.Validators.pas',
   Agenda.Money in '..\src\Agenda.Money.pas',
   Agenda.Services in '..\src\Agenda.Services.pas',
   Agenda.Professionals in '..\src\Agenda.Professionals.pas',
@@ -366,7 +366,7 @@ begin
   LRepo := TServiceRepository.Create(ScopeOf(AReq));
   try
     TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IService>(
-      LRepo.Insert(TJsonMapper.Shared.FromJson<IServiceInsert>(AReq.Body))), 201);
+      LRepo.Insert(THorseBody.Read<IServiceInsert>(AReq))), 201);
   finally
     LRepo.Free;
   end;
@@ -380,7 +380,7 @@ begin
   LRepo := TServiceRepository.Create(ScopeOf(AReq));
   try
     TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IService>(LRepo.Update(AReq.Params['id'],
-      TJsonMapper.Shared.FromJson<IServicePatch>(AReq.Body))));
+      THorseBody.Read<IServicePatch>(AReq))));
   finally
     LRepo.Free;
   end;
@@ -440,7 +440,7 @@ begin
   LRepo := TProfessionalRepository.Create(ScopeOf(AReq));
   try
     TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IProfessional>(
-      LRepo.Insert(TJsonMapper.Shared.FromJson<IProfessionalInsert>(AReq.Body))), 201);
+      LRepo.Insert(THorseBody.Read<IProfessionalInsert>(AReq))), 201);
   finally
     LRepo.Free;
   end;
@@ -454,7 +454,7 @@ begin
   LRepo := TProfessionalRepository.Create(ScopeOf(AReq));
   try
     TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IProfessional>(LRepo.Update(
-      AReq.Params['id'], TJsonMapper.Shared.FromJson<IProfessionalPatch>(AReq.Body))));
+      AReq.Params['id'], THorseBody.Read<IProfessionalPatch>(AReq))));
   finally
     LRepo.Free;
   end;
@@ -514,7 +514,7 @@ begin
   LRepo := TCustomerRepository.Create(ScopeOf(AReq));
   try
     TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<ICustomer>(
-      LRepo.Insert(TJsonMapper.Shared.FromJson<ICustomerInsert>(AReq.Body))), 201);
+      LRepo.Insert(THorseBody.Read<ICustomerInsert>(AReq))), 201);
   finally
     LRepo.Free;
   end;
@@ -527,7 +527,7 @@ begin
   LRepo := TCustomerRepository.Create(ScopeOf(AReq));
   try
     TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<ICustomer>(LRepo.Update(AReq.Params['id'],
-      TJsonMapper.Shared.FromJson<ICustomerPatch>(AReq.Body))));
+      THorseBody.Read<ICustomerPatch>(AReq))));
   finally
     LRepo.Free;
   end;
@@ -595,7 +595,7 @@ begin
   LRepo := NewUserRepository(AReq);
   try
     TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IUser>(
-      LRepo.Insert(TJsonMapper.Shared.FromJson<IUserInsert>(AReq.Body))), 201);
+      LRepo.Insert(THorseBody.Read<IUserInsert>(AReq))), 201);
   finally
     LRepo.Free;
   end;
@@ -609,7 +609,7 @@ begin
   LRepo := NewUserRepository(AReq);
   try
     TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IUser>(LRepo.Update(ClaimString(AReq, 'sub'),
-      AReq.Params['id'], TJsonMapper.Shared.FromJson<IUserPatch>(AReq.Body))));
+      AReq.Params['id'], THorseBody.Read<IUserPatch>(AReq))));
   finally
     LRepo.Free;
   end;
@@ -651,7 +651,7 @@ begin
   LRepo := TWorkingHoursRepository.Create(ScopeOf(AReq));
   try
     TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IWorkingWeek>(LRepo.Replace(
-      AReq.Params['id'], TJsonMapper.Shared.FromJson<IWorkingWeekPut>(AReq.Body))));
+      AReq.Params['id'], THorseBody.Read<IWorkingWeekPut>(AReq))));
   finally
     LRepo.Free;
   end;
@@ -697,7 +697,7 @@ begin
   LRepo := TTimeOffRepository.Create(ScopeOf(AReq));
   try
     TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<ITimeOff>(LRepo.Insert(AReq.Params['id'],
-      TJsonMapper.Shared.FromJson<ITimeOffInsert>(AReq.Body))), 201);
+      THorseBody.Read<ITimeOffInsert>(AReq))), 201);
   finally
     LRepo.Free;
   end;

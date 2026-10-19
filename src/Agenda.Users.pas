@@ -28,6 +28,7 @@ interface
 
 uses
   PascalCommon.Optionals,
+  PascalCommon.Validators,
   PascalDb.Paging,
   PascalApi.OrderBy,
   PascalApi.Dto,
@@ -162,10 +163,10 @@ type
   private
     FScope: TTenantDataScope;
     FIterations: Integer;
-    /// A 400 unless the tenant has the professional (when it came with a
-    /// value): a check that needs the scope, so a method.
-    procedure ValidateProfessional(const AId: IOptString); overload;
-    procedure ValidateProfessional(const AId: IOptNullString); overload;
+    /// Adds a failure to ACheck unless the tenant has the professional (when
+    /// it came with a value): a rule that needs the scope, so a method.
+    procedure CheckProfessional(const AId: IOptString; var ACheck: TPcValidation); overload;
+    procedure CheckProfessional(const AId: IOptNullString; var ACheck: TPcValidation); overload;
   public
     /// AIterations: PBKDF2's, for the passwords this repository hashes.
     constructor Create(const AScope: TTenantDataScope; AIterations: Integer);
@@ -183,10 +184,6 @@ type
 
 function UserOrderSpec: TOrderBySpec;
 
-/// A 400 unless ARole is owner or staff (when it came, for the optional).
-procedure ValidateRole(const ARole: string); overload;
-procedure ValidateRole(const ARole: IOptString); overload;
-
 implementation
 
 uses
@@ -198,13 +195,12 @@ uses
   PascalCommon.JsonMapper.Optionals,
   PascalApi.OpenApi,
   PascalApi.Http,
-  PascalApi.Text,
   PascalApi.Jwt,
   PascalApi.PagedQuery,
   Agenda.Auth,
   Agenda.Passwords,
   Agenda.Normalizers,
-  Agenda.Validation,
+  Agenda.Validators,
   Agenda.Tokens;
 
 function UserOrderSpec: TOrderBySpec;
@@ -214,18 +210,6 @@ begin
     .Allow('createdAt', 'CREATED_AT')
     .Default('email')
     .AlwaysLast('ID');
-end;
-
-procedure ValidateRole(const ARole: string);
-begin
-  if (ARole <> ROLE_OWNER) and (ARole <> ROLE_STAFF) then
-    raise EValidationException.Create('"role" must be owner or staff.');
-end;
-
-procedure ValidateRole(const ARole: IOptString);
-begin
-  if ARole.HasValue then
-    ValidateRole(ARole.Value);
 end;
 
 { DTOs }
@@ -312,20 +296,7 @@ end;
 
 { validation }
 
-procedure ValidatePassword(const APassword: string); overload;
-begin
-  if PaCharCount(APassword) < MIN_PASSWORD_CHARS then
-    raise EValidationException.Create(Format('"password" must have at least %d characters.',
-      [MIN_PASSWORD_CHARS]), 'password_too_short');
-end;
-
-procedure ValidatePassword(const APassword: IOptString); overload;
-begin
-  if APassword.HasValue then
-    ValidatePassword(APassword.Value);
-end;
-
-// The stored hash of a password ValidatePassword accepted.
+// The stored hash of a password the edge accepted (the document's MinLength).
 function HashPassword(const APassword: string; AIterations: Integer): string;
 begin
   try
@@ -417,7 +388,6 @@ var
   LOrder: string;
 begin
   LOrder := UserOrderSpec.Build(AFind.OrderBy.ValueOr(''));
-  ValidateRole(AFind.Role);
   Result := TTenantPagedQuery.Run<IUser>(FScope,
     Filtered(FScope.Factory.SqlLoader['USER.COUNT'], AFind),
     Filtered(FScope.Factory.SqlLoader['USER.PAGE'], AFind), LOrder, APage, FilterArgs(AFind),
@@ -441,7 +411,7 @@ begin
     raise ENotFoundException.Create('User not found.');
 end;
 
-procedure TUserRepository.ValidateProfessional(const AId: IOptString);
+procedure TUserRepository.CheckProfessional(const AId: IOptString; var ACheck: TPcValidation);
 var
   LQuery: IQuery;
   LTx: IScopeTransaction;
@@ -452,11 +422,12 @@ begin
   TTenantFilter.Prepare(LQuery, FScope, 'PROFESSIONAL.BY_ID');
   LQuery.Params.Strings['ID'] := AId.Value;
   if LQuery.Open.Eof then
-    raise EValidationException.Create('"professionalId": the tenant has no such professional.',
-      'unknown_professional');
+    ACheck.Fail('professionalId', 'unknown_professional',
+      '"professionalId": the tenant has no such professional.');
 end;
 
-procedure TUserRepository.ValidateProfessional(const AId: IOptNullString);
+procedure TUserRepository.CheckProfessional(const AId: IOptNullString;
+  var ACheck: TPcValidation);
 var
   LId: IOptString;
 begin
@@ -465,23 +436,26 @@ begin
     // A variable, not From(...) in the call: From answers the class, which
     // fits both overloads.
     LId := TOptNullString.From(AId.Value);
-    ValidateProfessional(LId);
+    CheckProfessional(LId, ACheck);
   end;
 end;
 
 function TUserRepository.Insert(const AUser: IUserInsert): IUser;
 var
   LEmail, LHash, LId: string;
+  LCheck: TPcValidation;
   LNow: Int64;
   LQuery: IQuery;
   LTx: IScopeTransaction;
 begin
   // Normalized (Agenda.Normalizers), then checked: a 400 touches nothing.
   LEmail := TNorm.Email.Apply(AUser.Email);
-  ValidateEmail(LEmail);
-  ValidateRole(AUser.Role);
-  ValidatePassword(AUser.Password);
-  ValidateProfessional(AUser.ProfessionalId);
+  // The role and the password's length are the document's (Enum, MinLength),
+  // enforced at the edge.
+  LCheck := TPcValidation.Create;
+  LCheck.Check('email', LEmail, TValid.Email);
+  CheckProfessional(AUser.ProfessionalId, LCheck);
+  LCheck.RaiseIfAny;
   // Hashed before the transaction: it holds no connection while it works.
   LHash := HashPassword(AUser.Password, FIterations);
   LId := NewId;
@@ -511,6 +485,7 @@ end;
 function TUserRepository.Update(const AActorId, AId: string; const APatch: IUserPatch): IUser;
 var
   LEmail, LHash: IOptString;
+  LCheck: TPcValidation;
   LDeactivate: Boolean;
   LQuery: IQuery;
   LTx: IScopeTransaction;
@@ -519,10 +494,10 @@ begin
   // Normalized inside the optionals, then checked, for the members that came:
   // a 400 touches nothing.
   LEmail := TOptionals.Normalize(APatch.Email, TNorm.Email);
-  ValidateEmail(LEmail);
-  ValidateRole(APatch.Role);
-  ValidatePassword(APatch.Password);
-  ValidateProfessional(APatch.ProfessionalId);
+  LCheck := TPcValidation.Create;
+  LCheck.Check('email', LEmail, TValid.Email);
+  CheckProfessional(APatch.ProfessionalId, LCheck);
+  LCheck.RaiseIfAny;
   LDeactivate := APatch.Active.HasValue and not APatch.Active.Value;
   // The actor is an owner (the route checks it): keeping the role is fine.
   if (AId = AActorId) and (LDeactivate or (APatch.Role.ValueOr(ROLE_OWNER) <> ROLE_OWNER)) then
@@ -601,13 +576,14 @@ initialization
   TApiSchema.Describe(TypeInfo(IUserInsert), 'A new user of the caller''s tenant')
     .Prop('Email').Desc('Unique within the tenant; the login').Example('ana@demo.test')
     .Prop('Password').Desc('At least 8 characters; never returned')
-      .Example('a long passphrase')
-    .Prop('Role').Desc('owner or staff').Example('staff')
+      .Example('a long passphrase').MinLength(MIN_PASSWORD_CHARS)
+    .Prop('Role').Desc('owner or staff').Example('staff').Enum([ROLE_OWNER, ROLE_STAFF])
     .Prop('ProfessionalId').Desc('Optional: the professional this user is');
   TApiSchema.Describe(TypeInfo(IUserPatch), 'The members to change; the others stay')
     .Prop('Email').Desc('Unique within the tenant')
     .Prop('Password').Desc('A new password; ends the user''s sessions')
-    .Prop('Role').Desc('owner or staff; not your own')
+      .MinLength(MIN_PASSWORD_CHARS)
+    .Prop('Role').Desc('owner or staff; not your own').Enum([ROLE_OWNER, ROLE_STAFF])
     .Prop('Active').Desc('false: can''t log in, sessions end; not yourself')
     .Prop('ProfessionalId').Desc('null unlinks');
   TApiSchema.Describe(TypeInfo(IUser), 'A user of the caller''s tenant')
@@ -618,7 +594,7 @@ initialization
     .Prop('Limit').Desc('Users per page (default 20, at most 100)')
     .Prop('OrderBy').Desc(UserOrderSpec.DocHint)
     .Prop('Search').Desc('Part of the email')
-    .Prop('Role').Desc('owner or staff')
+    .Prop('Role').Desc('owner or staff').Enum([ROLE_OWNER, ROLE_STAFF])
     .Prop('Active').Desc('true or false');
 
 end.

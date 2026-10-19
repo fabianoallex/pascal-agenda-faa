@@ -32,6 +32,7 @@ const
   MAX_DURATION_MINUTES = 480;
   MAX_BUFFER_MINUTES = 120;
   MAX_NAME_CHARS = 100;
+  MAX_PRICE = 100000;
 
 type
   IServiceInsert = interface(IInsertDTOBase)
@@ -192,7 +193,8 @@ uses
   PascalApi.PagedQuery,
   PascalCommon.Text,
   Agenda.Normalizers,
-  Agenda.Validation,
+  PascalCommon.Validators,
+  Agenda.Validators,
   Agenda.Money,
   Agenda.Tokens;
 
@@ -290,55 +292,20 @@ end;
 
 { validation }
 
-// The service's own rules, in Agenda.Validation's shape: one overload per
-// shape of the member (required, or optional and checked when it came), a
-// 400 for a value that breaks the rule, nothing changed.
+// The service's rules the OpenAPI document can't say (its ranges are in
+// TApiSchema.Describe below, enforced at the edge by THorseBody.Read).
 
-procedure ValidateDuration(const AMinutes: Integer); overload;
+function FiveMinuteSteps: IPcIntegerValidator;
 begin
-  if (AMinutes < MIN_DURATION_MINUTES) or (AMinutes > MAX_DURATION_MINUTES) or
-    (AMinutes mod 5 <> 0) then
-    raise EValidationException.CreateFmt(
-      '"durationMinutes" must be a multiple of 5 from %d to %d.',
-      [MIN_DURATION_MINUTES, MAX_DURATION_MINUTES]);
+  Result := TPcIntegerValidators.MultipleOf(5);
 end;
 
-procedure ValidateDuration(const AMinutes: IOptInteger); overload;
+function WholeCents: IPcCurrencyValidator;
 begin
-  if AMinutes.HasValue then
-    ValidateDuration(AMinutes.Value);
+  Result := TPcCurrencyValidators.MaxDecimals(2);
 end;
 
-procedure ValidateBuffer(const AMinutes: Integer); overload;
-begin
-  if (AMinutes < 0) or (AMinutes > MAX_BUFFER_MINUTES) or (AMinutes mod 5 <> 0) then
-    raise EValidationException.CreateFmt(
-      '"bufferMinutes" must be a multiple of 5 from 0 to %d.', [MAX_BUFFER_MINUTES]);
-end;
-
-procedure ValidateBuffer(const AMinutes: IOptInteger); overload;
-begin
-  if AMinutes.HasValue then
-    ValidateBuffer(AMinutes.Value);
-end;
-
-procedure ValidatePrice(const APrice: Currency); overload;
-var
-  LCents: Int64;
-begin
-  if not TryCurrencyToCents(APrice, LCents) then
-    raise EValidationException.Create('"price" can''t have a fraction of a cent.');
-  if (LCents < 0) or (LCents > 10000000) then
-    raise EValidationException.Create('"price" must be from 0 to 100000.');
-end;
-
-procedure ValidatePrice(const APrice: IOptCurrency); overload;
-begin
-  if APrice.HasValue then
-    ValidatePrice(APrice.Value);
-end;
-
-// A price ValidatePrice accepted, in cents.
+// A price WholeCents accepted, in cents.
 function CentsOf(const APrice: Currency): Int64;
 begin
   if not TryCurrencyToCents(APrice, Result) then
@@ -419,15 +386,19 @@ var
   LNow: Int64;
   LQuery: IQuery;
   LTx: IScopeTransaction;
+  LCheck: TPcValidation;
 begin
-  // Normalized (Agenda.Normalizers), then checked (Agenda.Validation and the
-  // rules above): a 400 touches nothing.
+  // The document's limits were enforced at the edge (THorseBody.Read).
+  // Normalized (Agenda.Normalizers), then the rules it can't say, every
+  // failing field in one 400 that touches nothing.
   LName := TNorm.DisplayName.Apply(AService.Name);
   LBuffer := AService.BufferMinutes.ValueOr(0);
-  ValidateName(LName);
-  ValidateDuration(AService.DurationMinutes);
-  ValidateBuffer(LBuffer);
-  ValidatePrice(AService.Price);
+  LCheck := TPcValidation.Create;
+  LCheck.Check('name', LName, TValid.DisplayName);
+  LCheck.Check('durationMinutes', AService.DurationMinutes, FiveMinuteSteps);
+  LCheck.Check('bufferMinutes', AService.BufferMinutes, FiveMinuteSteps);
+  LCheck.Check('price', AService.Price, WholeCents);
+  LCheck.RaiseIfAny;
   LId := NewId;
   LNow := TJwt.UnixNow;
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
@@ -454,6 +425,7 @@ end;
 function TServiceRepository.Update(const AId: string; const APatch: IServicePatch): IService;
 var
   LName: IOptString;
+  LCheck: TPcValidation;
   LQuery: IQuery;
   LTx: IScopeTransaction;
   LRows: Int64;
@@ -461,11 +433,14 @@ begin
   // Normalized inside the optionals, by the rules of Agenda.Normalizers: an
   // absent member stays absent, so there is no if here.
   LName := TOptionals.Normalize(APatch.Name, TNorm.DisplayName);
-  // The checks, for the members that came: a 400 touches nothing.
-  ValidateName(LName);
-  ValidateDuration(APatch.DurationMinutes);
-  ValidateBuffer(APatch.BufferMinutes);
-  ValidatePrice(APatch.Price);
+  // The checks, for the members that came (TPcValidation skips an absent
+  // one): a 400 touches nothing.
+  LCheck := TPcValidation.Create;
+  LCheck.Check('name', LName, TValid.DisplayName);
+  LCheck.Check('durationMinutes', APatch.DurationMinutes, FiveMinuteSteps);
+  LCheck.Check('bufferMinutes', APatch.BufferMinutes, FiveMinuteSteps);
+  LCheck.Check('price', APatch.Price, WholeCents);
+  LCheck.RaiseIfAny;
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
   LTx.StartTransaction;
   try
@@ -532,12 +507,14 @@ initialization
       .Minimum(MIN_DURATION_MINUTES).Maximum(MAX_DURATION_MINUTES)
     .Prop('BufferMinutes').Desc('Kept free after it; multiple of 5, 0 to 120 (default 0)')
       .Example('10').Minimum(0).Maximum(MAX_BUFFER_MINUTES)
-    .Prop('Price').Desc('At most 2 decimals, 0 to 100000').Example('80.00').Minimum(0);
+    .Prop('Price').Desc('At most 2 decimals, 0 to 100000').Example('80.00')
+      .Minimum(0).Maximum(MAX_PRICE);
   TApiSchema.Describe(TypeInfo(IServicePatch), 'The members to change; the others stay')
     .Prop('Name').Desc('Unique within the tenant; never null').MaxLength(MAX_NAME_CHARS)
     .Prop('DurationMinutes').Desc('Multiple of 5, from 5 to 480')
-    .Prop('BufferMinutes').Desc('Multiple of 5, 0 to 120')
-    .Prop('Price').Desc('At most 2 decimals')
+      .Minimum(MIN_DURATION_MINUTES).Maximum(MAX_DURATION_MINUTES)
+    .Prop('BufferMinutes').Desc('Multiple of 5, 0 to 120').Minimum(0).Maximum(MAX_BUFFER_MINUTES)
+    .Prop('Price').Desc('At most 2 decimals, 0 to 100000').Minimum(0).Maximum(MAX_PRICE)
     .Prop('Active').Desc('false: no longer offered');
   TApiSchema.Describe(TypeInfo(IService), 'A service of the caller''s tenant')
     .Prop('Price').Example('80.00');

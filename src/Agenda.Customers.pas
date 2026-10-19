@@ -155,7 +155,8 @@ uses
   PascalCommon.Text,
   Agenda.Text,
   Agenda.Normalizers,
-  Agenda.Validation,
+  PascalCommon.Validators,
+  Agenda.Validators,
   Agenda.Tokens;
 
 const
@@ -327,18 +328,22 @@ function TCustomerRepository.Insert(const ACustomer: ICustomerInsert): ICustomer
 var
   LName, LId: string;
   LPhone, LEmail: IOptString;
+  LCheck: TPcValidation;
   LNow: Int64;
   LQuery: IQuery;
   LTx: IScopeTransaction;
 begin
-  // Normalized (Agenda.Normalizers), then checked (Agenda.Validation): a
-  // contact that didn't come stays absent, with no if.
+  // Normalized (Agenda.Normalizers), then checked (Agenda.Validators; the
+  // document's limits were enforced at the edge): a contact that didn't come
+  // stays absent and isn't checked, with no if.
   LName := TNorm.DisplayName.Apply(ACustomer.Name);
   LPhone := TOptionals.Normalize(ACustomer.Phone, TNorm.Phone);
   LEmail := TOptionals.Normalize(ACustomer.Email, TNorm.Email);
-  ValidateName(LName);
-  ValidatePhone(LPhone);
-  ValidateEmail(LEmail);
+  LCheck := TPcValidation.Create;
+  LCheck.Check('name', LName, TValid.DisplayName);
+  LCheck.Check('phone', LPhone, TValid.Phone);
+  LCheck.Check('email', LEmail, TValid.Email);
+  LCheck.RaiseIfAny;
   LId := NewId;
   LNow := TJwt.UnixNow;
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
@@ -370,6 +375,7 @@ function TCustomerRepository.Update(const AId: string; const APatch: ICustomerPa
 var
   LName: IOptString;
   LPhone, LEmail: IOptNullString;
+  LCheck: TPcValidation;
   LRow: TCustomerRow;
   LQuery: IQuery;
   LTx: IScopeTransaction;
@@ -381,9 +387,11 @@ begin
   LName := TOptionals.Normalize(APatch.Name, TNorm.DisplayName);
   LPhone := TOptionals.Normalize(APatch.Phone, TNorm.Phone);
   LEmail := TOptionals.Normalize(APatch.Email, TNorm.Email);
-  ValidateName(LName);
-  ValidatePhone(LPhone);
-  ValidateEmail(LEmail);
+  LCheck := TPcValidation.Create;
+  LCheck.Check('name', LName, TValid.DisplayName);
+  LCheck.Check('phone', LPhone, TValid.Phone);
+  LCheck.Check('email', LEmail, TValid.Email);
+  LCheck.RaiseIfAny;
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
   LTx.StartTransaction;
   try
