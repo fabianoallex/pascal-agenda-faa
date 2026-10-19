@@ -319,10 +319,7 @@ var
   LCount: Integer;
 begin
   // 400 for a field not allowed, before touching the database.
-  if AFind.OrderBy.HasValue then
-    LOrder := ServiceOrderSpec.Build(AFind.OrderBy.Value)
-  else
-    LOrder := ServiceOrderSpec.Build('');
+  LOrder := ServiceOrderSpec.Build(AFind.OrderBy.ValueOr(''));
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
   LTx.StartTransaction;
   try
@@ -381,9 +378,7 @@ var
 begin
   LName := CheckName(AService.GetName);
   CheckDuration(AService.GetDurationMinutes);
-  LBuffer := 0;
-  if AService.GetBufferMinutes.HasValue then
-    LBuffer := AService.GetBufferMinutes.Value;
+  LBuffer := AService.GetBufferMinutes.ValueOr(0);
   CheckBuffer(LBuffer);
   LCents := CheckPrice(AService.GetPrice);
   LId := NewId;

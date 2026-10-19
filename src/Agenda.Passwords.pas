@@ -75,8 +75,8 @@ uses
   PascalCommon.Random,
   PascalCommon.Utf8;
 
-{$IF PASCALCOMMON_VERSION < 11800}
-  {$MESSAGE FATAL 'Agenda.Passwords needs pascal-common-faa 1.18.0 or later (PcPbkdf2HmacSha256)'}
+{$IF PASCALCOMMON_VERSION < 11900}
+  {$MESSAGE FATAL 'Agenda.Passwords needs pascal-common-faa 1.19.0 or later (PcPbkdf2HmacSha256, ValueOr)'}
 {$IFEND}
 
 type

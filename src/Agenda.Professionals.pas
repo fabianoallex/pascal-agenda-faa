@@ -247,10 +247,7 @@ var
   LOrder: string;
   LCount: Integer;
 begin
-  if AFind.OrderBy.HasValue then
-    LOrder := ProfessionalOrderSpec.Build(AFind.OrderBy.Value)
-  else
-    LOrder := ProfessionalOrderSpec.Build('');
+  LOrder := ProfessionalOrderSpec.Build(AFind.OrderBy.ValueOr(''));
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
   LTx.StartTransaction;
   try

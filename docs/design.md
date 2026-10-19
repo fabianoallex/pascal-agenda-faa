@@ -286,9 +286,13 @@ What it showed about the libraries:
 - **pascal-common-faa, inconsistent API:** every optional's `From` returns its class
   (`TOptNullInteger`, `TOptNullString`...), which goes into any of its interfaces, but
   `TOptNullBoolean.From` returns `IOptNullBoolean` (cached instances), which doesn't go into an
-  `IOptBoolean` ("Incompatible types", FPC). Worked around with `as IOptBoolean`.
-- **pascal-common-faa, small gap:** the optionals have no `ValueOr(default)`; every default is an
-  `if HasValue`.
+  `IOptBoolean` ("Incompatible types", FPC). Worked around with `as IOptBoolean`, then with
+  `TrueValue`/`FalseValue`, which return the class. The user's decision (2026-10-18): an
+  oversight, kept for compatibility in 1.x and documented in pascal-common-faa 1.19.0; the fix
+  waits in its `docs/plan.md`, "Planned for 2.0".
+- **pascal-common-faa, small gap:** the optionals had no `ValueOr(default)`; every default was
+  an `if HasValue`. **Added in pascal-common-faa 1.19.0** (`ValueOr` on every optional); the
+  repositories here use it.
 - **FPC gotcha (for the skill):** `Currency(92233720368547)`, a typecast of an integer literal,
   reinterprets the bits on FPC 3.2.2 for Linux x86_64 (9223372036.8547) and converts on FPC for
   Windows (measured by `Agenda.MoneyTests`). pascal-db-faa's gotcha 18 is the other direction

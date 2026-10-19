@@ -308,12 +308,12 @@ function ParseQueryBool(const AName, AText: string): IOptBoolean;
 begin
   if AText = '' then
     Result := TOptNullBoolean.Undefined
-  // TOptNullBoolean.From returns IOptNullBoolean (cached instances), unlike
-  // the other optionals' From, which return the class (docs/design.md).
+  // TrueValue/FalseValue, not From: From returns IOptNullBoolean, which
+  // doesn't go into an IOptBoolean (pascal-common-faa 1.19.0's notes).
   else if AText = 'true' then
-    Result := TOptNullBoolean.From(True) as IOptBoolean
+    Result := TOptNullBoolean.TrueValue
   else if AText = 'false' then
-    Result := TOptNullBoolean.From(False) as IOptBoolean
+    Result := TOptNullBoolean.FalseValue
   else
     raise EValidationException.CreateFmt('"%s" must be true or false.', [AName]);
 end;
