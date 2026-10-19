@@ -115,9 +115,13 @@
         </DelphiCompile>
         <DCCReference Include="..\..\src\Agenda.Passwords.pas"/>
         <DCCReference Include="..\..\src\Agenda.Tokens.pas"/>
+        <DCCReference Include="..\..\src\Agenda.Text.pas"/>
+        <DCCReference Include="..\..\src\Agenda.Money.pas"/>
         <DCCReference Include="Agenda.DUnitXCompat.pas"/>
         <DCCReference Include="Agenda.PasswordsTests.pas"/>
         <DCCReference Include="Agenda.TokensTests.pas"/>
+        <DCCReference Include="Agenda.TextTests.pas"/>
+        <DCCReference Include="Agenda.MoneyTests.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>

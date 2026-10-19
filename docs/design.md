@@ -263,6 +263,44 @@ What building it showed about the libraries:
   statement without `StartTransaction`: every write starts and commits its transaction (read
   in `TScopeTransaction.Destroy`; caught before it bit).
 
+**Services and professionals** (2026-10-18): `src/Agenda.Services`, `src/Agenda.Professionals`
+(DTOs, ordering, a repository on the tenant's scope), `src/Agenda.Text` (search key, LIKE
+pattern), `src/Agenda.Money` (Currency and cents); migrations 6–7. `GET /services`,
+`/services/:id`, `POST`, `PATCH`, `DELETE`, and the same for `/professionals`: any user reads,
+the owner writes (403 `owner_only`, from the token's `role`). Paging and ordering in SQL
+(`TOrderBySpec`, `PdbPagingClause`) through `TTenantFilter.Prepare`'s `TSQLResult` overload.
+
+- A service's name is unique within its tenant by its search key: `NAME_KEY`, lower case and
+  Latin accents removed, computed in the application ("Corte de Cabélo" = "corte de cabelo"),
+  the database's unique key answers 409. Search goes through the same key (`coloracao` finds
+  "Coloração"), with `LIKE ... ESCAPE ''` so a `%` typed is literal.
+- Prices are cents in the database, Currency in JSON; a fraction of a cent is a 400.
+- Professionals' email: absent, null (clears it on PATCH) or a value: the three optionals.
+
+Checks: 24 unit tests; 153 HTTP checks (76 new in `tools/http_scenarios_catalog.sh`) on FPC
+Windows and Linux; the runners now compare the schema version of the two starts instead of a
+fixed number. Delphi: pending.
+
+What it showed about the libraries:
+
+- **pascal-common-faa, inconsistent API:** every optional's `From` returns its class
+  (`TOptNullInteger`, `TOptNullString`...), which goes into any of its interfaces, but
+  `TOptNullBoolean.From` returns `IOptNullBoolean` (cached instances), which doesn't go into an
+  `IOptBoolean` ("Incompatible types", FPC). Worked around with `as IOptBoolean`.
+- **pascal-common-faa, small gap:** the optionals have no `ValueOr(default)`; every default is an
+  `if HasValue`.
+- **FPC gotcha (for the skill):** `Currency(92233720368547)`, a typecast of an integer literal,
+  reinterprets the bits on FPC 3.2.2 for Linux x86_64 (9223372036.8547) and converts on FPC for
+  Windows (measured by `Agenda.MoneyTests`). pascal-db-faa's gotcha 18 is the other direction
+  (`Double(Currency)`). A typed constant is the same on both.
+- **Candidates:** an accent-insensitive search key and a literal LIKE pattern (pascal-common-faa
+  has normalizers, none of these); and filling a Find DTO from the query string: every list
+  handler copies each member by hand (`ParseQueryInt`/`ParseQueryStr` per member), while
+  pascal-api-infra-faa already reads the DTO's members for `QueryParams<T>` in OpenAPI.
+- Writing these files through scripts lost backslashes twice (an `ESCAPE ''` became `''''`,
+  a sed `` became a control character): the HTTP checks caught the first, a scan for control
+  characters the second.
+
 **Shared test kit**: the DUnitX-to-FPCUnit adapter (`*.DUnitXCompat.pas`) and
 `gen_fpc_mirror.py` exist as near-identical copies in pascal-common-faa, -jsonmapper-faa,
 -db-faa, -redis-faa, -api-infra-faa and three other projects; this is the eighth. A

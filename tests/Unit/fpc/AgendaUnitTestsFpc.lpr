@@ -20,7 +20,9 @@ uses
   {$ENDIF}
   Classes, consoletestrunner, testregistry,
   Agenda.PasswordsTests,
-  Agenda.TokensTests;
+  Agenda.TokensTests,
+  Agenda.TextTests,
+  Agenda.MoneyTests;
 
 var
   ConsoleApp: TTestRunner;

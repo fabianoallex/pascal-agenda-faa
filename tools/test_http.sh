@@ -67,6 +67,8 @@ SERVER_LOG="$LOG" sh tools/http_scenarios.sh "$PORT" || RC=$?
 stop
 [ $RC -eq 0 ] || { echo "--- $LOG"; tail -20 "$LOG"; exit $RC; }
 [ -n "$TOKEN" ] || { echo "FAIL: no token before the restart"; exit 1; }
+VERSION="$(grep -o 'at version [0-9]*' "$LOG" | head -1 | tr -cd '0-9')"
+[ -n "$VERSION" ] || { echo "FAIL: no schema version in the log"; exit 1; }
 
 echo "== second start on the same database"
 start
@@ -76,6 +78,6 @@ stop
 if grep -q "^migration " "$LOG"; then
   echo "FAIL: a second start applied migrations again"; cat "$LOG"; exit 1
 fi
-grep -q "at version 5" "$LOG" || { echo "FAIL: not at version 5"; cat "$LOG"; exit 1; }
+grep -q "at version $VERSION" "$LOG" || { echo "FAIL: not at version $VERSION"; cat "$LOG"; exit 1; }
 [ "$STATUS" = 200 ] || { echo "FAIL: a token from before the restart answered $STATUS"; exit 1; }
-echo "ok: no migration on the second start, version 5; a token from before the restart verifies"
+echo "ok: no migration on the second start, version $VERSION; a token from before the restart verifies"

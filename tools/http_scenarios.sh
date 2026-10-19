@@ -9,6 +9,9 @@
 #   two refreshes racing on one token, logout, a token moved to another
 #   tenant; /me with the access token; an access token whose tenant was
 #   changed (signature no longer matches);
+# - services and professionals (tools/http_scenarios_catalog.sh): roles,
+#   validation, names unique by their search key, search ignoring accents,
+#   ordering, paging, the active filter, null, another tenant's rows;
 # - the rate limit on /auth/ by client address (last: it uses the window).
 #
 #   sh tools/http_scenarios.sh [port]   (default 9400; AgendaApi must be running,
@@ -222,6 +225,9 @@ else
   echo "skipped: no Python for the tampered token"
 fi
 
+# --- services and professionals (their own file, same helpers)
+. "$(dirname "$0")/http_scenarios_catalog.sh"
+
 # --- OpenAPI document and Swagger UI
 req GET /swagger/doc.json ""
 status_is 200 "OpenAPI document"
@@ -230,6 +236,8 @@ body_has '"title":"Agenda API"' "OpenAPI title"
 body_has '"/auth/login":{"post":{' "OpenAPI: login"
 body_has '"securitySchemes":{"bearerAuth":' "OpenAPI: the bearer scheme, from the middleware"
 body_has '"LoginRequest":{"type":"object","description":"Credentials of a user of one tenant"' "OpenAPI: the login body"
+body_has '"/services/{id}":{"get":{' "OpenAPI: services, with the path parameter"
+body_has '{"name":"active","in":"query","description":"true or false' "OpenAPI: the active filter, from the Find DTO"
 [ -n "$OPENAPI_OUT" ] && cp "$T/body" "$OPENAPI_OUT"
 req GET /swagger ""
 status_is 200 "Swagger UI"

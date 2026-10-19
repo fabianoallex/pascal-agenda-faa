@@ -17,9 +17,13 @@ uses
   DUnitX.TestFramework,
   Agenda.Passwords in '..\..\src\Agenda.Passwords.pas',
   Agenda.Tokens in '..\..\src\Agenda.Tokens.pas',
+  Agenda.Text in '..\..\src\Agenda.Text.pas',
+  Agenda.Money in '..\..\src\Agenda.Money.pas',
   Agenda.DUnitXCompat in 'Agenda.DUnitXCompat.pas',
   Agenda.PasswordsTests in 'Agenda.PasswordsTests.pas',
-  Agenda.TokensTests in 'Agenda.TokensTests.pas';
+  Agenda.TokensTests in 'Agenda.TokensTests.pas',
+  Agenda.TextTests in 'Agenda.TextTests.pas',
+  Agenda.MoneyTests in 'Agenda.MoneyTests.pas';
 
 var
   runner: ITestRunner;

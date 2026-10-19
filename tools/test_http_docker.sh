@@ -60,6 +60,8 @@ MSYS_NO_PATHCONV=1 docker run --rm -v "$MOUNT:/src:ro" \
   stop
   [ $RC -eq 0 ] || { echo "--- server.log"; tail -20 /t/server.log; exit $RC; }
   [ -n "$TOKEN" ] || { echo "FAIL: no token before the restart"; exit 1; }
+  VERSION="$(grep -o "at version [0-9]*" /t/server.log | head -1 | tr -cd "0-9")"
+  [ -n "$VERSION" ] || { echo "FAIL: no schema version in the log"; exit 1; }
   python3 -m openapi_spec_validator /t/openapi.json
   # pascal-api-infra-faa'"'"'s check: promtool, accepting only the "_count" lint
   # of pascal-db-faa'"'"'s db_client_connection_count (its OpenTelemetry name).
@@ -72,7 +74,7 @@ MSYS_NO_PATHCONV=1 docker run --rm -v "$MOUNT:/src:ro" \
   if grep -q "^migration " /t/server.log; then
     echo "FAIL: a second start applied migrations again"; cat /t/server.log; exit 1
   fi
-  grep -q "at version 5" /t/server.log || { echo "FAIL: not at version 5"; cat /t/server.log; exit 1; }
+  grep -q "at version $VERSION" /t/server.log || { echo "FAIL: not at version $VERSION"; cat /t/server.log; exit 1; }
   [ "$STATUS" = 200 ] || { echo "FAIL: a token from before the restart answered $STATUS"; exit 1; }
-  echo "ok: no migration on the second start, version 5; a token from before the restart verifies"
+  echo "ok: no migration on the second start, version $VERSION; a token from before the restart verifies"
 '

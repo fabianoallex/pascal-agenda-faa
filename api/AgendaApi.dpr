@@ -35,6 +35,11 @@ program AgendaApi;
     POST /auth/refresh   {"refreshToken"} -> new tokens; the old one is spent
     POST /auth/logout    {"refreshToken"} -> 204, whatever the token
     GET  /me             the caller (access token)
+    GET  /services, /services/:id, /professionals, /professionals/:id
+                         any user of the tenant; page, limit, orderBy, search
+                         (ignoring case and accents), active=true|false
+    POST /services, PATCH|DELETE /services/:id, and the same for
+    /professionals       the tenant's owner only (403 "owner_only")
     GET  /health/live, /health/ready, /metrics, /swagger (/swagger/doc.json)
 
   Signing keys: one rotating ring per tenant (TTenantJwtKeyRing), kept and
@@ -53,15 +58,19 @@ uses
   {$ENDIF}
   SysUtils,
   Horse,
+  PascalCommon.Optionals,
   PascalJsonMapper.Json,
   PascalJsonMapper.Mapper,
+  PascalCommon.JsonMapper.Optionals,
   PascalDb.Interfaces,
   PascalDb.Migrations,
+  PascalDb.Paging,
   PascalCommon.SafeLog,
   PascalCommon.Tracing,
   PascalApi.Config,
   PascalApi.Otlp,
   PascalApi.Http,
+  PascalApi.Pagination,
   PascalApi.JwtKeys,
   PascalApi.Tenancy,
   PascalApi.Horse.Middlewares,
@@ -73,11 +82,15 @@ uses
   Agenda.Passwords in '..\src\Agenda.Passwords.pas',
   Agenda.Tokens in '..\src\Agenda.Tokens.pas',
   Agenda.Auth in '..\src\Agenda.Auth.pas',
-  Agenda.AuthDtos in '..\src\Agenda.AuthDtos.pas';
+  Agenda.AuthDtos in '..\src\Agenda.AuthDtos.pas',
+  Agenda.Text in '..\src\Agenda.Text.pas',
+  Agenda.Money in '..\src\Agenda.Money.pas',
+  Agenda.Services in '..\src\Agenda.Services.pas',
+  Agenda.Professionals in '..\src\Agenda.Professionals.pas';
 
 const
   APP_NAME = 'agenda-api';
-  APP_VERSION = '0.0.2';
+  APP_VERSION = '0.0.3';
   DEFAULT_PORT = 9400;
   // The 32 bytes "development-master-key-change-me": DEV_MODE only.
   DEV_MASTER_KEY = 'dev:ZGV2ZWxvcG1lbnQtbWFzdGVyLWtleS1jaGFuZ2UtbWU=';
@@ -257,6 +270,207 @@ begin
   LDto.Role := LUser.Role;
   LDto.Tenant := LInfo.Id;
   TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IMeResponse>(LIntf));
+end;
+
+{ Services and professionals }
+
+const
+  PAGE_DEFAULT_LIMIT = 20;
+  PAGE_MAX_LIMIT = 100;
+
+function ScopeOf(AReq: THorseRequest): TTenantDataScope;
+begin
+  Result := GResolver.ScopeFor(TTenantMiddleware.Current(AReq));
+end;
+
+// Writes are the owner's: a staff member reads. The role comes from the
+// verified token (Agenda.Auth writes it at login).
+procedure RequireOwner(AReq: THorseRequest);
+var
+  LClaims, LRole: TJsonValue;
+  LOwner: Boolean;
+begin
+  LClaims := TJwtMiddleware.Claims(AReq);
+  try
+    LRole := nil;
+    if LClaims <> nil then
+      LRole := LClaims.Find('role');
+    LOwner := (LRole <> nil) and (LRole.Kind = jkString) and (LRole.AsString = ROLE_OWNER);
+  finally
+    LClaims.Free;
+  end;
+  if not LOwner then
+    raise EHttpException.Create(403, 'Only the tenant''s owner can change this.', 'owner_only');
+end;
+
+// ?active=true|false; absent when not given; 400 for anything else.
+function ParseQueryBool(const AName, AText: string): IOptBoolean;
+begin
+  if AText = '' then
+    Result := TOptNullBoolean.Undefined
+  // TOptNullBoolean.From returns IOptNullBoolean (cached instances), unlike
+  // the other optionals' From, which return the class (docs/design.md).
+  else if AText = 'true' then
+    Result := TOptNullBoolean.From(True) as IOptBoolean
+  else if AText = 'false' then
+    Result := TOptNullBoolean.From(False) as IOptBoolean
+  else
+    raise EValidationException.CreateFmt('"%s" must be true or false.', [AName]);
+end;
+
+procedure GetServices(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LFind: IServiceFind;
+  LRepo: TServiceRepository;
+  LPage: TPage<IService>;
+begin
+  LFind := TServiceFind.Create;
+  LFind.Page := ParseQueryInt('page', AReq.Query['page']);
+  LFind.Limit := ParseQueryInt('limit', AReq.Query['limit']);
+  LFind.OrderBy := ParseQueryStr(AReq.Query['orderBy']);
+  LFind.Search := ParseQueryStr(AReq.Query['search']);
+  LFind.SetActive(ParseQueryBool('active', AReq.Query['active']));
+  LRepo := TServiceRepository.Create(ScopeOf(AReq));
+  try
+    LPage := LRepo.FindPage(LFind, PageRequestFrom(LFind.Page, LFind.Limit,
+      PAGE_DEFAULT_LIMIT, PAGE_MAX_LIMIT));
+  finally
+    LRepo.Free;
+  end;
+  TJsonSend.Send(ARes, PageEnvelopeJson(LPage.Meta,
+    TJsonMapper.Shared.Serialize<TServiceArray>(LPage.Items)));
+end;
+
+procedure GetService(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LRepo: TServiceRepository;
+begin
+  LRepo := TServiceRepository.Create(ScopeOf(AReq));
+  try
+    TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IService>(LRepo.FindById(AReq.Params['id'])));
+  finally
+    LRepo.Free;
+  end;
+end;
+
+procedure PostService(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LRepo: TServiceRepository;
+begin
+  RequireOwner(AReq);
+  LRepo := TServiceRepository.Create(ScopeOf(AReq));
+  try
+    TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IService>(
+      LRepo.Insert(TJsonMapper.Shared.FromJson<IServiceInsert>(AReq.Body))), 201);
+  finally
+    LRepo.Free;
+  end;
+end;
+
+procedure PatchService(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LRepo: TServiceRepository;
+begin
+  RequireOwner(AReq);
+  LRepo := TServiceRepository.Create(ScopeOf(AReq));
+  try
+    TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IService>(LRepo.Update(AReq.Params['id'],
+      TJsonMapper.Shared.FromJson<IServicePatch>(AReq.Body))));
+  finally
+    LRepo.Free;
+  end;
+end;
+
+procedure DeleteService(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LRepo: TServiceRepository;
+begin
+  RequireOwner(AReq);
+  LRepo := TServiceRepository.Create(ScopeOf(AReq));
+  try
+    LRepo.Delete(AReq.Params['id']);
+  finally
+    LRepo.Free;
+  end;
+  ARes.Status(204).Send('');
+end;
+
+procedure GetProfessionals(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LFind: IProfessionalFind;
+  LRepo: TProfessionalRepository;
+  LPage: TPage<IProfessional>;
+begin
+  LFind := TProfessionalFind.Create;
+  LFind.Page := ParseQueryInt('page', AReq.Query['page']);
+  LFind.Limit := ParseQueryInt('limit', AReq.Query['limit']);
+  LFind.OrderBy := ParseQueryStr(AReq.Query['orderBy']);
+  LFind.Search := ParseQueryStr(AReq.Query['search']);
+  LFind.SetActive(ParseQueryBool('active', AReq.Query['active']));
+  LRepo := TProfessionalRepository.Create(ScopeOf(AReq));
+  try
+    LPage := LRepo.FindPage(LFind, PageRequestFrom(LFind.Page, LFind.Limit,
+      PAGE_DEFAULT_LIMIT, PAGE_MAX_LIMIT));
+  finally
+    LRepo.Free;
+  end;
+  TJsonSend.Send(ARes, PageEnvelopeJson(LPage.Meta,
+    TJsonMapper.Shared.Serialize<TProfessionalArray>(LPage.Items)));
+end;
+
+procedure GetProfessional(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LRepo: TProfessionalRepository;
+begin
+  LRepo := TProfessionalRepository.Create(ScopeOf(AReq));
+  try
+    TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IProfessional>(
+      LRepo.FindById(AReq.Params['id'])));
+  finally
+    LRepo.Free;
+  end;
+end;
+
+procedure PostProfessional(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LRepo: TProfessionalRepository;
+begin
+  RequireOwner(AReq);
+  LRepo := TProfessionalRepository.Create(ScopeOf(AReq));
+  try
+    TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IProfessional>(
+      LRepo.Insert(TJsonMapper.Shared.FromJson<IProfessionalInsert>(AReq.Body))), 201);
+  finally
+    LRepo.Free;
+  end;
+end;
+
+procedure PatchProfessional(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LRepo: TProfessionalRepository;
+begin
+  RequireOwner(AReq);
+  LRepo := TProfessionalRepository.Create(ScopeOf(AReq));
+  try
+    TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IProfessional>(LRepo.Update(
+      AReq.Params['id'], TJsonMapper.Shared.FromJson<IProfessionalPatch>(AReq.Body))));
+  finally
+    LRepo.Free;
+  end;
+end;
+
+procedure DeleteProfessional(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LRepo: TProfessionalRepository;
+begin
+  RequireOwner(AReq);
+  LRepo := TProfessionalRepository.Create(ScopeOf(AReq));
+  try
+    LRepo.Delete(AReq.Params['id']);
+  finally
+    LRepo.Free;
+  end;
+  ARes.Status(204).Send('');
 end;
 
 { Setup }
@@ -454,6 +668,72 @@ begin
       .Error(401, 'No valid access token')
       .Error(404, 'The user no longer exists or is inactive')
       .Register(GetMe);
+
+    TRouteDoc.Get('/services').Summary('The tenant''s services, a page at a time').Tag('services')
+      .QueryParams<IServiceFind>
+      .ResponsePaged<IService>(200, 'A page of services')
+      .Error(400, 'A parameter or an order field that is not allowed')
+      .Register(GetServices);
+    TRouteDoc.Get('/services/:id').Summary('One service').Tag('services')
+      .PathParam('id', 'The service''s id')
+      .Response<IService>(200)
+      .Error(404, 'The tenant has no service with this id')
+      .Register(GetService);
+    TRouteDoc.Post('/services').Summary('Create a service (owner)').Tag('services')
+      .Body<IServiceInsert>
+      .Response<IService>(201, 'Created')
+      .Error(400, 'Invalid data')
+      .Error(403, 'owner_only')
+      .Error(409, 'The tenant already has a service with this name')
+      .Register(PostService);
+    TRouteDoc.Patch('/services/:id').Summary('Change a service (owner)').Tag('services')
+      .PathParam('id', 'The service''s id')
+      .Body<IServicePatch>
+      .Response<IService>(200, 'The service after the change')
+      .Error(400, 'Invalid data')
+      .Error(403, 'owner_only')
+      .Error(404, 'The tenant has no service with this id')
+      .Error(409, 'The tenant already has a service with this name')
+      .Register(PatchService);
+    TRouteDoc.Delete('/services/:id').Summary('Delete a service (owner)').Tag('services')
+      .PathParam('id', 'The service''s id')
+      .NoContent(204, 'Deleted')
+      .Error(403, 'owner_only')
+      .Error(404, 'The tenant has no service with this id')
+      .Register(DeleteService);
+    TRouteDoc.Get('/professionals').Summary('The tenant''s professionals, a page at a time')
+      .Tag('professionals')
+      .QueryParams<IProfessionalFind>
+      .ResponsePaged<IProfessional>(200, 'A page of professionals')
+      .Error(400, 'A parameter or an order field that is not allowed')
+      .Register(GetProfessionals);
+    TRouteDoc.Get('/professionals/:id').Summary('One professional').Tag('professionals')
+      .PathParam('id', 'The professional''s id')
+      .Response<IProfessional>(200)
+      .Error(404, 'The tenant has no professional with this id')
+      .Register(GetProfessional);
+    TRouteDoc.Post('/professionals').Summary('Create a professional (owner)').Tag('professionals')
+      .Body<IProfessionalInsert>
+      .Response<IProfessional>(201, 'Created')
+      .Error(400, 'Invalid data')
+      .Error(403, 'owner_only')
+      .Register(PostProfessional);
+    TRouteDoc.Patch('/professionals/:id').Summary('Change a professional (owner)')
+      .Tag('professionals')
+      .PathParam('id', 'The professional''s id')
+      .Body<IProfessionalPatch>
+      .Response<IProfessional>(200, 'The professional after the change')
+      .Error(400, 'Invalid data')
+      .Error(403, 'owner_only')
+      .Error(404, 'The tenant has no professional with this id')
+      .Register(PatchProfessional);
+    TRouteDoc.Delete('/professionals/:id').Summary('Delete a professional (owner)')
+      .Tag('professionals')
+      .PathParam('id', 'The professional''s id')
+      .NoContent(204, 'Deleted')
+      .Error(403, 'owner_only')
+      .Error(404, 'The tenant has no professional with this id')
+      .Register(DeleteProfessional);
 
     TMetricsEndpoint.Register;
     THealthEndpoint.AddCheck('database', GHooks.DatabaseReady);
