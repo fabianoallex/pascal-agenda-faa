@@ -239,7 +239,7 @@ by path.
   by tenant, through the library's `KeyExtractor` and `LimitFor`: it worked as documented.
 
 Checks: 15 unit tests; `tools/http_scenarios.sh` 77 checks (FPC Windows, FPC Linux in Docker),
-plus the restart; OpenAPI valid, promtool ok. Delphi: pending (IDE).
+plus the restart; OpenAPI valid, promtool ok. Delphi 12 Win32/Win64: 15 unit tests and 77 checks each, with the restart.
 
 What building it showed about the libraries:
 
