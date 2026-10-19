@@ -273,7 +273,7 @@ the owner writes (403 `owner_only`, from the token's `role`). Paging and orderin
 - A service's name is unique within its tenant by its search key: `NAME_KEY`, lower case and
   Latin accents removed, computed in the application ("Corte de Cabélo" = "corte de cabelo"),
   the database's unique key answers 409. Search goes through the same key (`coloracao` finds
-  "Coloração"), with `LIKE ... ESCAPE ''` so a `%` typed is literal.
+  "Coloração"), with `LIKE ... ESCAPE '\'` so a `%` typed is literal.
 - Prices are cents in the database, Currency in JSON; a fraction of a cent is a 400.
 - Professionals' email: absent, null (clears it on PATCH) or a value: the three optionals.
 
@@ -297,8 +297,8 @@ What it showed about the libraries:
   has normalizers, none of these); and filling a Find DTO from the query string: every list
   handler copies each member by hand (`ParseQueryInt`/`ParseQueryStr` per member), while
   pascal-api-infra-faa already reads the DTO's members for `QueryParams<T>` in OpenAPI.
-- Writing these files through scripts lost backslashes twice (an `ESCAPE ''` became `''''`,
-  a sed `` became a control character): the HTTP checks caught the first, a scan for control
+- Writing these files through scripts lost backslashes twice (an `ESCAPE ''\''` became `''''`,
+  a sed `\1` became a control character): the HTTP checks caught the first, a scan for control
   characters the second.
 
 **Shared test kit**: the DUnitX-to-FPCUnit adapter (`*.DUnitXCompat.pas`) and
