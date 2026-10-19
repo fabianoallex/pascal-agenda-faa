@@ -278,8 +278,8 @@ the owner writes (403 `owner_only`, from the token's `role`). Paging and orderin
 - Professionals' email: absent, null (clears it on PATCH) or a value: the three optionals.
 
 Checks: 24 unit tests; 153 HTTP checks (76 new in `tools/http_scenarios_catalog.sh`) on FPC
-Windows and Linux; the runners now compare the schema version of the two starts instead of a
-fixed number. Delphi: pending.
+Windows and Linux, and Delphi 12 Win32/Win64; the runners now compare the schema version of the two starts instead of a
+fixed number.
 
 What it showed about the libraries:
 
