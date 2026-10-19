@@ -435,8 +435,11 @@ application.
   the token in the rehash's transaction: each store call is its own (the library's rule).
 
 Checks: 31 unit tests (6 search-key and LIKE tests and 4 refresh-token tests moved to the
-libraries); 323 HTTP checks (4 new) on FPC Windows and Linux, OpenAPI valid. Delphi: not yet run
-for this step.
+libraries); 323 HTTP checks (4 new) on FPC Windows and Linux, OpenAPI valid; Delphi 12 Win32/Win64:
+31 unit tests (0 leaks) and 323 checks each, with the restart. Released 2026-10-19:
+pascal-common-faa v1.20.0, pascal-jsonmapper-faa v0.7.0, pascal-db-faa v0.16.0 and
+pascal-api-infra-faa v0.19.0 (each green on Delphi 12 Win32/Win64 too: 342, 135, 217 and 380
+unit tests; api-infra's samples 195 + 95 + 107 + 31 checks); the submodules pin those tags.
 
 **Shared test kit**: the DUnitX-to-FPCUnit adapter (`*.DUnitXCompat.pas`) and
 `gen_fpc_mirror.py` exist as near-identical copies in pascal-common-faa, -jsonmapper-faa,
