@@ -151,6 +151,7 @@ two libraries would share goes to pascal-common-faa.
   filters): both repeated in every list route (see "Progress", M1, customers and users).
 - Phone normalization, next to the accent-insensitive search key (pascal-common-faa).
 - An instant type for the mapper: zone required on input, `Z` on output (pascal-jsonmapper-faa).
+- Validation in the libraries (from `Agenda.Validation`'s three overloads per rule and the limits written twice, once in `Describe`): **designed 2026-10-19** in pascal-api-infra-faa's `docs/validation-design.md`; this API adopts it in its phase F3.
 
 - A shared test kit: the DUnitX-to-FPCUnit adapter and the mirror generator, copied in every
   repository of the family. **Done 2026-10-19 in the skill** (the user's choice):
