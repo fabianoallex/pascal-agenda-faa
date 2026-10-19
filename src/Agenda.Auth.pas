@@ -102,9 +102,6 @@ type
       out AUser: TUserRow): Boolean;
   end;
 
-/// Trimmed and lower-cased (ASCII); '' when it can't be an address.
-function NormalizeEmail(const AEmail: string): string;
-
 /// Provisioning (the command line): a tenant in the catalog. EArgumentException
 /// for an id that isn't a tenant id, or an empty name or time zone.
 procedure CreateTenant(const AFactory: IDBFactory; const AId, AName, ATimeZone: string);
@@ -122,6 +119,7 @@ uses
   PascalApi.Jwt,
   PascalApi.Http,
   Agenda.Passwords,
+  Agenda.Text,
   Agenda.Tokens;
 
 const
@@ -154,17 +152,6 @@ begin
 end;
 
 { helpers }
-
-function NormalizeEmail(const AEmail: string): string;
-var
-  P: Integer;
-begin
-  Result := LowerCase(Trim(AEmail));
-  P := Pos('@', Result);
-  if (P < 2) or (P = Length(Result)) or (Length(Result) > 254) or
-    (Pos('@', Copy(Result, P + 1, MaxInt)) > 0) or (Pos(' ', Result) > 0) then
-    Result := '';
-end;
 
 function ReadUser(const AResult: IQueryResult): TUserRow;
 begin

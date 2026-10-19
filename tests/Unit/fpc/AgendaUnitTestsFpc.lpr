@@ -22,6 +22,7 @@ uses
   Agenda.PasswordsTests,
   Agenda.TokensTests,
   Agenda.TextTests,
+  Agenda.NormalizersTests,
   Agenda.MoneyTests,
   Agenda.TimesTests;
 

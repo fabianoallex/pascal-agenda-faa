@@ -188,11 +188,11 @@ uses
   PascalCommon.JsonMapper.Optionals,
   PascalApi.OpenApi,
   PascalApi.Http,
-  PascalApi.Text,
   PascalApi.Jwt,
   PascalApi.PagedQuery,
   PascalCommon.Text,
-  Agenda.Text,
+  Agenda.Normalizers,
+  Agenda.Validation,
   Agenda.Money,
   Agenda.Tokens;
 
@@ -290,40 +290,39 @@ end;
 
 { validation }
 
-// The trimmed name; 400 unless it has 1 to 100 characters and a search key.
-function CheckName(const AName: string): string;
-begin
-  Result := Trim(AName);
-  if PcFoldForSearch(Result) = '' then
-    raise EValidationException.Create('"name" is required.', 'name_required');
-  if PaCharCount(Result) > MAX_NAME_CHARS then
-    raise EValidationException.CreateFmt('"name" must have at most %d characters.',
-      [MAX_NAME_CHARS]);
-end;
+// The service's own rules, in Agenda.Validation's shape: one overload per
+// shape of the member (required, or optional and checked when it came), a
+// 400 for a value that breaks the rule, nothing changed.
 
-// The checks are functions from a value to the value to store, raising a 400
-// for one that breaks the rule: the shape of pascal-common-faa's TPcStringFunc
-// and TPcIntegerFunc, so an optional member goes through one with Map, which
-// calls it only when the member came (no "if HasValue").
-function CheckDuration(const AMinutes: Integer): Integer;
+procedure ValidateDuration(const AMinutes: Integer); overload;
 begin
   if (AMinutes < MIN_DURATION_MINUTES) or (AMinutes > MAX_DURATION_MINUTES) or
     (AMinutes mod 5 <> 0) then
     raise EValidationException.CreateFmt(
       '"durationMinutes" must be a multiple of 5 from %d to %d.',
       [MIN_DURATION_MINUTES, MAX_DURATION_MINUTES]);
-  Result := AMinutes;
 end;
 
-function CheckBuffer(const AMinutes: Integer): Integer;
+procedure ValidateDuration(const AMinutes: IOptInteger); overload;
+begin
+  if AMinutes.HasValue then
+    ValidateDuration(AMinutes.Value);
+end;
+
+procedure ValidateBuffer(const AMinutes: Integer); overload;
 begin
   if (AMinutes < 0) or (AMinutes > MAX_BUFFER_MINUTES) or (AMinutes mod 5 <> 0) then
     raise EValidationException.CreateFmt(
       '"bufferMinutes" must be a multiple of 5 from 0 to %d.', [MAX_BUFFER_MINUTES]);
-  Result := AMinutes;
 end;
 
-function CheckPrice(const APrice: Currency): Currency;
+procedure ValidateBuffer(const AMinutes: IOptInteger); overload;
+begin
+  if AMinutes.HasValue then
+    ValidateBuffer(AMinutes.Value);
+end;
+
+procedure ValidatePrice(const APrice: Currency); overload;
 var
   LCents: Int64;
 begin
@@ -331,10 +330,15 @@ begin
     raise EValidationException.Create('"price" can''t have a fraction of a cent.');
   if (LCents < 0) or (LCents > 10000000) then
     raise EValidationException.Create('"price" must be from 0 to 100000.');
-  Result := APrice;
 end;
 
-// A price CheckPrice accepted, in cents.
+procedure ValidatePrice(const APrice: IOptCurrency); overload;
+begin
+  if APrice.HasValue then
+    ValidatePrice(APrice.Value);
+end;
+
+// A price ValidatePrice accepted, in cents.
 function CentsOf(const APrice: Currency): Int64;
 begin
   if not TryCurrencyToCents(APrice, Result) then
@@ -411,16 +415,19 @@ end;
 function TServiceRepository.Insert(const AService: IServiceInsert): IService;
 var
   LName, LId: string;
-  LDuration, LBuffer: Integer;
-  LPrice: Currency;
+  LBuffer: Integer;
   LNow: Int64;
   LQuery: IQuery;
   LTx: IScopeTransaction;
 begin
-  LName := CheckName(AService.Name);
-  LDuration := CheckDuration(AService.DurationMinutes);
-  LBuffer := CheckBuffer(AService.BufferMinutes.ValueOr(0));
-  LPrice := CheckPrice(AService.Price);
+  // Normalized (Agenda.Normalizers), then checked (Agenda.Validation and the
+  // rules above): a 400 touches nothing.
+  LName := TNorm.DisplayName.Apply(AService.Name);
+  LBuffer := AService.BufferMinutes.ValueOr(0);
+  ValidateName(LName);
+  ValidateDuration(AService.DurationMinutes);
+  ValidateBuffer(LBuffer);
+  ValidatePrice(AService.Price);
   LId := NewId;
   LNow := TJwt.UnixNow;
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
@@ -429,10 +436,10 @@ begin
     TTenantFilter.Prepare(LQuery, FScope, 'SERVICE.INSERT');
     LQuery.Params.Strings['ID'] := LId;
     LQuery.Params.Strings['NAME'] := LName;
-    LQuery.Params.Strings['NAME_KEY'] := PcFoldForSearch(LName);
-    LQuery.Params.Integers['DURATION_MINUTES'] := LDuration;
+    LQuery.Params.Strings['NAME_KEY'] := TNorm.FoldForSearch.Apply(LName);
+    LQuery.Params.Integers['DURATION_MINUTES'] := AService.DurationMinutes;
     LQuery.Params.Integers['BUFFER_MINUTES'] := LBuffer;
-    LQuery.Params.Int64s['PRICE_CENTS'] := CentsOf(LPrice);
+    LQuery.Params.Int64s['PRICE_CENTS'] := CentsOf(AService.Price);
     LQuery.Params.Int64s['CREATED_AT'] := LNow;
     LQuery.Params.Int64s['UPDATED_AT'] := LNow;
     LQuery.ExecSql; // a name the tenant has: EConstraintViolationException -> 409
@@ -447,40 +454,40 @@ end;
 function TServiceRepository.Update(const AId: string; const APatch: IServicePatch): IService;
 var
   LName: IOptString;
-  LDuration, LBuffer: IOptInteger;
-  LPrice: IOptCurrency;
   LQuery: IQuery;
   LTx: IScopeTransaction;
   LRows: Int64;
 begin
-  // Checked through Map: only the members that came, each a 400 when it
-  // breaks its rule; an absent one stays absent.
-  LName := APatch.Name.Map(CheckName);
-  LDuration := APatch.DurationMinutes.Map(CheckDuration);
-  LBuffer := APatch.BufferMinutes.Map(CheckBuffer);
-  LPrice := APatch.Price.Map(CheckPrice);
+  // Normalized inside the optionals, by the rules of Agenda.Normalizers: an
+  // absent member stays absent, so there is no if here.
+  LName := TOptionals.Normalize(APatch.Name, TNorm.DisplayName);
+  // The checks, for the members that came: a 400 touches nothing.
+  ValidateName(LName);
+  ValidateDuration(APatch.DurationMinutes);
+  ValidateBuffer(APatch.BufferMinutes);
+  ValidatePrice(APatch.Price);
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
   LTx.StartTransaction;
   try
-    // Each block kept exactly when its optional came, and the optional bound
-    // as it is: an absent one binds nothing (its block is gone).
     TTenantFilter.Prepare(LQuery, FScope, FScope.Factory.SqlLoader['SERVICE.UPDATE']
       .ProcessTag('NAME', LName.HasValue)
-      .ProcessTag('DURATION', LDuration.HasValue)
-      .ProcessTag('BUFFER', LBuffer.HasValue)
-      .ProcessTag('PRICE', LPrice.HasValue)
+      .ProcessTag('DURATION', APatch.DurationMinutes.HasValue)
+      .ProcessTag('BUFFER', APatch.BufferMinutes.HasValue)
+      .ProcessTag('PRICE', APatch.Price.HasValue)
       .ProcessTag('ACTIVE', APatch.Active.HasValue));
+    // No if per member: an absent optional binds nothing (its block is gone),
+    // a value binds it.
     LQuery.Params.Strings['ID'] := AId;
     LQuery.Params.Int64s['UPDATED_AT'] := TJwt.UnixNow;
     LQuery.Params.OptStrings['NAME'] := LName;
-    LQuery.Params.OptStrings['NAME_KEY'] := LName.Map(PcFoldForSearch);
-    LQuery.Params.OptIntegers['DURATION_MINUTES'] := LDuration;
-    LQuery.Params.OptIntegers['BUFFER_MINUTES'] := LBuffer;
+    LQuery.Params.OptStrings['NAME_KEY'] := TOptionals.Normalize(LName, TNorm.FoldForSearch);
+    LQuery.Params.OptIntegers['DURATION_MINUTES'] := APatch.DurationMinutes;
+    LQuery.Params.OptIntegers['BUFFER_MINUTES'] := APatch.BufferMinutes;
     LQuery.Params.OptBooleans['ACTIVE'] := APatch.Active;
-    // The one if left: the price is stored in cents, and Map keeps the type
-    // (an IOptCurrency can't become an IOptInt64).
-    if LPrice.HasValue then
-      LQuery.Params.Int64s['PRICE_CENTS'] := CentsOf(LPrice.Value);
+    // The one if left: the price is stored in cents, and an optional keeps
+    // its type (an IOptCurrency can't become an IOptInt64).
+    if APatch.Price.HasValue then
+      LQuery.Params.Int64s['PRICE_CENTS'] := CentsOf(APatch.Price.Value);
     LRows := LQuery.ExecSql;
     LTx.Commit;
   except

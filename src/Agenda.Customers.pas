@@ -11,7 +11,7 @@ unit Agenda.Customers;
     a family shares a phone. Public booking (M3) decides how it finds a
     returning customer.
   - The phone is stored as Agenda.Text's NormalizePhone gives it ("+" and
-    digits); the email lower case (Agenda.Auth's NormalizeEmail).
+    digits); the email lower case (Agenda.Normalizers' TNorm.Email).
   - Search: one stored key, SEARCH_KEY = NAME_KEY|EMAIL|phone digits, so one
     LIKE finds a customer by any of the three. A search typed like a phone
     ("(11) 9999") is matched by its digits; anything else is folded like a
@@ -150,12 +150,12 @@ uses
   PascalCommon.JsonMapper.Optionals,
   PascalApi.OpenApi,
   PascalApi.Http,
-  PascalApi.Text,
   PascalApi.Jwt,
   PascalApi.PagedQuery,
-  Agenda.Auth,
   PascalCommon.Text,
   Agenda.Text,
+  Agenda.Normalizers,
+  Agenda.Validation,
   Agenda.Tokens;
 
 const
@@ -230,32 +230,6 @@ end;
 function TCustomer.GetEmail: INullString;
 begin
   Result := TOptionals.Safe(FEmail);
-end;
-
-{ validation }
-
-function CheckName(const AName: string): string;
-begin
-  Result := Trim(AName);
-  if PcFoldForSearch(Result) = '' then
-    raise EValidationException.Create('"name" is required.', 'name_required');
-  if PaCharCount(Result) > MAX_NAME_CHARS then
-    raise EValidationException.CreateFmt('"name" must have at most %d characters.',
-      [MAX_NAME_CHARS]);
-end;
-
-function CheckPhone(const APhone: string): string;
-begin
-  Result := NormalizePhone(APhone);
-  if Result = '' then
-    raise EValidationException.Create('"phone" is not a phone number (8 to 15 digits).');
-end;
-
-function CheckEmail(const AEmail: string): string;
-begin
-  Result := NormalizeEmail(AEmail);
-  if Result = '' then
-    raise EValidationException.Create('"email" is not an email address.');
 end;
 
 { the stored row }
@@ -357,12 +331,14 @@ var
   LQuery: IQuery;
   LTx: IScopeTransaction;
 begin
-  // Normalized and checked through Map: a contact that didn't come stays
-  // absent, one that came is stored as CheckPhone/CheckEmail give it, or is a
-  // 400. No "if HasValue".
-  LName := CheckName(ACustomer.Name);
-  LPhone := ACustomer.Phone.Map(CheckPhone);
-  LEmail := ACustomer.Email.Map(CheckEmail);
+  // Normalized (Agenda.Normalizers), then checked (Agenda.Validation): a
+  // contact that didn't come stays absent, with no if.
+  LName := TNorm.DisplayName.Apply(ACustomer.Name);
+  LPhone := TOptionals.Normalize(ACustomer.Phone, TNorm.Phone);
+  LEmail := TOptionals.Normalize(ACustomer.Email, TNorm.Email);
+  ValidateName(LName);
+  ValidatePhone(LPhone);
+  ValidateEmail(LEmail);
   LId := NewId;
   LNow := TJwt.UnixNow;
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
@@ -375,7 +351,7 @@ begin
       .ProcessTag('EMAIL', LEmail.HasValue));
     LQuery.Params.Strings['ID'] := LId;
     LQuery.Params.Strings['NAME'] := LName;
-    LQuery.Params.Strings['NAME_KEY'] := PcFoldForSearch(LName);
+    LQuery.Params.Strings['NAME_KEY'] := TNorm.FoldForSearch.Apply(LName);
     LQuery.Params.OptStrings['PHONE'] := LPhone;
     LQuery.Params.OptStrings['EMAIL'] := LEmail;
     LQuery.Params.Strings['SEARCH_KEY'] := SearchKey(LName, LPhone.ValueOr(''), LEmail.ValueOr(''));
@@ -400,11 +376,14 @@ var
   LResult: IQueryResult;
   LFound: Boolean;
 begin
-  // Checked before the transaction, through Map: a 400 touches nothing; null
-  // and absent pass through unchanged.
-  LName := APatch.Name.Map(CheckName);
-  LPhone := APatch.Phone.Map(CheckPhone);
-  LEmail := APatch.Email.Map(CheckEmail);
+  // Normalized inside the optionals, then checked, before the transaction: a
+  // 400 touches nothing; null and absent pass through unchanged.
+  LName := TOptionals.Normalize(APatch.Name, TNorm.DisplayName);
+  LPhone := TOptionals.Normalize(APatch.Phone, TNorm.Phone);
+  LEmail := TOptionals.Normalize(APatch.Email, TNorm.Email);
+  ValidateName(LName);
+  ValidatePhone(LPhone);
+  ValidateEmail(LEmail);
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
   LTx.StartTransaction;
   try
@@ -423,7 +402,7 @@ begin
       TTenantFilter.Prepare(LQuery, FScope, 'CUSTOMER.UPDATE');
       LQuery.Params.Strings['ID'] := AId;
       LQuery.Params.Strings['NAME'] := LRow.Name;
-      LQuery.Params.Strings['NAME_KEY'] := PcFoldForSearch(LRow.Name);
+      LQuery.Params.Strings['NAME_KEY'] := TNorm.FoldForSearch.Apply(LRow.Name);
       LQuery.Params.NullStrings['PHONE'] := LRow.Phone;
       LQuery.Params.NullStrings['EMAIL'] := LRow.Email;
       LQuery.Params.Strings['SEARCH_KEY'] := SearchKey(LRow.Name, LRow.Phone.ValueOr(''),

@@ -162,6 +162,10 @@ type
   private
     FScope: TTenantDataScope;
     FIterations: Integer;
+    /// A 400 unless the tenant has the professional (when it came with a
+    /// value): a check that needs the scope, so a method.
+    procedure ValidateProfessional(const AId: IOptString); overload;
+    procedure ValidateProfessional(const AId: IOptNullString); overload;
   public
     /// AIterations: PBKDF2's, for the passwords this repository hashes.
     constructor Create(const AScope: TTenantDataScope; AIterations: Integer);
@@ -179,8 +183,9 @@ type
 
 function UserOrderSpec: TOrderBySpec;
 
-/// ARole when it is owner or staff; a 400 otherwise.
-function CheckRole(const ARole: string): string;
+/// A 400 unless ARole is owner or staff (when it came, for the optional).
+procedure ValidateRole(const ARole: string); overload;
+procedure ValidateRole(const ARole: IOptString); overload;
 
 implementation
 
@@ -198,7 +203,8 @@ uses
   PascalApi.PagedQuery,
   Agenda.Auth,
   Agenda.Passwords,
-  Agenda.Text,
+  Agenda.Normalizers,
+  Agenda.Validation,
   Agenda.Tokens;
 
 function UserOrderSpec: TOrderBySpec;
@@ -210,11 +216,16 @@ begin
     .AlwaysLast('ID');
 end;
 
-function CheckRole(const ARole: string): string;
+procedure ValidateRole(const ARole: string);
 begin
   if (ARole <> ROLE_OWNER) and (ARole <> ROLE_STAFF) then
     raise EValidationException.Create('"role" must be owner or staff.');
-  Result := ARole;
+end;
+
+procedure ValidateRole(const ARole: IOptString);
+begin
+  if ARole.HasValue then
+    ValidateRole(ARole.Value);
 end;
 
 { DTOs }
@@ -301,19 +312,22 @@ end;
 
 { validation }
 
-function CheckEmail(const AEmail: string): string;
-begin
-  Result := NormalizeEmail(AEmail);
-  if Result = '' then
-    raise EValidationException.Create('"email" is not an email address.');
-end;
-
-// The stored hash of a password an owner typed for a user.
-function HashNewPassword(const APassword: string; AIterations: Integer): string;
+procedure ValidatePassword(const APassword: string); overload;
 begin
   if PaCharCount(APassword) < MIN_PASSWORD_CHARS then
     raise EValidationException.Create(Format('"password" must have at least %d characters.',
       [MIN_PASSWORD_CHARS]), 'password_too_short');
+end;
+
+procedure ValidatePassword(const APassword: IOptString); overload;
+begin
+  if APassword.HasValue then
+    ValidatePassword(APassword.Value);
+end;
+
+// The stored hash of a password ValidatePassword accepted.
+function HashPassword(const APassword: string; AIterations: Integer): string;
+begin
   try
     Result := TPasswords.Hash(APassword, AIterations);
   except
@@ -323,25 +337,14 @@ begin
 end;
 
 type
-  // A rule that needs more than the value is a normalizer object
-  // (pascal-common-faa's IPcStringNormalizer): it carries what it needs, and
-  // an optional takes it with Normalize, called only when the member came.
-
-  /// A password typed by the owner -> its stored hash (a 400 when too short).
+  /// A password -> its stored hash, as a normalizer object: a transformation
+  /// that needs the iterations, taken by an optional with Normalize (called
+  /// only when the member came).
   THashPassword = class(TInterfacedObject, IPcStringNormalizer)
   private
     FIterations: Integer;
   public
     constructor Create(AIterations: Integer);
-    function Apply(const AValue: string): string;
-  end;
-
-  /// A professional's id, unchanged when the tenant has it; a 400 otherwise.
-  TExistingProfessional = class(TInterfacedObject, IPcStringNormalizer)
-  private
-    FScope: TTenantDataScope;
-  public
-    constructor Create(const AScope: TTenantDataScope);
     function Apply(const AValue: string): string;
   end;
 
@@ -353,27 +356,7 @@ end;
 
 function THashPassword.Apply(const AValue: string): string;
 begin
-  Result := HashNewPassword(AValue, FIterations);
-end;
-
-constructor TExistingProfessional.Create(const AScope: TTenantDataScope);
-begin
-  inherited Create;
-  FScope := AScope;
-end;
-
-function TExistingProfessional.Apply(const AValue: string): string;
-var
-  LQuery: IQuery;
-  LTx: IScopeTransaction;
-begin
-  LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
-  TTenantFilter.Prepare(LQuery, FScope, 'PROFESSIONAL.BY_ID');
-  LQuery.Params.Strings['ID'] := AValue;
-  if LQuery.Open.Eof then
-    raise EValidationException.Create('"professionalId": the tenant has no such professional.',
-      'unknown_professional');
-  Result := AValue;
+  Result := HashPassword(AValue, FIterations);
 end;
 
 function OwnAccount: EConflictException;
@@ -434,8 +417,7 @@ var
   LOrder: string;
 begin
   LOrder := UserOrderSpec.Build(AFind.OrderBy.ValueOr(''));
-  if AFind.Role.HasValue then
-    CheckRole(AFind.Role.Value);
+  ValidateRole(AFind.Role);
   Result := TTenantPagedQuery.Run<IUser>(FScope,
     Filtered(FScope.Factory.SqlLoader['USER.COUNT'], AFind),
     Filtered(FScope.Factory.SqlLoader['USER.PAGE'], AFind), LOrder, APage, FilterArgs(AFind),
@@ -459,19 +441,49 @@ begin
     raise ENotFoundException.Create('User not found.');
 end;
 
+procedure TUserRepository.ValidateProfessional(const AId: IOptString);
+var
+  LQuery: IQuery;
+  LTx: IScopeTransaction;
+begin
+  if not AId.HasValue then
+    Exit;
+  LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
+  TTenantFilter.Prepare(LQuery, FScope, 'PROFESSIONAL.BY_ID');
+  LQuery.Params.Strings['ID'] := AId.Value;
+  if LQuery.Open.Eof then
+    raise EValidationException.Create('"professionalId": the tenant has no such professional.',
+      'unknown_professional');
+end;
+
+procedure TUserRepository.ValidateProfessional(const AId: IOptNullString);
+var
+  LId: IOptString;
+begin
+  if AId.HasValue and not AId.IsNull then
+  begin
+    // A variable, not From(...) in the call: From answers the class, which
+    // fits both overloads.
+    LId := TOptNullString.From(AId.Value);
+    ValidateProfessional(LId);
+  end;
+end;
+
 function TUserRepository.Insert(const AUser: IUserInsert): IUser;
 var
-  LEmail, LHash, LId, LRole: string;
-  LProfessional: IOptString;
+  LEmail, LHash, LId: string;
   LNow: Int64;
   LQuery: IQuery;
   LTx: IScopeTransaction;
 begin
-  LEmail := CheckEmail(AUser.Email);
-  LRole := CheckRole(AUser.Role);
-  LProfessional := AUser.ProfessionalId.Normalize(TExistingProfessional.Create(FScope));
+  // Normalized (Agenda.Normalizers), then checked: a 400 touches nothing.
+  LEmail := TNorm.Email.Apply(AUser.Email);
+  ValidateEmail(LEmail);
+  ValidateRole(AUser.Role);
+  ValidatePassword(AUser.Password);
+  ValidateProfessional(AUser.ProfessionalId);
   // Hashed before the transaction: it holds no connection while it works.
-  LHash := HashNewPassword(AUser.Password, FIterations);
+  LHash := HashPassword(AUser.Password, FIterations);
   LId := NewId;
   LNow := TJwt.UnixNow;
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
@@ -479,12 +491,12 @@ begin
   try
     // PROFESSIONAL_ID only when it came; absent, the database writes NULL.
     TTenantFilter.Prepare(LQuery, FScope, FScope.Factory.SqlLoader['USER.INSERT']
-      .ProcessTag('PROFESSIONAL', LProfessional.HasValue));
+      .ProcessTag('PROFESSIONAL', AUser.ProfessionalId.HasValue));
     LQuery.Params.Strings['ID'] := LId;
     LQuery.Params.Strings['EMAIL'] := LEmail;
     LQuery.Params.Strings['PASSWORD_HASH'] := LHash;
-    LQuery.Params.Strings['ROLE'] := LRole;
-    LQuery.Params.OptStrings['PROFESSIONAL_ID'] := LProfessional;
+    LQuery.Params.Strings['ROLE'] := AUser.Role;
+    LQuery.Params.OptStrings['PROFESSIONAL_ID'] := AUser.ProfessionalId;
     LQuery.Params.Int64s['CREATED_AT'] := LNow;
     LQuery.Params.Int64s['UPDATED_AT'] := LNow;
     LQuery.ExecSql; // the email or the professional taken: 409
@@ -498,23 +510,25 @@ end;
 
 function TUserRepository.Update(const AActorId, AId: string; const APatch: IUserPatch): IUser;
 var
-  LEmail, LRole, LHash: IOptString;
-  LProfessional: IOptNullString;
+  LEmail, LHash: IOptString;
   LDeactivate: Boolean;
   LQuery: IQuery;
   LTx: IScopeTransaction;
   LRows: Int64;
 begin
-  // Every member through its rule, only when it came: a 400 touches nothing.
-  // Hashing happens here, before the transaction holds a connection.
-  LEmail := APatch.Email.Map(CheckEmail);
-  LRole := APatch.Role.Map(CheckRole);
-  LProfessional := APatch.ProfessionalId.Normalize(TExistingProfessional.Create(FScope));
-  LHash := APatch.Password.Normalize(THashPassword.Create(FIterations));
+  // Normalized inside the optionals, then checked, for the members that came:
+  // a 400 touches nothing.
+  LEmail := TOptionals.Normalize(APatch.Email, TNorm.Email);
+  ValidateEmail(LEmail);
+  ValidateRole(APatch.Role);
+  ValidatePassword(APatch.Password);
+  ValidateProfessional(APatch.ProfessionalId);
   LDeactivate := APatch.Active.HasValue and not APatch.Active.Value;
   // The actor is an owner (the route checks it): keeping the role is fine.
-  if (AId = AActorId) and (LDeactivate or (LRole.ValueOr(ROLE_OWNER) <> ROLE_OWNER)) then
+  if (AId = AActorId) and (LDeactivate or (APatch.Role.ValueOr(ROLE_OWNER) <> ROLE_OWNER)) then
     raise OwnAccount;
+  // Hashed here, before the transaction holds a connection.
+  LHash := TOptionals.Normalize(APatch.Password, THashPassword.Create(FIterations));
 
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
   LTx.StartTransaction;
@@ -522,16 +536,18 @@ begin
     TTenantFilter.Prepare(LQuery, FScope, FScope.Factory.SqlLoader['USER.UPDATE']
       .ProcessTag('EMAIL', LEmail.HasValue)
       .ProcessTag('PASSWORD', LHash.HasValue)
-      .ProcessTag('ROLE', LRole.HasValue)
+      .ProcessTag('ROLE', APatch.Role.HasValue)
       .ProcessTag('ACTIVE', APatch.Active.HasValue)
-      .ProcessTag('PROFESSIONAL', LProfessional.HasValue));
+      .ProcessTag('PROFESSIONAL', APatch.ProfessionalId.HasValue));
+    // No if per member: an absent optional binds nothing (its block is gone),
+    // a Null binds NULL, a value binds it.
     LQuery.Params.Strings['ID'] := AId;
     LQuery.Params.Int64s['UPDATED_AT'] := TJwt.UnixNow;
     LQuery.Params.OptStrings['EMAIL'] := LEmail;
     LQuery.Params.OptStrings['PASSWORD_HASH'] := LHash;
-    LQuery.Params.OptStrings['ROLE'] := LRole;
+    LQuery.Params.OptStrings['ROLE'] := APatch.Role;
     LQuery.Params.OptBooleans['ACTIVE'] := APatch.Active;
-    LQuery.Params.OptNullStrings['PROFESSIONAL_ID'] := LProfessional;
+    LQuery.Params.OptNullStrings['PROFESSIONAL_ID'] := APatch.ProfessionalId;
     LRows := LQuery.ExecSql; // the email or the professional taken: 409
     // A new password or a deactivation ends every session of the user.
     if (LRows > 0) and (LDeactivate or LHash.HasValue) then

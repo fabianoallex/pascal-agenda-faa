@@ -446,20 +446,29 @@ winner stored its next token, leaving a live token of a revoked family; now the 
 spent token again and refuses). This API pins it: 31 unit tests and 323 HTTP checks on FPC
 Windows and Linux.
 
-**Repositories on the optionals' own tools** (2026-10-19, the user's review): the checks are
-functions from a value to the value to store that raise a 400 (`CheckName`, `CheckEmail`,
-`CheckPhone`, `CheckDuration`, `CheckPrice`, `CheckRole`: the shape of pascal-common-faa's
-`TPcStringFunc`/`TPcIntegerFunc`/`TPcCurrencyFunc`), so an optional member goes through one with
-`Map`, which calls it only when the member came and keeps absent and null as they are. A rule
-that needs context is a normalizer object taken by `Normalize` (`THashPassword` with the
-iterations, `TExistingProfessional` with the tenant's scope). The optional is then bound as it is
-(`OptStrings`, `OptNullStrings`, `OptBooleans`...) next to a `ProcessTag` on the same
-`HasValue`, in UPDATEs and now in INSERTs too (an absent contact leaves its column out and the
-database writes NULL). `Insert`/`Update` lost their `if HasValue`: across the four repositories,
-`if` 83 -> 54 and `HasValue` 59 -> 37 (what remains is inside the checks, the search filters and
-business decisions such as the owner's own account). Customers keep reading the row before an
-update (the search key depends on every column), merged with `ValueOr` and one helper.
-323 HTTP checks unchanged on FPC Windows and Linux.
+**Repositories: normalize, then validate, then bind the optionals** (2026-10-19, the user's
+review, in the shape of pascal-api-infra-faa's guide "DTOs and JSON"):
+
+1. **Normalize** with the API's factory `TNorm` (`src/Agenda.Normalizers`, a
+   `TPcStringNormalizers` descendant: `DisplayName`, `Email`, `Phone`, plus the library's `Trim`,
+   `Lower`, `FoldForSearch`...), inside the optionals: `TOptionals.Normalize(APatch.Name,
+   TNorm.DisplayName)`; a plain value with `TNorm.Email.Apply(...)`. A normalizer never refuses:
+   what can't be made right comes out as it went in.
+2. **Validate** with `src/Agenda.Validation` (`ValidateName`, `ValidateEmail`, `ValidatePhone`) and
+   each repository's own rules (`ValidateDuration`, `ValidatePrice`, `ValidateRole`,
+   `ValidatePassword`, `ValidateProfessional`): checks that change nothing and raise a 400, one
+   overload per shape (a required string, an `IOptString` checked when it came, an `IOptNullString`
+   checked when it came with a value). The `if HasValue` lives inside the rule, once.
+3. **Bind** the optional as it is (`OptStrings`, `OptNullStrings`, `OptIntegers`, `OptBooleans`)
+   next to a `ProcessTag` on the same `HasValue`, in UPDATEs and INSERTs (an absent contact leaves
+   its column out; the database writes NULL).
+
+The password hash, a transformation that needs the iterations, is a normalizer object
+(`THashPassword`) taken by `Normalize` after `ValidatePassword`. Customers keep reading the row
+before an update (the search key depends on every column), merged with `ValueOr` and `Merged`.
+Behaviour change: names now collapse inner runs of blanks (`TNorm.DisplayName`). `NormalizeEmail`
+moved from `Agenda.Auth` to `Agenda.Text`. 40 unit tests (9 new: `Agenda.NormalizersTests`); 323
+HTTP checks unchanged on FPC Windows and Linux.
 
 Found while doing it (candidates, not built):
 - `Map` keeps the type: an `IOptCurrency` price can't become the `IOptInt64` of its cents, so

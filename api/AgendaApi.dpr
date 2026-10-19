@@ -94,6 +94,8 @@ uses
   Agenda.Auth in '..\src\Agenda.Auth.pas',
   Agenda.AuthDtos in '..\src\Agenda.AuthDtos.pas',
   Agenda.Text in '..\src\Agenda.Text.pas',
+  Agenda.Normalizers in '..\src\Agenda.Normalizers.pas',
+  Agenda.Validation in '..\src\Agenda.Validation.pas',
   Agenda.Money in '..\src\Agenda.Money.pas',
   Agenda.Services in '..\src\Agenda.Services.pas',
   Agenda.Professionals in '..\src\Agenda.Professionals.pas',

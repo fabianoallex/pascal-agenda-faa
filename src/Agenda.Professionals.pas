@@ -153,12 +153,11 @@ uses
   PascalCommon.JsonMapper.Optionals,
   PascalApi.OpenApi,
   PascalApi.Http,
-  PascalApi.Text,
   PascalApi.Jwt,
   PascalApi.PagedQuery,
-  Agenda.Auth,
   PascalCommon.Text,
-  Agenda.Text,
+  Agenda.Normalizers,
+  Agenda.Validation,
   Agenda.Tokens;
 
 const
@@ -247,25 +246,6 @@ begin
   Result := FActive;
 end;
 
-{ validation }
-
-function CheckName(const AName: string): string;
-begin
-  Result := Trim(AName);
-  if PcFoldForSearch(Result) = '' then
-    raise EValidationException.Create('"name" is required.', 'name_required');
-  if PaCharCount(Result) > MAX_NAME_CHARS then
-    raise EValidationException.CreateFmt('"name" must have at most %d characters.',
-      [MAX_NAME_CHARS]);
-end;
-
-function CheckEmail(const AEmail: string): string;
-begin
-  Result := NormalizeEmail(AEmail);
-  if Result = '' then
-    raise EValidationException.Create('"email" is not an email address.');
-end;
-
 { TProfessionalRepository }
 
 constructor TProfessionalRepository.Create(const AScope: TTenantDataScope);
@@ -340,8 +320,12 @@ var
   LQuery: IQuery;
   LTx: IScopeTransaction;
 begin
-  LName := CheckName(AProfessional.Name);
-  LEmail := AProfessional.Email.Map(CheckEmail); // absent stays absent
+  // Normalized (Agenda.Normalizers), then checked (Agenda.Validation): an
+  // absent email stays absent, with no if.
+  LName := TNorm.DisplayName.Apply(AProfessional.Name);
+  LEmail := TOptionals.Normalize(AProfessional.Email, TNorm.Email);
+  ValidateName(LName);
+  ValidateEmail(LEmail);
   LId := NewId;
   LNow := TJwt.UnixNow;
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
@@ -352,7 +336,7 @@ begin
       .ProcessTag('EMAIL', LEmail.HasValue));
     LQuery.Params.Strings['ID'] := LId;
     LQuery.Params.Strings['NAME'] := LName;
-    LQuery.Params.Strings['NAME_KEY'] := PcFoldForSearch(LName);
+    LQuery.Params.Strings['NAME_KEY'] := TNorm.FoldForSearch.Apply(LName);
     LQuery.Params.OptStrings['EMAIL'] := LEmail;
     LQuery.Params.Int64s['CREATED_AT'] := LNow;
     LQuery.Params.Int64s['UPDATED_AT'] := LNow;
@@ -374,10 +358,12 @@ var
   LTx: IScopeTransaction;
   LRows: Int64;
 begin
-  // Through Map: absent stays absent (left), null stays null (cleared), a
-  // value is checked (a 400) and normalized.
-  LName := APatch.Name.Map(CheckName);
-  LEmail := APatch.Email.Map(CheckEmail);
+  // Normalized inside the optionals: absent stays absent (left), null stays
+  // null (the email cleared). Then the checks, for the members that came.
+  LName := TOptionals.Normalize(APatch.Name, TNorm.DisplayName);
+  LEmail := TOptionals.Normalize(APatch.Email, TNorm.Email);
+  ValidateName(LName);
+  ValidateEmail(LEmail);
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
   LTx.StartTransaction;
   try
@@ -385,10 +371,12 @@ begin
       .ProcessTag('NAME', LName.HasValue)
       .ProcessTag('EMAIL', LEmail.HasValue)
       .ProcessTag('ACTIVE', APatch.Active.HasValue));
+    // No if per member: an absent optional binds nothing (its block is gone),
+    // a Null binds NULL, a value binds it.
     LQuery.Params.Strings['ID'] := AId;
     LQuery.Params.Int64s['UPDATED_AT'] := TJwt.UnixNow;
     LQuery.Params.OptStrings['NAME'] := LName;
-    LQuery.Params.OptStrings['NAME_KEY'] := LName.Map(PcFoldForSearch);
+    LQuery.Params.OptStrings['NAME_KEY'] := TOptionals.Normalize(LName, TNorm.FoldForSearch);
     LQuery.Params.OptNullStrings['EMAIL'] := LEmail;
     LQuery.Params.OptBooleans['ACTIVE'] := APatch.Active;
     LRows := LQuery.ExecSql;

@@ -2,7 +2,8 @@ unit Agenda.Text;
 
 {$I agenda.inc}
 
-{ Phone numbers as people type them: their digits, and the stored form.
+{ Phone numbers as people type them (their digits, the stored form), and an
+  email address's normalized form.
 
   The search key and the LIKE pattern that lived here moved to the libraries
   (2026-10-19): pascal-common-faa 1.20.0's PcFoldForSearch and pascal-db-faa
@@ -19,6 +20,11 @@ function TryPhoneDigits(const AText: string; out ADigits: string): Boolean;
 /// The stored form of a phone: "+" (when typed first) and 8 to 15 digits
 /// (E.164's maximum); '' when AText isn't one.
 function NormalizePhone(const AText: string): string;
+
+/// Trimmed and lower-cased (ASCII); '' when it can't be an address (one "@"
+/// with text on both sides, no spaces, at most 254 characters). The login
+/// compares emails through it.
+function NormalizeEmail(const AEmail: string): string;
 
 implementation
 
@@ -61,6 +67,17 @@ begin
     Result := '+' + LDigits
   else
     Result := LDigits;
+end;
+
+function NormalizeEmail(const AEmail: string): string;
+var
+  P: Integer;
+begin
+  Result := LowerCase(Trim(AEmail));
+  P := Pos('@', Result);
+  if (P < 2) or (P = Length(Result)) or (Length(Result) > 254) or
+    (Pos('@', Copy(Result, P + 1, MaxInt)) > 0) or (Pos(' ', Result) > 0) then
+    Result := '';
 end;
 
 end.
