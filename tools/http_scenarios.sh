@@ -17,6 +17,10 @@
 #   contact; users managed by the owner only, a password never returned, a
 #   new password or a deactivation ending the sessions, the owner unable to
 #   lock themselves out, the professional link;
+# - working hours and time off (tools/http_scenarios_schedule.sh): a week
+#   replaced whole and checked first, instants that must say their zone and
+#   come back in UTC, the from/to overlap filter, a schedule reached only
+#   through its own professional and deleted with it;
 # - the rate limit on /auth/ by client address (last: it uses the window).
 #
 #   sh tools/http_scenarios.sh [port]   (default 9400; AgendaApi must be running,
@@ -234,6 +238,8 @@ fi
 . "$(dirname "$0")/http_scenarios_catalog.sh"
 # --- customers and users (after the catalog: a user links to its professional)
 . "$(dirname "$0")/http_scenarios_people.sh"
+# --- working hours and time off
+. "$(dirname "$0")/http_scenarios_schedule.sh"
 
 # --- OpenAPI document and Swagger UI
 req GET /swagger/doc.json ""
@@ -248,6 +254,9 @@ body_has '{"name":"active","in":"query","description":"true or false' "OpenAPI: 
 body_has '"/customers/{id}":{"get":{' "OpenAPI: customers"
 body_has '"/users/{id}":{"get":{' "OpenAPI: users"
 body_lacks '"passwordHash"' "OpenAPI: no password hash anywhere"
+body_has '"/professionals/{id}/working-hours":{"get":{' "OpenAPI: working hours"
+body_has '"/professionals/{id}/time-off/{offId}":{"get":{' "OpenAPI: time off, two path parameters"
+body_lacks '"to_"' "OpenAPI: the keyword member is named to"
 [ -n "$OPENAPI_OUT" ] && cp "$T/body" "$OPENAPI_OUT"
 req GET /swagger ""
 status_is 200 "Swagger UI"

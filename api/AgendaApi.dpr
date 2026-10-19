@@ -40,6 +40,9 @@ program AgendaApi;
                          (ignoring case and accents), active=true|false
     POST /services, PATCH|DELETE /services/:id, and the same for
     /professionals       the tenant's owner only (403 "owner_only")
+    GET  /professionals/:id/working-hours, /professionals/:id/time-off[/:offId]
+                         any user; PUT working-hours (the whole week), POST
+                         and DELETE time-off: the owner only
     GET|POST /customers, GET|PATCH /customers/:id
                          any user of the tenant; search in the name, email
                          or phone; DELETE /customers/:id the owner only
@@ -94,7 +97,10 @@ uses
   Agenda.Services in '..\src\Agenda.Services.pas',
   Agenda.Professionals in '..\src\Agenda.Professionals.pas',
   Agenda.Customers in '..\src\Agenda.Customers.pas',
-  Agenda.Users in '..\src\Agenda.Users.pas';
+  Agenda.Users in '..\src\Agenda.Users.pas',
+  Agenda.Times in '..\src\Agenda.Times.pas',
+  Agenda.WorkingHours in '..\src\Agenda.WorkingHours.pas',
+  Agenda.TimeOff in '..\src\Agenda.TimeOff.pas';
 
 const
   APP_NAME = 'agenda-api';
@@ -672,6 +678,100 @@ begin
   ARes.Status(204).Send('');
 end;
 
+{ Working hours and time off: any user reads; the owner changes }
+
+procedure GetWorkingHours(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LRepo: TWorkingHoursRepository;
+begin
+  LRepo := TWorkingHoursRepository.Create(ScopeOf(AReq));
+  try
+    TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IWorkingWeek>(LRepo.Get(AReq.Params['id'])));
+  finally
+    LRepo.Free;
+  end;
+end;
+
+procedure PutWorkingHours(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LRepo: TWorkingHoursRepository;
+begin
+  RequireOwner(AReq);
+  LRepo := TWorkingHoursRepository.Create(ScopeOf(AReq));
+  try
+    TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IWorkingWeek>(LRepo.Replace(
+      AReq.Params['id'], TJsonMapper.Shared.FromJson<IWorkingWeekPut>(AReq.Body))));
+  finally
+    LRepo.Free;
+  end;
+end;
+
+procedure GetTimeOffList(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LFill: TTimeOffFind;
+  LFind: ITimeOffFind;
+  LRepo: TTimeOffRepository;
+  LPage: TPage<ITimeOff>;
+begin
+  LFill := TTimeOffFind.Create;
+  LFind := LFill;
+  LFill.Page := ParseQueryInt('page', AReq.Query['page']);
+  LFill.Limit := ParseQueryInt('limit', AReq.Query['limit']);
+  LFill.OrderBy := ParseQueryStr(AReq.Query['orderBy']);
+  LFill.From := ParseQueryStr(AReq.Query['from']);
+  LFill.To_ := ParseQueryStr(AReq.Query['to']);
+  LRepo := TTimeOffRepository.Create(ScopeOf(AReq));
+  try
+    LPage := LRepo.FindPage(AReq.Params['id'], LFind, PageRequestFrom(LFind.Page, LFind.Limit,
+      PAGE_DEFAULT_LIMIT, PAGE_MAX_LIMIT));
+  finally
+    LRepo.Free;
+  end;
+  TJsonSend.Send(ARes, PageEnvelopeJson(LPage.Meta,
+    TJsonMapper.Shared.Serialize<TTimeOffArray>(LPage.Items)));
+end;
+
+procedure GetTimeOff(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LRepo: TTimeOffRepository;
+begin
+  LRepo := TTimeOffRepository.Create(ScopeOf(AReq));
+  try
+    TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<ITimeOff>(
+      LRepo.FindById(AReq.Params['id'], AReq.Params['offId'])));
+  finally
+    LRepo.Free;
+  end;
+end;
+
+procedure PostTimeOff(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LRepo: TTimeOffRepository;
+begin
+  RequireOwner(AReq);
+  LRepo := TTimeOffRepository.Create(ScopeOf(AReq));
+  try
+    TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<ITimeOff>(LRepo.Insert(AReq.Params['id'],
+      TJsonMapper.Shared.FromJson<ITimeOffInsert>(AReq.Body))), 201);
+  finally
+    LRepo.Free;
+  end;
+end;
+
+procedure DeleteTimeOff(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LRepo: TTimeOffRepository;
+begin
+  RequireOwner(AReq);
+  LRepo := TTimeOffRepository.Create(ScopeOf(AReq));
+  try
+    LRepo.Delete(AReq.Params['id'], AReq.Params['offId']);
+  finally
+    LRepo.Free;
+  end;
+  ARes.Status(204).Send('');
+end;
+
 { Setup }
 
 function OpenKeys: IJwtKeyRing;
@@ -935,6 +1035,53 @@ begin
       .Error(404, 'The tenant has no professional with this id')
       .Register(DeleteProfessional);
 
+    TRouteDoc.Get('/professionals/:id/working-hours').Summary('A professional''s week')
+      .Tag('professionals')
+      .PathParam('id', 'The professional''s id')
+      .Response<IWorkingWeek>(200)
+      .Error(404, 'The tenant has no professional with this id')
+      .Register(GetWorkingHours);
+    TRouteDoc.Put('/professionals/:id/working-hours').Summary('Replace a professional''s week (owner)')
+      .Tag('professionals')
+      .PathParam('id', 'The professional''s id')
+      .Body<IWorkingWeekPut>
+      .Response<IWorkingWeek>(200, 'The week as stored')
+      .Error(400, 'invalid_week: a weekday, a time or an overlap')
+      .Error(403, 'owner_only')
+      .Error(404, 'The tenant has no professional with this id')
+      .Register(PutWorkingHours);
+    TRouteDoc.Get('/professionals/:id/time-off').Summary('A professional''s time off, a page at a time')
+      .Tag('professionals')
+      .PathParam('id', 'The professional''s id')
+      .QueryParams<ITimeOffFind>
+      .ResponsePaged<ITimeOff>(200, 'A page of time off')
+      .Error(400, 'invalid_instant, or an order field that is not allowed')
+      .Error(404, 'The tenant has no professional with this id')
+      .Register(GetTimeOffList);
+    TRouteDoc.Get('/professionals/:id/time-off/:offId').Summary('One entry of time off')
+      .Tag('professionals')
+      .PathParam('id', 'The professional''s id')
+      .PathParam('offId', 'The entry''s id')
+      .Response<ITimeOff>(200)
+      .Error(404, 'The professional has no such entry')
+      .Register(GetTimeOff);
+    TRouteDoc.Post('/professionals/:id/time-off').Summary('Add time off (owner)')
+      .Tag('professionals')
+      .PathParam('id', 'The professional''s id')
+      .Body<ITimeOffInsert>
+      .Response<ITimeOff>(201, 'Created')
+      .Error(400, 'invalid_instant, or not whole minutes, start after end, too long')
+      .Error(403, 'owner_only')
+      .Error(404, 'The tenant has no professional with this id')
+      .Register(PostTimeOff);
+    TRouteDoc.Delete('/professionals/:id/time-off/:offId').Summary('Remove time off (owner)')
+      .Tag('professionals')
+      .PathParam('id', 'The professional''s id')
+      .PathParam('offId', 'The entry''s id')
+      .NoContent(204, 'Removed')
+      .Error(403, 'owner_only')
+      .Error(404, 'The professional has no such entry')
+      .Register(DeleteTimeOff);
     TRouteDoc.Get('/customers').Summary('The tenant''s customers, a page at a time')
       .Tag('customers')
       .QueryParams<ICustomerFind>

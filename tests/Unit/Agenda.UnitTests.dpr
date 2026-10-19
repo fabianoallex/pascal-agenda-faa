@@ -19,11 +19,13 @@ uses
   Agenda.Tokens in '..\..\src\Agenda.Tokens.pas',
   Agenda.Text in '..\..\src\Agenda.Text.pas',
   Agenda.Money in '..\..\src\Agenda.Money.pas',
+  Agenda.Times in '..\..\src\Agenda.Times.pas',
   Agenda.DUnitXCompat in 'Agenda.DUnitXCompat.pas',
   Agenda.PasswordsTests in 'Agenda.PasswordsTests.pas',
   Agenda.TokensTests in 'Agenda.TokensTests.pas',
   Agenda.TextTests in 'Agenda.TextTests.pas',
-  Agenda.MoneyTests in 'Agenda.MoneyTests.pas';
+  Agenda.MoneyTests in 'Agenda.MoneyTests.pas',
+  Agenda.TimesTests in 'Agenda.TimesTests.pas';
 
 var
   runner: ITestRunner;

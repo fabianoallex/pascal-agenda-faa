@@ -19,6 +19,7 @@ interface
 
 uses
   PascalCommon.Optionals,
+  PascalDb.Interfaces,
   PascalDb.Paging,
   PascalApi.OrderBy,
   PascalApi.Dto,
@@ -133,11 +134,20 @@ type
 
 function ProfessionalOrderSpec: TOrderBySpec;
 
+/// Raises ENotFoundException unless the tenant has a professional AId.
+procedure RequireProfessional(const AScope: TTenantDataScope; const AId: string);
+
+/// The first statement of a change to a professional's schedule, through
+/// AQuery inside the caller's transaction: raises ENotFoundException when the
+/// tenant has no professional AId; on PostgreSQL it also locks the row until
+/// the transaction ends, so two changes to one schedule don't interleave.
+procedure TouchProfessional(const AQuery: IQuery; const AScope: TTenantDataScope;
+  const AId: string);
+
 implementation
 
 uses
   SysUtils,
-  PascalDb.Interfaces,
   PascalDb.SqlLoader,
   PascalJsonMapper.Mapper,
   PascalCommon.JsonMapper.Optionals,
@@ -159,6 +169,28 @@ begin
     .Allow('createdAt', 'CREATED_AT')
     .Default('name')
     .AlwaysLast('ID');
+end;
+
+procedure RequireProfessional(const AScope: TTenantDataScope; const AId: string);
+var
+  LQuery: IQuery;
+  LTx: IScopeTransaction;
+begin
+  LTx := AScope.Factory.GetPool.AcquireQuery(LQuery);
+  TTenantFilter.Prepare(LQuery, AScope, 'PROFESSIONAL.BY_ID');
+  LQuery.Params.Strings['ID'] := AId;
+  if LQuery.Open.Eof then
+    raise ENotFoundException.Create('Professional not found.');
+end;
+
+procedure TouchProfessional(const AQuery: IQuery; const AScope: TTenantDataScope;
+  const AId: string);
+begin
+  TTenantFilter.Prepare(AQuery, AScope, 'PROFESSIONAL.TOUCH');
+  AQuery.Params.Int64s['UPDATED_AT'] := TJwt.UnixNow;
+  AQuery.Params.Strings['ID'] := AId;
+  if AQuery.ExecSql = 0 then
+    raise ENotFoundException.Create('Professional not found.');
 end;
 
 { DTOs }
@@ -417,6 +449,13 @@ begin
   try
     // The user who was this professional stays, unlinked (Agenda.Users).
     TTenantFilter.Prepare(LQuery, FScope, 'USER.UNLINK_PROFESSIONAL');
+    LQuery.Params.Strings['PROFESSIONAL_ID'] := AId;
+    LQuery.ExecSql;
+    // Its schedule goes with it (Agenda.WorkingHours, Agenda.TimeOff).
+    TTenantFilter.Prepare(LQuery, FScope, 'WORKING_HOURS.DELETE_ALL');
+    LQuery.Params.Strings['PROFESSIONAL_ID'] := AId;
+    LQuery.ExecSql;
+    TTenantFilter.Prepare(LQuery, FScope, 'TIME_OFF.DELETE_ALL');
     LQuery.Params.Strings['PROFESSIONAL_ID'] := AId;
     LQuery.ExecSql;
     TTenantFilter.Prepare(LQuery, FScope, 'PROFESSIONAL.DELETE');

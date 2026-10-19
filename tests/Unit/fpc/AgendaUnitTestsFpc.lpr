@@ -22,7 +22,8 @@ uses
   Agenda.PasswordsTests,
   Agenda.TokensTests,
   Agenda.TextTests,
-  Agenda.MoneyTests;
+  Agenda.MoneyTests,
+  Agenda.TimesTests;
 
 var
   ConsoleApp: TTestRunner;

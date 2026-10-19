@@ -150,6 +150,7 @@ two libraries would share goes to pascal-common-faa.
 - Filling a Find DTO from the query string, and the paged query (count + page through the same
   filters): both repeated in every list route (see "Progress", M1, customers and users).
 - Phone normalization, next to the accent-insensitive search key (pascal-common-faa).
+- An instant type for the mapper: zone required on input, `Z` on output (pascal-jsonmapper-faa).
 
 - A shared test kit: the DUnitX-to-FPCUnit adapter and the mirror generator, copied in every
   repository of the family (see "Progress", M1).
@@ -355,6 +356,43 @@ What it showed about the libraries:
   pascal-api-infra-faa (it already joins `TTenantFilter`, `TOrderBySpec` and paging).
 - **Candidate:** phone normalization (digits, `+`, length) next to the search key in
   pascal-common-faa's normalizers.
+
+**Working hours and time off** (2026-10-19): `src/Agenda.WorkingHours`, `src/Agenda.TimeOff`,
+`src/Agenda.Times` (clock times, instants, the week's check; unit-tested); migration 10
+(`WORKING_HOURS`, `TIME_OFF`). Routes: `GET`/`PUT /professionals/:id/working-hours`,
+`GET`/`POST /professionals/:id/time-off`, `GET`/`DELETE /professionals/:id/time-off/:offId`. Any
+user reads, the owner changes.
+
+- Working hours are the tenant's **local clock**, `{"weekday":1,"from":"09:00","to":"12:00"}`
+  (ISO weekday), so "09:00 on Mondays" survives a daylight-saving change; M2 turns them into
+  instants. The week is read and replaced whole: checked first (5-minute steps, `from` before
+  `to`, up to 24:00, no overlap within a day, at most 70 intervals; 400 `invalid_week` naming
+  the problem), then written in one transaction that starts by touching the professional's row
+  (404 when gone; on PostgreSQL a row lock, so two PUTs don't mix). A night shift is two
+  intervals.
+- Time off is **instants**: ISO 8601 that must carry `Z` or an offset (400 `invalid_instant`),
+  stored as Unix seconds, written back in UTC with `Z`; whole minutes, at most 366 days; spans may
+  overlap; created and deleted, never changed. The list filters by the span it overlaps
+  (`from`/`to`, both exclusive at the edges) and is reached only through its own professional.
+- Deleting a professional deletes its week and its time off in the same transaction.
+
+Checks: 41 unit tests (13 new) on FPC Windows and Linux; 319 HTTP checks (72 new in
+`tools/http_scenarios_schedule.sh`) on FPC Windows and Linux (Docker), plus the restart; OpenAPI
+valid. **Delphi 12 Win32/Win64: not yet run** for this step.
+
+What it showed about the libraries:
+
+- **Gap (pascal-jsonmapper-faa):** a `TDateTime` member can't carry an instant. Its reader takes
+  `"2026-12-24T13:00"` without a zone as is (it can't say a zone was missing) and its writer puts
+  no zone back, so a client reading a UTC value can't tell it from local time. The API carries
+  instants as strings through `Agenda.Times` (zone required, `Z` written, built from Unix
+  seconds with integer arithmetic). **Candidate:** an instant type in the mapper (a UTC
+  `TDateTime` or Unix seconds that writes `Z` and refuses a text without a zone), with
+  `date-time` in the OpenAPI document.
+- `RenameMember` for a member named after a Pascal keyword (`to`, property `To_`) worked as
+  documented, and the OpenAPI document followed it (it reads the mapper's names).
+- Arrays of DTOs as a published member (`intervals`) mapped both ways on both compilers.
+- The paged query is now in five repositories (see the candidate above).
 
 **Shared test kit**: the DUnitX-to-FPCUnit adapter (`*.DUnitXCompat.pas`) and
 `gen_fpc_mirror.py` exist as near-identical copies in pascal-common-faa, -jsonmapper-faa,
