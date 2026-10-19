@@ -249,12 +249,12 @@ What building it showed about the libraries:
   `"status":0` (measured on FPC Windows). The same for every `EHttpException` subclass.
   Neither the library nor its samples call it, so nothing caught it. Fix candidates: override
   `CreateFmt` in those classes, and/or have `MapException` answer 500 (and log) for a status
-  outside 100–599. **Fixed** in pascal-api-infra-faa `f1d0aaf` (unreleased): both of those;
+  outside 100–599. **Fixed** in pascal-api-infra-faa 0.17.0: both of those;
   `Required` here uses `CreateFmt` again.
 - **Gap (pascal-api-infra-faa):** a handler can't refuse with a 401 the way the middlewares do:
   `EHttpException(401)` gets no `WWW-Authenticate` (HTTP requires one), and the error body has
   no room for a machine-readable code (`TenantRejection` builds `"code"` by hand). The API
-  wrote both itself (`SendAuthError`). **Added** in pascal-api-infra-faa `f1d0aaf`:
+  wrote both itself (`SendAuthError`). **Added** in pascal-api-infra-faa 0.17.0:
   `EUnauthorizedException`, a `Code` on `EHttpException`, `WWW-Authenticate` on every 401;
   `Agenda.Auth` raises them and `SendAuthError` is gone. The 77 checks pass unchanged.
 - **Known gotcha, hit anyway:** `/auth/*)` in a `(* ... *)` comment closed it ("BEGIN expected").
