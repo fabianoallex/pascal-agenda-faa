@@ -595,4 +595,5 @@ that isn't a zone, exact case (`america/sao_paulo` is refused with "did you mean
 only at booking. The seed checks both refusals. M2 uses `ToUtc` (the working hours' local clock
 to instants, the daylight-saving gap and overlap by the library's defaults), `DayBounds` (a
 date's availability) and `ToLocal`. Result: 41 unit tests; 333 HTTP checks on SQLite and on
-PostgreSQL 17, FPC Windows and Linux.
+PostgreSQL 17, FPC Windows and Linux. Delphi 12: 41 unit tests (0 leaks) and 333 checks on
+SQLite, Win32 and Win64, and 333 on PostgreSQL, Win64.
