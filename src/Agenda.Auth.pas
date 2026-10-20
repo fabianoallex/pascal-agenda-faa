@@ -115,6 +115,7 @@ implementation
 
 uses
   PascalCommon.Optionals,
+  PascalCommon.TimeZones,
   PascalJsonMapper.Json,
   PascalApi.Jwt,
   PascalApi.Http,
@@ -351,18 +352,29 @@ procedure CreateTenant(const AFactory: IDBFactory; const AId, AName, ATimeZone: 
 var
   LQuery: IQuery;
   LTx: IScopeTransaction;
+  LZone, LSpelled: string;
 begin
   if not IsTenantId(AId) then
     raise EArgumentException.CreateFmt('"%s" is not a tenant id (1-40 of a-z, 0-9, -).', [AId]);
-  if (Trim(AName) = '') or (Trim(ATimeZone) = '') then
+  LZone := Trim(ATimeZone);
+  if (Trim(AName) = '') or (LZone = '') then
     raise EArgumentException.Create('A tenant needs a name and a time zone.');
+  // An IANA name, exact case (pascal-common-faa's embedded tzdb): the free
+  // slots are computed in it, so a typo would surface only at booking.
+  if not PcTimeZones.IsValidName(LZone) then
+    if PcTimeZones.TryCanonicalCase(LZone, LSpelled) then
+      raise EArgumentException.CreateFmt('"%s" is not a time zone; did you mean "%s"?',
+        [LZone, LSpelled])
+    else
+      raise EArgumentException.CreateFmt('"%s" is not an IANA time zone (e.g. ' +
+        'America/Sao_Paulo).', [LZone]);
   LTx := AFactory.GetPool.AcquireQuery(LQuery);
   LTx.StartTransaction;
   try
     LQuery.Sql := AFactory.SqlLoader['TENANT.INSERT'].SQL;
     LQuery.Params.Strings['ID'] := AId;
     LQuery.Params.Strings['NAME'] := Trim(AName);
-    LQuery.Params.Strings['TIME_ZONE'] := Trim(ATimeZone);
+    LQuery.Params.Strings['TIME_ZONE'] := LZone;
     LQuery.ExecSql;
     LTx.Commit;
   except

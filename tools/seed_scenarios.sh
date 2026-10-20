@@ -21,7 +21,7 @@ AGENDA_PASSWORD="$PASSWORD" "$EXE" --create-user frozen owner@frozen.test owner
 "$EXE" --suspend-tenant frozen
 
 # The commands refuse what they should.
-if "$EXE" --create-tenant demo "Again" UTC >/dev/null 2>&1; then
+if "$EXE" --create-tenant demo "Again" Europe/Lisbon >/dev/null 2>&1; then
   echo "FAIL: a second tenant demo was accepted"; exit 1
 fi
 if AGENDA_PASSWORD="$PASSWORD" "$EXE" --create-user demo owner@demo.test owner >/dev/null 2>&1; then
@@ -33,4 +33,14 @@ fi
 if AGENDA_PASSWORD="$PASSWORD" "$EXE" --create-user nowhere x@nowhere.test owner >/dev/null 2>&1; then
   echo "FAIL: a user of an unknown tenant was accepted"; exit 1
 fi
-echo "seed: 3 tenants, 4 users; 4 refusals checked"
+if "$EXE" --create-tenant mars "Mars Clinic" Mars/Olympus_Mons >/dev/null 2>&1; then
+  echo "FAIL: an unknown time zone was accepted"; exit 1
+fi
+if OUT=$("$EXE" --create-tenant lower "Lower Clinic" america/sao_paulo 2>&1); then
+  echo "FAIL: a time zone in the wrong case was accepted"; exit 1
+fi
+case "$OUT" in
+  *'did you mean "America/Sao_Paulo"'*) ;;
+  *) echo "FAIL: no spelling hint for america/sao_paulo: $OUT"; exit 1 ;;
+esac
+echo "seed: 3 tenants, 4 users; 6 refusals checked"

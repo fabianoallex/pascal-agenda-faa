@@ -135,7 +135,7 @@ two libraries would share goes to pascal-common-faa.
 | Optimistic concurrency: `ETag`/`If-Match`, 412/428 | `PascalApi.Http` + middleware | small |
 | Tenant from the path or host | `PascalApi.Tenancy` | multi-tenancy decision 5 |
 | Signed links: HMAC with expiry, keys from the JWT key ring | `PascalApi.SignedUrl` | cancel, invite, email confirmation |
-| IANA time zones on both compilers | pascal-common-faa | **biggest risk**: neither RTL converts an arbitrary zone. Linux has `/usr/share/zoneinfo`; Windows has the registry (Windows names) or an embedded database. Own design phase before M2 |
+| IANA time zones on both compilers | pascal-common-faa | **biggest risk**: neither RTL converts an arbitrary zone. Linux has `/usr/share/zoneinfo`; Windows has the registry (Windows names) or an embedded database. Own design phase before M2. **Done in pascal-common-faa 1.22.0** (`PascalCommon.TimeZones`, the tzdb embedded); adopted 2026-10-20 |
 
 **Probable** (a second case should confirm the shape):
 
@@ -586,3 +586,13 @@ refusal: SQLdb on Firebird stored `True` as -1 and Zeos sent `'Y'` (gotcha 54 th
 application never met (SQLdb, SQLite and PostgreSQL). Result: 41 unit tests; 333 HTTP checks on
 SQLite and on PostgreSQL 17, FPC Windows and Linux. Delphi 12: 41 unit tests (0 leaks) and 333
 checks on SQLite, Win32 and Win64, and 333 on PostgreSQL, Win64.
+
+**On pascal-common-faa 1.22.0** (2026-10-20): `PascalCommon.TimeZones`, IANA time zones on both
+compilers from an embedded tzdb (2026e), designed for this application's free slots
+(`docs/timezones-design.md` there). Used so far in one place: `--create-tenant` refuses a name
+that isn't a zone, exact case (`america/sao_paulo` is refused with "did you mean
+"America/Sao_Paulo"?"), since the free slots of M2 are computed in it and a typo would surface
+only at booking. The seed checks both refusals. M2 uses `ToUtc` (the working hours' local clock
+to instants, the daylight-saving gap and overlap by the library's defaults), `DayBounds` (a
+date's availability) and `ToLocal`. Result: 41 unit tests; 333 HTTP checks on SQLite and on
+PostgreSQL 17, FPC Windows and Linux.
