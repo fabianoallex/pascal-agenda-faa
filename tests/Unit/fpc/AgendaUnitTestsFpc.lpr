@@ -25,7 +25,8 @@ uses
   Agenda.NormalizersTests,
   Agenda.MoneyTests,
   Agenda.SqlSourcesTests,
-  Agenda.TimesTests;
+  Agenda.TimesTests,
+  Agenda.SlotsTests;
 
 var
   ConsoleApp: TTestRunner;

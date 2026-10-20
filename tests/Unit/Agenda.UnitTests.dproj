@@ -129,6 +129,8 @@
         <DCCReference Include="Agenda.SqlSourcesTests.pas"/>
         <DCCReference Include="..\..\src\Agenda.Schema.pas"/>
         <DCCReference Include="Agenda.TimesTests.pas"/>
+        <DCCReference Include="Agenda.SlotsTests.pas"/>
+        <DCCReference Include="..\..\src\Agenda.Slots.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>

@@ -84,6 +84,7 @@ uses
   PascalApi.Otlp,
   PascalApi.Http,
   PascalApi.Pagination,
+  PascalApi.Jwt,
   PascalApi.JwtKeys,
   PascalApi.Tenancy,
   PascalApi.Horse.Middlewares,
@@ -107,7 +108,9 @@ uses
   Agenda.Users in '..\src\Agenda.Users.pas',
   Agenda.Times in '..\src\Agenda.Times.pas',
   Agenda.WorkingHours in '..\src\Agenda.WorkingHours.pas',
-  Agenda.TimeOff in '..\src\Agenda.TimeOff.pas';
+  Agenda.TimeOff in '..\src\Agenda.TimeOff.pas',
+  Agenda.Slots in '..\src\Agenda.Slots.pas',
+  Agenda.Availability in '..\src\Agenda.Availability.pas';
 
 const
   APP_NAME = 'agenda-api';
@@ -721,6 +724,24 @@ begin
   ARes.Status(204).Send('');
 end;
 
+{ Availability: any user reads }
+
+procedure GetAvailability(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LFind: IAvailabilityFind;
+  LReader: TAvailabilityReader;
+  LAvailability: IAvailability;
+begin
+  LFind := THorseQueryParams.Read<IAvailabilityFind>(AReq);
+  LReader := TAvailabilityReader.Create(ScopeOf(AReq));
+  try
+    LAvailability := LReader.Find(AReq.Params['id'], LFind, TJwt.UnixNow);
+  finally
+    LReader.Free;
+  end;
+  TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IAvailability>(LAvailability));
+end;
+
 { Setup }
 
 function OpenKeys: IJwtKeyRing;
@@ -1036,6 +1057,17 @@ begin
       .Error(403, 'owner_only')
       .Error(404, 'The professional has no such entry')
       .Register(DeleteTimeOff);
+    TRouteDoc.Get('/professionals/:id/availability')
+      .Summary('Free slots of a professional for a service, on the tenant''s local days')
+      .Tag('professionals')
+      .PathParam('id', 'The professional''s id')
+      .QueryParams<IAvailabilityFind>
+      .Response<IAvailability>(200)
+      .Error(400, 'service or date missing, invalid_date, date_out_of_range, days out of range')
+      .Error(404, 'The tenant has no such professional or service')
+      .Error(409, 'professional_inactive, service_inactive')
+      .Register(GetAvailability);
+
     TRouteDoc.Get('/customers').Summary('The tenant''s customers, a page at a time')
       .Tag('customers')
       .QueryParams<ICustomerFind>

@@ -22,6 +22,7 @@ uses
   Agenda.Validators in '..\..\src\Agenda.Validators.pas',
   Agenda.Money in '..\..\src\Agenda.Money.pas',
   Agenda.Times in '..\..\src\Agenda.Times.pas',
+  Agenda.Slots in '..\..\src\Agenda.Slots.pas',
   Agenda.Schema in '..\..\src\Agenda.Schema.pas',
   Agenda.DUnitXCompat in 'Agenda.DUnitXCompat.pas',
   Agenda.PasswordsTests in 'Agenda.PasswordsTests.pas',
@@ -30,7 +31,8 @@ uses
   Agenda.NormalizersTests in 'Agenda.NormalizersTests.pas',
   Agenda.MoneyTests in 'Agenda.MoneyTests.pas',
   Agenda.SqlSourcesTests in 'Agenda.SqlSourcesTests.pas',
-  Agenda.TimesTests in 'Agenda.TimesTests.pas';
+  Agenda.TimesTests in 'Agenda.TimesTests.pas',
+  Agenda.SlotsTests in 'Agenda.SlotsTests.pas';
 
 var
   runner: ITestRunner;

@@ -597,3 +597,57 @@ to instants, the daylight-saving gap and overlap by the library's defaults), `Da
 date's availability) and `ToLocal`. Result: 41 unit tests; 333 HTTP checks on SQLite and on
 PostgreSQL 17, FPC Windows and Linux. Delphi 12: 41 unit tests (0 leaks) and 333 checks on
 SQLite, Win32 and Win64, and 333 on PostgreSQL, Win64.
+
+## M2 — free slots (2026-10-20)
+
+`GET /professionals/:id/availability?service=&date=&days=`: the starts where a service fits,
+on the tenant's local days (`date`, YYYY-MM-DD, for `days` days, 1 to 14). Any user reads. The
+computation is `src/Agenda.Slots` (no database, no HTTP; unit-tested), the reads
+`src/Agenda.Availability`.
+
+- **Working hours to instants** in the tenant's zone (`TENANTS.TIME_ZONE`), each local day's
+  intervals through `IPcTimeZone.ToUtc` with `gapStartOfAfter` and `overlapEarlier` (the rules
+  of its `DayBounds`): an edge in a gap becomes the jump (02:00-05:00 on the day 02:00 doesn't
+  exist starts at 03:00), an edge in an overlap takes the first occurrence (00:00-03:00 on the
+  day the clock goes back is four real hours, as worked). Intervals that touch in instants join,
+  so a night shift written as 22:00-24:00 plus 00:00-02:00 takes a service across midnight; a
+  slot belongs to the day it starts on.
+- **Starts every 15 minutes of real time** from the start of each span (`SLOT_STEP_MINUTES`),
+  the same grid on both sides of a transition. A start is free when the service ends inside the
+  span and the service plus its buffer meets nothing busy; the buffer may run past closing.
+  Starts before now are left out.
+- **Busy**: the professional's time off (`TIME_OFF.OVERLAPPING`); appointments join with the
+  booking, next.
+- Each slot has `startsAt`/`endsAt` in UTC and `local`, the tenant's clock with its offset
+  (`2027-10-31T01:00:00+01:00`, then `+00:00` an hour later), so a client needs no time zone
+  database. `endsAt` is the service's end, the buffer not counted.
+- An inactive professional or service is a 409 (`professional_inactive`, `service_inactive`):
+  something that can't be booked is not a full day. A missing `service` or `date` and an invalid
+  date come in one 400 (`invalid_fields`); `days` outside 1-14 is the document's limit, enforced
+  by `THorseQueryParams.Read`; a date more than 366 days from today is `date_out_of_range`.
+
+Tests: `Agenda.SlotsTests` (16) on New York's 2026-11-01 (25 h) and 2027-03-14 (23 h), expected
+instants from Python's zoneinfo: four real hours in 00:00-03:00 and three in 00:00-04:00, a start
+in the gap, the night shift, the buffer around a busy span, starts before now, the local reading
+with both offsets of 01:30 and Kathmandu's +05:45. `tools/http_scenarios_availability.sh` (50
+checks): the hours, the time off and the buffer for tenant demo (America/Sao_Paulo), the query's
+failures, the 404s and 409s, another tenant, and tenant other (Europe/Lisbon) on the next last
+Sundays of March (five starts in 00:00-03:00: 00:45 WET then 02:00 WEST) and October (thirteen,
+from 23:00Z the day before, 01:00 twice). Its dates come from today (GNU date), so it doesn't
+expire. Result: 57 unit tests; 383 HTTP checks on SQLite and on PostgreSQL 17, FPC Windows and
+Linux.
+
+What it showed:
+- pascal-common-faa 1.22.0's `PascalCommon.TimeZones` covered every need of the computation:
+  `ToUtc` with the rules named, `DayBounds` for the window, `ToLocal`/`OffsetAt` for the local
+  reading. **Small candidate** (pascal-common-faa): an instant written as ISO 8601 with its
+  offset in a zone (`LocalIso` here: `TPcLocalDateTime.ToString` plus the offset); any API that
+  shows a local time needs it.
+- **Small candidate** (pascal-api-infra-faa): `TRouteDoc.QueryParams<>` documents a non-optional
+  member (`service: string`) as `required`, but `THorseQueryParams.Read` takes its absence as ''
+  without a word, so the handler checks it again. Read could refuse a missing required member
+  with the same `required` failure the body validation gives.
+- The accented service name the scenario first used ("Coloração") reached the API mangled from
+  Git Bash's curl (its arguments go through the ANSI code page, as pascal-api-infra-faa's
+  CLAUDE.md says) and collided only on Linux; the scenario uses an ASCII name.
+
