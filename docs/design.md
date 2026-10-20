@@ -715,7 +715,9 @@ lines: the Linux image has Python, not redis-cli): a slot whose key another requ
 409 and that lock is left alone; free once deleted; the key gone after the booking; then
 `SHUTDOWN NOSAVE`, and the next booking is a 201 from the database, the same slot again a 409 from
 the database, and the log names the key. Result: 57 unit tests; 426 HTTP checks on SQLite and
-435 on PostgreSQL 17 with Redis, FPC Windows and Linux.
+435 on PostgreSQL 17 with Redis, FPC Windows and Linux. Delphi 12: 57 unit tests (0 leaks); 426 checks on SQLite
+(Win32, Win64), 435 on PostgreSQL with Redis (Win64) and on SQLite with Redis (Win32, a container
+started by hand: the 32-bit Redis client too).
 
 **Candidate (pascal-redis-faa):** the lock as a class. Its README shows the acquire (`SET NX PX`)
 and the release script as snippets, and its `LockDistribuidoVcl` sample shows the `DEL` trap;
