@@ -24,6 +24,7 @@ uses
   Agenda.TextTests,
   Agenda.NormalizersTests,
   Agenda.MoneyTests,
+  Agenda.SqlSourcesTests,
   Agenda.TimesTests;
 
 var

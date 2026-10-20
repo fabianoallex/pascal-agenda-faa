@@ -22,12 +22,15 @@ uses
   Agenda.Validators in '..\..\src\Agenda.Validators.pas',
   Agenda.Money in '..\..\src\Agenda.Money.pas',
   Agenda.Times in '..\..\src\Agenda.Times.pas',
+  Agenda.SqlSources in '..\..\src\Agenda.SqlSources.pas',
+  Agenda.Schema in '..\..\src\Agenda.Schema.pas',
   Agenda.DUnitXCompat in 'Agenda.DUnitXCompat.pas',
   Agenda.PasswordsTests in 'Agenda.PasswordsTests.pas',
   Agenda.TokensTests in 'Agenda.TokensTests.pas',
   Agenda.TextTests in 'Agenda.TextTests.pas',
   Agenda.NormalizersTests in 'Agenda.NormalizersTests.pas',
   Agenda.MoneyTests in 'Agenda.MoneyTests.pas',
+  Agenda.SqlSourcesTests in 'Agenda.SqlSourcesTests.pas',
   Agenda.TimesTests in 'Agenda.TimesTests.pas';
 
 var

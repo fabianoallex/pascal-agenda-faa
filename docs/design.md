@@ -158,6 +158,10 @@ two libraries would share goes to pascal-common-faa.
   `TQueryArgs.Booleans` has the same trap. Here: `Agenda.Flags` (`OptFlag`, a cross-type map).
 - The refresh rotation in one transaction (pascal-api-infra-faa): **fixed in 0.20.1**, found by
   the PostgreSQL run ("Migrations on two dialects", below).
+- A SQL source that falls back to a common directory (`src/Agenda.SqlSources`,
+  `TFallbackSqlSource`, pascal-db-faa's `PascalDb.SqlSources`): the database's directory first,
+  then `COMMON`, so SQL that is the same on two databases is written once and a statement that
+  differs has its place. Written under pascal-db-faa's rules, unit-tested; built 2026-10-20.
 - Validation in the libraries (from `Agenda.Validation`'s three overloads per rule and the limits written twice, once in `Describe`): **designed 2026-10-19** in pascal-api-infra-faa's `docs/validation-design.md`; built in pascal-common-faa 1.21.0 and pascal-api-infra-faa 0.20.0, adopted here 2026-10-19 ("Validation from the libraries", below).
 
 - A shared test kit: the DUnitX-to-FPCUnit adapter and the mirror generator, copied in every
@@ -528,13 +532,20 @@ Windows and Linux, OpenAPI valid; Delphi 12 Win32/Win64: 40 unit tests (0 leaks)
 
 The API runs on SQLite or PostgreSQL 17, chosen by `DB_ENGINE` (`src/Agenda.Database`: the
 adapters' connection names for each engine; `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`,
-`DB_PASSWORD`, `PG_CLIENT`). **One SQL directory for both** (`AGENDA` in `src/Agenda.Schema`, was
-`SQLITE`): the ten migrations and every statement ran unchanged on PostgreSQL. The schema already
-kept to the common ground (VARCHAR, INTEGER, BIGINT, TIMESTAMP; Unix seconds, cents, INTEGER
-flags; paging through `${PAGE}`), and pascal-db-faa's SQLite adapters turn foreign keys on, so
-the deletes were already in the order PostgreSQL enforces. pascal-db-faa's samples keep one
-folder per database; when a statement has to differ here, a variant chosen in code (as its
-integration tests do) is the plan, not a second copy of a hundred statements.
+`DB_PASSWORD`, `PG_CLIENT`). The ten migrations and every statement ran unchanged on PostgreSQL:
+the schema already kept to the common ground (VARCHAR, INTEGER, BIGINT, TIMESTAMP; Unix seconds,
+cents, INTEGER flags; paging through `${PAGE}`), and pascal-db-faa's SQLite adapters turn foreign
+keys on, so the deletes were already in the order PostgreSQL enforces.
+
+**SQL directories: common, plus each engine's overrides** (2026-10-20, after asking the user).
+pascal-db-faa's loader reads `<SQLDirectory>/<KEY>`, one directory per database and no fallback,
+so the choice was two identical copies of every statement, or one directory for both with no
+place for a statement that has to differ. The user chose a fallback: `src/Agenda.SqlSources`
+(`TFallbackSqlSource`) asks the engine's directory (`SQLITE` or `PG`, the factory's
+`SQLDirectory`) and, when the key isn't there, `COMMON`. Every statement is in `COMMON` today;
+an override goes under `PG` or `SQLITE` with the same key, and the not-found message names both
+places. A unit test checks every migration resolves from both directories; the CI runs both
+engines, so an override that breaks one of them breaks the build.
 
 The scripts: `DB_ENGINE=postgresql sh tools/test_http.sh` (a throwaway `postgres:17` container on
 port 55433, the newest local `libpq.dll`), `DB_ENGINE=postgresql sh tools/test_http_docker.sh` (a
@@ -554,5 +565,7 @@ What the first PostgreSQL run found:
   one transaction (`IRefreshTokenAtomicRotation`), so the loser waits for the winner's commit. 6
   of 6 clean runs after.
 
-Result: 40 unit tests; 333 HTTP checks on SQLite and on PostgreSQL 17, FPC Windows and Linux, with
-the restart (no migration on the second start, a token from before it verifies); OpenAPI valid.
+Result: 48 unit tests (8 new: `Agenda.SqlSourcesTests`); 333 HTTP checks on SQLite and on
+PostgreSQL 17, FPC Windows and Linux, with the restart (no migration on the second start, a token
+from before it verifies); OpenAPI valid. Before the fallback, Delphi 12: 333 checks on SQLite
+(Win32, Win64) and on PostgreSQL (Win64, three runs), on pascal-api-infra-faa 0.20.1.

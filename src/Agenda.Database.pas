@@ -5,7 +5,8 @@ unit Agenda.Database;
 { Opening the database and bringing it to the latest migration.
 
   Two engines, chosen by DB_ENGINE, through pascal-db-faa's adapters (SQLdb
-  on FPC, FireDAC on Delphi), with the same SQL (Agenda.Schema):
+  on FPC, FireDAC on Delphi), with the same SQL (Agenda.Schema: the
+  engine's directory, SQLITE or PG, then COMMON):
   - sqlite (the default, development): the file DB_FILE (agenda.sqlite next
     to the executable). On FPC the library is SQLITE_CLIENT, by default
     libsqlite3.so.0 on Linux and the sqlite3.dll next to the executable on
@@ -144,14 +145,15 @@ begin
         LName := TAppConfig.Get('DB_NAME', 'agenda');
         SetPostgreSQLParams(LConfig.ConnectionParams, LHost, LPort, LName);
         LConfig.SQLDialect := 'PostgreSQL';
+        LConfig.SQLDirectory := PG_SQL_DIR;
         FDescription := Format('postgresql %s:%s/%s', [LHost, LPort, LName]);
       end;
   else
     SetSQLiteParams(LConfig.ConnectionParams, SQLiteFile);
     LConfig.SQLDialect := 'SQLite';
+    LConfig.SQLDirectory := SQLITE_SQL_DIR;
     FDescription := 'sqlite ' + SQLiteFile;
   end;
-  LConfig.SQLDirectory := SQL_DIR;
   LConfig.SqlSource := AgendaSqlSource;
   LConfig.PoolName := 'agenda';
   LConfig.PoolIniConnections := 1;

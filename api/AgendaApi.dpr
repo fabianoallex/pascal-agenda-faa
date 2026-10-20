@@ -92,6 +92,7 @@ uses
   PascalApi.Horse.Tenancy,
   PascalApi.RefreshTokens,
   Agenda.Schema in '..\src\Agenda.Schema.pas',
+  Agenda.SqlSources in '..\src\Agenda.SqlSources.pas',
   Agenda.Database in '..\src\Agenda.Database.pas',
   Agenda.Passwords in '..\src\Agenda.Passwords.pas',
   Agenda.Tokens in '..\src\Agenda.Tokens.pas',

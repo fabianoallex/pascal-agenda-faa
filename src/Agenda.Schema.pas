@@ -2,15 +2,20 @@ unit Agenda.Schema;
 
 {$I agenda.inc}
 
-(* The database schema: the SQL the application runs, by name (a
-  TMemorySqlSource, directory AGENDA), and the migrations, in order.
+(* The database schema: the SQL the application runs, by name, and the
+  migrations, in order.
 
-  The same text runs on SQLite and PostgreSQL (Agenda.Database), so there is
-  one directory, not one per engine as pascal-db-faa's samples have: the
-  types are ones both take (VARCHAR, INTEGER, BIGINT, TIMESTAMP), flags are
-  INTEGER (bound as Booleans), times are Unix seconds, money is cents, and
-  paging is the dialect's ${PAGE}. A statement that has to differ gets a
-  variant chosen in code, as pascal-db-faa's integration tests do.
+  The statements live in a TMemorySqlSource under three directories: COMMON
+  for what SQLite and PostgreSQL both run, SQLITE and PG for what one of them
+  needs differently. Agenda.Database sets the engine's directory, and
+  Agenda.SqlSources' TFallbackSqlSource answers a key from it, else from
+  COMMON: a key under PG overrides the common one for PostgreSQL only. On
+  2026-10-19 every statement is in COMMON: the types are ones both take
+  (VARCHAR, INTEGER, BIGINT, TIMESTAMP), flags are INTEGER (bound as
+  integers, Agenda.Flags), times are Unix seconds, money is cents, and paging
+  is the dialect's ${PAGE}. An override is the place for what can't be
+  common (RETURNING, ON CONFLICT, a JSONB column); a copy of a statement
+  that is the same on both isn't.
 
   One database holds every tenant (the shared mode of pascal-api-infra-faa's
   tenancy): the catalog table TENANTS, the JWT signing keys, and the tenants'
@@ -40,8 +45,11 @@ uses
   PascalDb.Migrations;
 
 const
-  /// The SqlSource directory of every statement, on both engines.
-  SQL_DIR = 'AGENDA';
+  /// What both engines run.
+  COMMON_SQL_DIR = 'COMMON';
+  /// Each engine's overrides; the database's SQLDirectory.
+  SQLITE_SQL_DIR = 'SQLITE';
+  PG_SQL_DIR = 'PG';
 
 function AgendaSqlSource: ISqlSource;
 
@@ -50,19 +58,24 @@ function AgendaMigrations: TArray<TMigrationItem>;
 
 implementation
 
+uses
+  Agenda.SqlSources;
+
 function AgendaSqlSource: ISqlSource;
 var
   LSource: TMemorySqlSource;
+  LMemory: ISqlSource;
 begin
   LSource := TMemorySqlSource.Create;
-  Result := LSource;
+  LMemory := LSource;
+  Result := TFallbackSqlSource.Create(LMemory, COMMON_SQL_DIR);
   LSource
     // --- migrations
-    .Add(SQL_DIR, 'MIG.0001',
+    .Add(COMMON_SQL_DIR, 'MIG.0001',
       'CREATE TABLE IF NOT EXISTS SCHEMA_MIGRATIONS (VERSION INTEGER NOT NULL, ' +
       'APPLIED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL, ' +
       'CONSTRAINT PK_SCHEMA_MIGRATIONS PRIMARY KEY (VERSION));')
-    .Add(SQL_DIR, 'MIG.0002',
+    .Add(COMMON_SQL_DIR, 'MIG.0002',
       'CREATE TABLE TENANTS (' +
       'ID VARCHAR(40) NOT NULL PRIMARY KEY, ' +
       'NAME VARCHAR(120) NOT NULL, ' +
@@ -73,7 +86,7 @@ begin
       'CANCEL_NOTICE_HOURS INTEGER DEFAULT 24 NOT NULL, ' +
       'REMINDER_HOURS INTEGER DEFAULT 24 NOT NULL, ' +
       'CREATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL);')
-    .Add(SQL_DIR, 'MIG.0003',
+    .Add(COMMON_SQL_DIR, 'MIG.0003',
       'CREATE TABLE USERS (' +
       'TENANT_ID VARCHAR(40) NOT NULL, ' +
       'ID VARCHAR(32) NOT NULL, ' +
@@ -85,12 +98,12 @@ begin
       'CONSTRAINT PK_USERS PRIMARY KEY (TENANT_ID, ID), ' +
       'CONSTRAINT UQ_USERS_EMAIL UNIQUE (TENANT_ID, EMAIL), ' +
       'CONSTRAINT FK_USERS_TENANT FOREIGN KEY (TENANT_ID) REFERENCES TENANTS (ID));')
-    .Add(SQL_DIR, 'MIG.0004',
+    .Add(COMMON_SQL_DIR, 'MIG.0004',
       'CREATE TABLE JWT_KEYS (TENANT_ID VARCHAR(40) NOT NULL, GENERATION INTEGER NOT NULL, ' +
       'KID VARCHAR(128) NOT NULL, SECRET VARCHAR(255) NOT NULL, CREATED_AT BIGINT NOT NULL, ' +
       'ACTIVE_FROM BIGINT NOT NULL, CONSTRAINT PK_JWT_KEYS PRIMARY KEY (TENANT_ID, GENERATION), ' +
       'CONSTRAINT UQ_JWT_KEYS_KID UNIQUE (KID));')
-    .Add(SQL_DIR, 'MIG.0005',
+    .Add(COMMON_SQL_DIR, 'MIG.0005',
       'CREATE TABLE REFRESH_TOKENS (' +
       'TENANT_ID VARCHAR(40) NOT NULL, ' +
       'ID VARCHAR(32) NOT NULL, ' +
@@ -108,7 +121,7 @@ begin
       'CREATE INDEX IX_REFRESH_TOKENS_FAMILY ON REFRESH_TOKENS (TENANT_ID, FAMILY_ID);')
     // NAME_KEY: the name folded for searching (Agenda.Text); a service's is
     // unique within its tenant. PRICE_CENTS: exact on every database.
-    .Add(SQL_DIR, 'MIG.0006',
+    .Add(COMMON_SQL_DIR, 'MIG.0006',
       'CREATE TABLE SERVICES (' +
       'TENANT_ID VARCHAR(40) NOT NULL, ' +
       'ID VARCHAR(32) NOT NULL, ' +
@@ -123,7 +136,7 @@ begin
       'CONSTRAINT PK_SERVICES PRIMARY KEY (TENANT_ID, ID), ' +
       'CONSTRAINT UQ_SERVICES_NAME UNIQUE (TENANT_ID, NAME_KEY), ' +
       'CONSTRAINT FK_SERVICES_TENANT FOREIGN KEY (TENANT_ID) REFERENCES TENANTS (ID));')
-    .Add(SQL_DIR, 'MIG.0007',
+    .Add(COMMON_SQL_DIR, 'MIG.0007',
       'CREATE TABLE PROFESSIONALS (' +
       'TENANT_ID VARCHAR(40) NOT NULL, ' +
       'ID VARCHAR(32) NOT NULL, ' +
@@ -138,7 +151,7 @@ begin
       'CREATE INDEX IX_PROFESSIONALS_NAME ON PROFESSIONALS (TENANT_ID, NAME_KEY);')
     // SEARCH_KEY: NAME_KEY|EMAIL|the phone's digits, one column for one
     // LIKE (Agenda.Customers). PHONE: Agenda.Text's NormalizePhone.
-    .Add(SQL_DIR, 'MIG.0008',
+    .Add(COMMON_SQL_DIR, 'MIG.0008',
       'CREATE TABLE CUSTOMERS (' +
       'TENANT_ID VARCHAR(40) NOT NULL, ' +
       'ID VARCHAR(32) NOT NULL, ' +
@@ -157,14 +170,14 @@ begin
     // most one user (NULLs don't collide in a unique index, on SQLite and
     // PostgreSQL alike). The application checks the professional exists:
     // ADD COLUMN can't add a two-column foreign key.
-    .Add(SQL_DIR, 'MIG.0009',
+    .Add(COMMON_SQL_DIR, 'MIG.0009',
       'ALTER TABLE USERS ADD COLUMN PROFESSIONAL_ID VARCHAR(32);' +
       'ALTER TABLE USERS ADD COLUMN UPDATED_AT BIGINT;' +
       'CREATE UNIQUE INDEX UQ_USERS_PROFESSIONAL ON USERS (TENANT_ID, PROFESSIONAL_ID);')
     // WORKING_HOURS: the tenant's local clock (minutes since midnight, an
     // end up to 1440), WEEKDAY ISO (1 = Monday). TIME_OFF: instants, Unix
     // seconds UTC. Both go with their professional (Agenda.Professionals).
-    .Add(SQL_DIR, 'MIG.0010',
+    .Add(COMMON_SQL_DIR, 'MIG.0010',
       'CREATE TABLE WORKING_HOURS (' +
       'TENANT_ID VARCHAR(40) NOT NULL, ' +
       'PROFESSIONAL_ID VARCHAR(32) NOT NULL, ' +
@@ -188,51 +201,51 @@ begin
       'CREATE INDEX IX_TIME_OFF_START ON TIME_OFF (TENANT_ID, PROFESSIONAL_ID, START_UTC);')
 
     // --- operations
-    .Add(SQL_DIR, 'HEALTH.PING', 'SELECT 1 AS ONE')
+    .Add(COMMON_SQL_DIR, 'HEALTH.PING', 'SELECT 1 AS ONE')
 
     // --- catalog (TDbTenantCatalog; the application adds tenants)
-    .Add(SQL_DIR, 'TENANT.BY_ID', 'SELECT ID, MODE, SUSPENDED, PLAN FROM TENANTS WHERE ID = :ID')
-    .Add(SQL_DIR, 'TENANT.ALL', 'SELECT ID, MODE, SUSPENDED, PLAN FROM TENANTS ORDER BY ID')
-    .Add(SQL_DIR, 'TENANT.INSERT',
+    .Add(COMMON_SQL_DIR, 'TENANT.BY_ID', 'SELECT ID, MODE, SUSPENDED, PLAN FROM TENANTS WHERE ID = :ID')
+    .Add(COMMON_SQL_DIR, 'TENANT.ALL', 'SELECT ID, MODE, SUSPENDED, PLAN FROM TENANTS ORDER BY ID')
+    .Add(COMMON_SQL_DIR, 'TENANT.INSERT',
       'INSERT INTO TENANTS (ID, NAME, TIME_ZONE, MODE, SUSPENDED) ' +
       'VALUES (:ID, :NAME, :TIME_ZONE, ''shared'', 0)')
-    .Add(SQL_DIR, 'TENANT.SET_SUSPENDED', 'UPDATE TENANTS SET SUSPENDED = :SUSPENDED WHERE ID = :ID')
+    .Add(COMMON_SQL_DIR, 'TENANT.SET_SUSPENDED', 'UPDATE TENANTS SET SUSPENDED = :SUSPENDED WHERE ID = :ID')
 
     // --- JWT signing keys (TDbJwtKeyStore)
-    .Add(SQL_DIR, 'JWT_KEY.BY_TENANT',
+    .Add(COMMON_SQL_DIR, 'JWT_KEY.BY_TENANT',
       'SELECT KID, SECRET, GENERATION, CREATED_AT, ACTIVE_FROM FROM JWT_KEYS ' +
       'WHERE TENANT_ID = :TENANT_ID')
-    .Add(SQL_DIR, 'JWT_KEY.INSERT',
+    .Add(COMMON_SQL_DIR, 'JWT_KEY.INSERT',
       'INSERT INTO JWT_KEYS (TENANT_ID, GENERATION, KID, SECRET, CREATED_AT, ACTIVE_FROM) ' +
       'VALUES (:TENANT_ID, :GENERATION, :KID, :SECRET, :CREATED_AT, :ACTIVE_FROM)')
-    .Add(SQL_DIR, 'JWT_KEY.DELETE', 'DELETE FROM JWT_KEYS WHERE TENANT_ID = :TENANT_ID AND KID = :KID')
+    .Add(COMMON_SQL_DIR, 'JWT_KEY.DELETE', 'DELETE FROM JWT_KEYS WHERE TENANT_ID = :TENANT_ID AND KID = :KID')
 
     // --- users (a tenant's rows)
-    .Add(SQL_DIR, 'USER.BY_EMAIL',
+    .Add(COMMON_SQL_DIR, 'USER.BY_EMAIL',
       'SELECT ID, EMAIL, PASSWORD_HASH, ROLE, ACTIVE FROM USERS WHERE EMAIL = :EMAIL AND ${TENANT}')
-    .Add(SQL_DIR, 'USER.BY_ID',
+    .Add(COMMON_SQL_DIR, 'USER.BY_ID',
       'SELECT ID, EMAIL, PASSWORD_HASH, ROLE, ACTIVE FROM USERS WHERE ID = :ID AND ${TENANT}')
-    .Add(SQL_DIR, 'USER.INSERT',
+    .Add(COMMON_SQL_DIR, 'USER.INSERT',
       'INSERT INTO USERS (TENANT_ID, ID, EMAIL, PASSWORD_HASH, ROLE, ACTIVE, ' +
       '[PROFESSIONAL {] PROFESSIONAL_ID, [} PROFESSIONAL] CREATED_AT, UPDATED_AT) ' +
       'VALUES (:TENANT_ID, :ID, :EMAIL, :PASSWORD_HASH, :ROLE, 1, ' +
       '[PROFESSIONAL {] :PROFESSIONAL_ID, [} PROFESSIONAL] :CREATED_AT, :UPDATED_AT)')
-    .Add(SQL_DIR, 'USER.SET_PASSWORD_HASH',
+    .Add(COMMON_SQL_DIR, 'USER.SET_PASSWORD_HASH',
       'UPDATE USERS SET PASSWORD_HASH = :PASSWORD_HASH WHERE ID = :ID AND ${TENANT}')
     // The users API (Agenda.Users): never the password hash.
-    .Add(SQL_DIR, 'USER.COUNT',
+    .Add(COMMON_SQL_DIR, 'USER.COUNT',
       'SELECT COUNT(*) AS TOTAL FROM USERS WHERE ${TENANT} ' +
       '[SEARCH {] AND EMAIL LIKE :SEARCH ESCAPE ''!'' [} SEARCH] ' +
       '[ROLE {] AND ROLE = :ROLE [} ROLE] ' +
       '[ACTIVE {] AND ACTIVE = :ACTIVE [} ACTIVE]')
-    .Add(SQL_DIR, 'USER.PAGE',
+    .Add(COMMON_SQL_DIR, 'USER.PAGE',
       'SELECT ID, EMAIL, ROLE, ACTIVE, PROFESSIONAL_ID FROM USERS WHERE ${TENANT} ' +
       '[SEARCH {] AND EMAIL LIKE :SEARCH ESCAPE ''!'' [} SEARCH] ' +
       '[ROLE {] AND ROLE = :ROLE [} ROLE] ' +
       '[ACTIVE {] AND ACTIVE = :ACTIVE [} ACTIVE] ORDER BY ${ORDER} ${PAGE}')
-    .Add(SQL_DIR, 'USER.VIEW',
+    .Add(COMMON_SQL_DIR, 'USER.VIEW',
       'SELECT ID, EMAIL, ROLE, ACTIVE, PROFESSIONAL_ID FROM USERS WHERE ID = :ID AND ${TENANT}')
-    .Add(SQL_DIR, 'USER.UPDATE',
+    .Add(COMMON_SQL_DIR, 'USER.UPDATE',
       'UPDATE USERS SET UPDATED_AT = :UPDATED_AT ' +
       '[EMAIL {], EMAIL = :EMAIL [} EMAIL] ' +
       '[PASSWORD {], PASSWORD_HASH = :PASSWORD_HASH [} PASSWORD] ' +
@@ -240,58 +253,58 @@ begin
       '[ACTIVE {], ACTIVE = :ACTIVE [} ACTIVE] ' +
       '[PROFESSIONAL {], PROFESSIONAL_ID = :PROFESSIONAL_ID [} PROFESSIONAL] ' +
       'WHERE ID = :ID AND ${TENANT}')
-    .Add(SQL_DIR, 'USER.DELETE', 'DELETE FROM USERS WHERE ID = :ID AND ${TENANT}')
+    .Add(COMMON_SQL_DIR, 'USER.DELETE', 'DELETE FROM USERS WHERE ID = :ID AND ${TENANT}')
     // A professional deleted: the user linked to it stays, unlinked.
-    .Add(SQL_DIR, 'USER.UNLINK_PROFESSIONAL',
+    .Add(COMMON_SQL_DIR, 'USER.UNLINK_PROFESSIONAL',
       'UPDATE USERS SET PROFESSIONAL_ID = NULL WHERE PROFESSIONAL_ID = :PROFESSIONAL_ID ' +
       'AND ${TENANT}')
 
     // --- refresh tokens (a tenant's rows): pascal-api-infra-faa's
     // TDbRefreshTokenStore binds :TENANT_ID itself (its SQL contract), and
     // TTenantFilter.Prepare binds it too when Agenda.Users runs them.
-    .Add(SQL_DIR, 'REFRESH.INSERT',
+    .Add(COMMON_SQL_DIR, 'REFRESH.INSERT',
       'INSERT INTO REFRESH_TOKENS (TENANT_ID, ID, TOKEN_HASH, USER_ID, FAMILY_ID, CREATED_AT, ' +
       'EXPIRES_AT) VALUES (:TENANT_ID, :ID, :TOKEN_HASH, :USER_ID, :FAMILY_ID, :CREATED_AT, ' +
       ':EXPIRES_AT)')
-    .Add(SQL_DIR, 'REFRESH.BY_HASH',
+    .Add(COMMON_SQL_DIR, 'REFRESH.BY_HASH',
       'SELECT ID, USER_ID, FAMILY_ID, EXPIRES_AT, USED_AT, REVOKED_AT FROM REFRESH_TOKENS ' +
       'WHERE TOKEN_HASH = :TOKEN_HASH AND TENANT_ID = :TENANT_ID')
     // Only the first of two concurrent refreshes matches: the other one sees
     // 0 rows and is treated as a reuse.
-    .Add(SQL_DIR, 'REFRESH.MARK_USED',
+    .Add(COMMON_SQL_DIR, 'REFRESH.MARK_USED',
       'UPDATE REFRESH_TOKENS SET USED_AT = :USED_AT WHERE ID = :ID AND USED_AT IS NULL ' +
       'AND REVOKED_AT IS NULL AND TENANT_ID = :TENANT_ID')
-    .Add(SQL_DIR, 'REFRESH.REVOKE_FAMILY',
+    .Add(COMMON_SQL_DIR, 'REFRESH.REVOKE_FAMILY',
       'UPDATE REFRESH_TOKENS SET REVOKED_AT = :REVOKED_AT WHERE FAMILY_ID = :FAMILY_ID ' +
       'AND REVOKED_AT IS NULL AND TENANT_ID = :TENANT_ID')
     // A user's password changed, or the user deactivated: every login ends.
-    .Add(SQL_DIR, 'REFRESH.REVOKE_USER',
+    .Add(COMMON_SQL_DIR, 'REFRESH.REVOKE_USER',
       'UPDATE REFRESH_TOKENS SET REVOKED_AT = :REVOKED_AT WHERE USER_ID = :USER_ID ' +
       'AND REVOKED_AT IS NULL AND TENANT_ID = :TENANT_ID')
     // Before the user's row (the foreign key, enforced on PostgreSQL).
-    .Add(SQL_DIR, 'REFRESH.DELETE_USER',
+    .Add(COMMON_SQL_DIR, 'REFRESH.DELETE_USER',
       'DELETE FROM REFRESH_TOKENS WHERE USER_ID = :USER_ID AND ${TENANT}')
 
     // --- services (a tenant's rows). LIKE ... ESCAPE '!': PdbLikeContains' escape;
     // a backslash makes SQLdb lose the parameters after it (pascal-db-faa's gotcha 26). [SEARCH] and [ACTIVE] are kept only
     // when that filter came (ProcessTag); ${ORDER} comes from
     // ServiceOrderSpec, ${PAGE} from the connection's dialect.
-    .Add(SQL_DIR, 'SERVICE.COUNT',
+    .Add(COMMON_SQL_DIR, 'SERVICE.COUNT',
       'SELECT COUNT(*) AS TOTAL FROM SERVICES WHERE ${TENANT} ' +
       '[SEARCH {] AND NAME_KEY LIKE :SEARCH ESCAPE ''!'' [} SEARCH] ' +
       '[ACTIVE {] AND ACTIVE = :ACTIVE [} ACTIVE]')
-    .Add(SQL_DIR, 'SERVICE.PAGE',
+    .Add(COMMON_SQL_DIR, 'SERVICE.PAGE',
       'SELECT ID, NAME, DURATION_MINUTES, BUFFER_MINUTES, PRICE_CENTS, ACTIVE FROM SERVICES ' +
       'WHERE ${TENANT} [SEARCH {] AND NAME_KEY LIKE :SEARCH ESCAPE ''!'' [} SEARCH] ' +
       '[ACTIVE {] AND ACTIVE = :ACTIVE [} ACTIVE] ORDER BY ${ORDER} ${PAGE}')
-    .Add(SQL_DIR, 'SERVICE.BY_ID',
+    .Add(COMMON_SQL_DIR, 'SERVICE.BY_ID',
       'SELECT ID, NAME, DURATION_MINUTES, BUFFER_MINUTES, PRICE_CENTS, ACTIVE FROM SERVICES ' +
       'WHERE ID = :ID AND ${TENANT}')
-    .Add(SQL_DIR, 'SERVICE.INSERT',
+    .Add(COMMON_SQL_DIR, 'SERVICE.INSERT',
       'INSERT INTO SERVICES (TENANT_ID, ID, NAME, NAME_KEY, DURATION_MINUTES, BUFFER_MINUTES, ' +
       'PRICE_CENTS, ACTIVE, CREATED_AT, UPDATED_AT) VALUES (:TENANT_ID, :ID, :NAME, :NAME_KEY, ' +
       ':DURATION_MINUTES, :BUFFER_MINUTES, :PRICE_CENTS, 1, :CREATED_AT, :UPDATED_AT)')
-    .Add(SQL_DIR, 'SERVICE.UPDATE',
+    .Add(COMMON_SQL_DIR, 'SERVICE.UPDATE',
       'UPDATE SERVICES SET UPDATED_AT = :UPDATED_AT ' +
       '[NAME {], NAME = :NAME, NAME_KEY = :NAME_KEY [} NAME] ' +
       '[DURATION {], DURATION_MINUTES = :DURATION_MINUTES [} DURATION] ' +
@@ -299,78 +312,78 @@ begin
       '[PRICE {], PRICE_CENTS = :PRICE_CENTS [} PRICE] ' +
       '[ACTIVE {], ACTIVE = :ACTIVE [} ACTIVE] ' +
       'WHERE ID = :ID AND ${TENANT}')
-    .Add(SQL_DIR, 'SERVICE.DELETE', 'DELETE FROM SERVICES WHERE ID = :ID AND ${TENANT}')
+    .Add(COMMON_SQL_DIR, 'SERVICE.DELETE', 'DELETE FROM SERVICES WHERE ID = :ID AND ${TENANT}')
 
     // --- professionals (a tenant's rows)
-    .Add(SQL_DIR, 'PROFESSIONAL.COUNT',
+    .Add(COMMON_SQL_DIR, 'PROFESSIONAL.COUNT',
       'SELECT COUNT(*) AS TOTAL FROM PROFESSIONALS WHERE ${TENANT} ' +
       '[SEARCH {] AND NAME_KEY LIKE :SEARCH ESCAPE ''!'' [} SEARCH] ' +
       '[ACTIVE {] AND ACTIVE = :ACTIVE [} ACTIVE]')
-    .Add(SQL_DIR, 'PROFESSIONAL.PAGE',
+    .Add(COMMON_SQL_DIR, 'PROFESSIONAL.PAGE',
       'SELECT ID, NAME, EMAIL, ACTIVE FROM PROFESSIONALS ' +
       'WHERE ${TENANT} [SEARCH {] AND NAME_KEY LIKE :SEARCH ESCAPE ''!'' [} SEARCH] ' +
       '[ACTIVE {] AND ACTIVE = :ACTIVE [} ACTIVE] ORDER BY ${ORDER} ${PAGE}')
-    .Add(SQL_DIR, 'PROFESSIONAL.BY_ID',
+    .Add(COMMON_SQL_DIR, 'PROFESSIONAL.BY_ID',
       'SELECT ID, NAME, EMAIL, ACTIVE FROM PROFESSIONALS WHERE ID = :ID AND ${TENANT}')
-    .Add(SQL_DIR, 'PROFESSIONAL.INSERT',
+    .Add(COMMON_SQL_DIR, 'PROFESSIONAL.INSERT',
       'INSERT INTO PROFESSIONALS (TENANT_ID, ID, NAME, NAME_KEY, [EMAIL {] EMAIL, [} EMAIL] ' +
       'ACTIVE, CREATED_AT, UPDATED_AT) VALUES (:TENANT_ID, :ID, :NAME, :NAME_KEY, ' +
       '[EMAIL {] :EMAIL, [} EMAIL] 1, :CREATED_AT, :UPDATED_AT)')
-    .Add(SQL_DIR, 'PROFESSIONAL.UPDATE',
+    .Add(COMMON_SQL_DIR, 'PROFESSIONAL.UPDATE',
       'UPDATE PROFESSIONALS SET UPDATED_AT = :UPDATED_AT ' +
       '[NAME {], NAME = :NAME, NAME_KEY = :NAME_KEY [} NAME] ' +
       '[EMAIL {], EMAIL = :EMAIL [} EMAIL] ' +
       '[ACTIVE {], ACTIVE = :ACTIVE [} ACTIVE] ' +
       'WHERE ID = :ID AND ${TENANT}')
-    .Add(SQL_DIR, 'PROFESSIONAL.DELETE',
+    .Add(COMMON_SQL_DIR, 'PROFESSIONAL.DELETE',
       'DELETE FROM PROFESSIONALS WHERE ID = :ID AND ${TENANT}')
     // The first statement of a change to a professional's schedule: 0 rows
     // is a 404, and on PostgreSQL it locks the row, so two changes to one
     // professional's week run one after the other.
-    .Add(SQL_DIR, 'PROFESSIONAL.TOUCH',
+    .Add(COMMON_SQL_DIR, 'PROFESSIONAL.TOUCH',
       'UPDATE PROFESSIONALS SET UPDATED_AT = :UPDATED_AT WHERE ID = :ID AND ${TENANT}')
 
     // --- working hours (a tenant's rows); a PUT replaces the week
-    .Add(SQL_DIR, 'WORKING_HOURS.BY_PROFESSIONAL',
+    .Add(COMMON_SQL_DIR, 'WORKING_HOURS.BY_PROFESSIONAL',
       'SELECT WEEKDAY, START_MINUTE, END_MINUTE FROM WORKING_HOURS ' +
       'WHERE PROFESSIONAL_ID = :PROFESSIONAL_ID AND ${TENANT} ORDER BY WEEKDAY, START_MINUTE')
-    .Add(SQL_DIR, 'WORKING_HOURS.DELETE_ALL',
+    .Add(COMMON_SQL_DIR, 'WORKING_HOURS.DELETE_ALL',
       'DELETE FROM WORKING_HOURS WHERE PROFESSIONAL_ID = :PROFESSIONAL_ID AND ${TENANT}')
-    .Add(SQL_DIR, 'WORKING_HOURS.INSERT',
+    .Add(COMMON_SQL_DIR, 'WORKING_HOURS.INSERT',
       'INSERT INTO WORKING_HOURS (TENANT_ID, PROFESSIONAL_ID, WEEKDAY, START_MINUTE, END_MINUTE) ' +
       'VALUES (:TENANT_ID, :PROFESSIONAL_ID, :WEEKDAY, :START_MINUTE, :END_MINUTE)')
 
     // --- time off (a tenant's rows). [FROM] and [TO]: the entries that
     // overlap [from, to).
-    .Add(SQL_DIR, 'TIME_OFF.COUNT',
+    .Add(COMMON_SQL_DIR, 'TIME_OFF.COUNT',
       'SELECT COUNT(*) AS TOTAL FROM TIME_OFF WHERE PROFESSIONAL_ID = :PROFESSIONAL_ID ' +
       'AND ${TENANT} [FROM {] AND END_UTC > :FROM_UTC [} FROM] [TO {] AND START_UTC < :TO_UTC [} TO]')
-    .Add(SQL_DIR, 'TIME_OFF.PAGE',
+    .Add(COMMON_SQL_DIR, 'TIME_OFF.PAGE',
       'SELECT ID, START_UTC, END_UTC, REASON FROM TIME_OFF WHERE PROFESSIONAL_ID = :PROFESSIONAL_ID ' +
       'AND ${TENANT} [FROM {] AND END_UTC > :FROM_UTC [} FROM] [TO {] AND START_UTC < :TO_UTC [} TO] ' +
       'ORDER BY ${ORDER} ${PAGE}')
-    .Add(SQL_DIR, 'TIME_OFF.BY_ID',
+    .Add(COMMON_SQL_DIR, 'TIME_OFF.BY_ID',
       'SELECT ID, START_UTC, END_UTC, REASON FROM TIME_OFF WHERE ID = :ID ' +
       'AND PROFESSIONAL_ID = :PROFESSIONAL_ID AND ${TENANT}')
-    .Add(SQL_DIR, 'TIME_OFF.INSERT',
+    .Add(COMMON_SQL_DIR, 'TIME_OFF.INSERT',
       'INSERT INTO TIME_OFF (TENANT_ID, ID, PROFESSIONAL_ID, START_UTC, END_UTC, REASON, CREATED_AT) ' +
       'VALUES (:TENANT_ID, :ID, :PROFESSIONAL_ID, :START_UTC, :END_UTC, :REASON, :CREATED_AT)')
-    .Add(SQL_DIR, 'TIME_OFF.DELETE',
+    .Add(COMMON_SQL_DIR, 'TIME_OFF.DELETE',
       'DELETE FROM TIME_OFF WHERE ID = :ID AND PROFESSIONAL_ID = :PROFESSIONAL_ID AND ${TENANT}')
-    .Add(SQL_DIR, 'TIME_OFF.DELETE_ALL',
+    .Add(COMMON_SQL_DIR, 'TIME_OFF.DELETE_ALL',
       'DELETE FROM TIME_OFF WHERE PROFESSIONAL_ID = :PROFESSIONAL_ID AND ${TENANT}')
 
     // --- customers (a tenant's rows)
-    .Add(SQL_DIR, 'CUSTOMER.COUNT',
+    .Add(COMMON_SQL_DIR, 'CUSTOMER.COUNT',
       'SELECT COUNT(*) AS TOTAL FROM CUSTOMERS WHERE ${TENANT} ' +
       '[SEARCH {] AND SEARCH_KEY LIKE :SEARCH ESCAPE ''!'' [} SEARCH]')
-    .Add(SQL_DIR, 'CUSTOMER.PAGE',
+    .Add(COMMON_SQL_DIR, 'CUSTOMER.PAGE',
       'SELECT ID, NAME, PHONE, EMAIL FROM CUSTOMERS WHERE ${TENANT} ' +
       '[SEARCH {] AND SEARCH_KEY LIKE :SEARCH ESCAPE ''!'' [} SEARCH] ' +
       'ORDER BY ${ORDER} ${PAGE}')
-    .Add(SQL_DIR, 'CUSTOMER.BY_ID',
+    .Add(COMMON_SQL_DIR, 'CUSTOMER.BY_ID',
       'SELECT ID, NAME, PHONE, EMAIL FROM CUSTOMERS WHERE ID = :ID AND ${TENANT}')
-    .Add(SQL_DIR, 'CUSTOMER.INSERT',
+    .Add(COMMON_SQL_DIR, 'CUSTOMER.INSERT',
       'INSERT INTO CUSTOMERS (TENANT_ID, ID, NAME, NAME_KEY, ' +
       '[PHONE {] PHONE, [} PHONE] ' +
       '[EMAIL {] EMAIL, [} EMAIL] SEARCH_KEY, ' +
@@ -380,11 +393,11 @@ begin
       ':SEARCH_KEY, :CREATED_AT, :UPDATED_AT)')
     // Every column: the search key depends on all of them, so a PATCH writes
     // the merged row.
-    .Add(SQL_DIR, 'CUSTOMER.UPDATE',
+    .Add(COMMON_SQL_DIR, 'CUSTOMER.UPDATE',
       'UPDATE CUSTOMERS SET NAME = :NAME, NAME_KEY = :NAME_KEY, PHONE = :PHONE, ' +
       'EMAIL = :EMAIL, SEARCH_KEY = :SEARCH_KEY, UPDATED_AT = :UPDATED_AT ' +
       'WHERE ID = :ID AND ${TENANT}')
-    .Add(SQL_DIR, 'CUSTOMER.DELETE', 'DELETE FROM CUSTOMERS WHERE ID = :ID AND ${TENANT}');
+    .Add(COMMON_SQL_DIR, 'CUSTOMER.DELETE', 'DELETE FROM CUSTOMERS WHERE ID = :ID AND ${TENANT}');
 end;
 
 function AgendaMigrations: TArray<TMigrationItem>;

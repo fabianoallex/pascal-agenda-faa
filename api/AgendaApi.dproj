@@ -66,6 +66,7 @@
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
         <DCCReference Include="..\src\Agenda.Schema.pas"/>
+        <DCCReference Include="..\src\Agenda.SqlSources.pas"/>
         <DCCReference Include="..\src\Agenda.Database.pas"/>
         <DCCReference Include="..\src\Agenda.Passwords.pas"/>
         <DCCReference Include="..\src\Agenda.Tokens.pas"/>
