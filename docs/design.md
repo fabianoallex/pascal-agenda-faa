@@ -567,5 +567,6 @@ What the first PostgreSQL run found:
 
 Result: 48 unit tests (8 new: `Agenda.SqlSourcesTests`); 333 HTTP checks on SQLite and on
 PostgreSQL 17, FPC Windows and Linux, with the restart (no migration on the second start, a token
-from before it verifies); OpenAPI valid. Before the fallback, Delphi 12: 333 checks on SQLite
-(Win32, Win64) and on PostgreSQL (Win64, three runs), on pascal-api-infra-faa 0.20.1.
+from before it verifies); OpenAPI valid. Delphi 12: 48 unit tests (0 leaks) and 333 checks on
+SQLite, Win32 and Win64, and 333 on PostgreSQL, Win64 (no 32-bit libpq); on pascal-api-infra-faa
+v0.20.1.
