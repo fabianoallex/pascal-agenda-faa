@@ -584,4 +584,5 @@ uses pascal-db-faa's `TFallbackSqlSource`, same behavior; its 7 tests moved to t
 schema's own test stays). Measuring the Booleans in the library found more than PostgreSQL's
 refusal: SQLdb on Firebird stored `True` as -1 and Zeos sent `'Y'` (gotcha 54 there), which this
 application never met (SQLdb, SQLite and PostgreSQL). Result: 41 unit tests; 333 HTTP checks on
-SQLite and on PostgreSQL 17, FPC Windows and Linux.
+SQLite and on PostgreSQL 17, FPC Windows and Linux. Delphi 12: 41 unit tests (0 leaks) and 333
+checks on SQLite, Win32 and Win64, and 333 on PostgreSQL, Win64.
