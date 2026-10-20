@@ -683,7 +683,8 @@ the grid, past closing, into time off, in the past, on a day without hours (409)
 for one slot fired at once: one 201, three 409** (and two appointments stored, not five); the
 body's failures in one 400; another tenant's ids unknown; reading, filters, ordering; deletes
 refused. Result: 57 unit tests; 426 HTTP checks on SQLite and on PostgreSQL 17, FPC Windows and
-Linux (PostgreSQL three times on Windows, both engines twice on Linux). What wasn't measured: that
+Linux (PostgreSQL three times on Windows, both engines twice on Linux). Delphi 12: 57 unit tests (0 leaks)
+and 426 checks on SQLite, Win32 and Win64, and on PostgreSQL, Win64 (twice). What wasn't measured: that
 the four requests overlapped inside the server every time; the outcome is checked, not the
 interleaving.
 
