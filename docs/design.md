@@ -652,3 +652,38 @@ What it showed:
   Git Bash's curl (its arguments go through the ANSI code page, as pascal-api-infra-faa's
   CLAUDE.md says) and collided only on Linux; the scenario uses an ASCII name.
 
+### M2 — booking, the database's word (2026-10-20)
+
+`POST /appointments` (`professionalId`, `serviceId`, `customerId`, `startsAt`), `GET
+/appointments/:id`, `GET /appointments?professional=&status=&from=&to=&page=&orderBy=`; any user
+books and reads. `src/Agenda.Appointments`, migration 11 (`APPOINTMENTS`).
+
+- **No double booking without Redis**: one transaction that starts by touching the professional's
+  row (`PROFESSIONAL.TOUCH`: a row lock on PostgreSQL, the one write lock on SQLite), then
+  computes that local day's free starts on the same connection (`FreeStartsOn`, shared with the
+  availability route) and inserts only if `startsAt` is one of them, else 409
+  `slot_unavailable`. Time off and a new week touch the same row, so they can't slip in between
+  either. The Redis lock (the decision: `SetNx` around the booking) comes next, as an optional
+  layer in front of this, so development stays without Docker.
+- So a start must be what the availability lists: inside the hours, on the grid, not past, the
+  service and its buffer clear of time off and other appointments. The availability now counts
+  appointments that aren't cancelled, each until `BUSY_UNTIL_UTC` (its end plus the buffer the
+  service had when booked: a later change to the service doesn't move it).
+- Unknown ids in the body are a 400 naming each member (`unknown_professional`,
+  `unknown_service`, `unknown_customer`), all in one answer; an inactive professional or service
+  is a 409, as in the availability. The foreign keys keep a booked service, customer or
+  professional from being deleted (409, the library's mapping).
+- `FreeStartsOn` and the reads under it take the caller's query: the booking makes them on the
+  connection that holds the lock (a second connection from the pool while holding one could wait
+  forever on a small pool).
+
+Scenarios (`tools/http_scenarios_appointments.sh`, 43 checks): a free slot booked and the
+availability shrinking by the slot and its buffer; the same slot, a start inside the buffer, off
+the grid, past closing, into time off, in the past, on a day without hours (409); **four requests
+for one slot fired at once: one 201, three 409** (and two appointments stored, not five); the
+body's failures in one 400; another tenant's ids unknown; reading, filters, ordering; deletes
+refused. Result: 57 unit tests; 426 HTTP checks on SQLite and on PostgreSQL 17, FPC Windows and
+Linux (PostgreSQL three times on Windows, both engines twice on Linux). What wasn't measured: that
+the four requests overlapped inside the server every time; the outcome is checked, not the
+interleaving.
+

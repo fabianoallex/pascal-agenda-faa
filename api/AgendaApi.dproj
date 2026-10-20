@@ -84,6 +84,7 @@
         <DCCReference Include="..\src\Agenda.TimeOff.pas"/>
         <DCCReference Include="..\src\Agenda.Slots.pas"/>
         <DCCReference Include="..\src\Agenda.Availability.pas"/>
+        <DCCReference Include="..\src\Agenda.Appointments.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>

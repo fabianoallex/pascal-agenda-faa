@@ -24,6 +24,9 @@
 # - free slots (tools/http_scenarios_availability.sh): working hours minus
 #   time off and a buffer, in the tenant's zone, across Lisbon's
 #   daylight-saving changes; the query's failures in one 400;
+# - booking (tools/http_scenarios_appointments.sh): only a start the free
+#   slots list, four requests racing for one slot (one wins), the body's
+#   failures in one 400, what an appointment names kept from deletion;
 # - the rate limit on /auth/ by client address (last: it uses the window).
 #
 #   sh tools/http_scenarios.sh [port]   (default 9400; AgendaApi must be running,
@@ -245,6 +248,8 @@ fi
 . "$(dirname "$0")/http_scenarios_schedule.sh"
 # --- free slots (after the schedule: it uses the catalog and the hours)
 . "$(dirname "$0")/http_scenarios_availability.sh"
+# --- booking (after the free slots: it books their professional)
+. "$(dirname "$0")/http_scenarios_appointments.sh"
 
 # --- OpenAPI document and Swagger UI
 req GET /swagger/doc.json ""
@@ -263,6 +268,7 @@ body_has '"/professionals/{id}/working-hours":{"get":{' "OpenAPI: working hours"
 body_has '"/professionals/{id}/time-off/{offId}":{"get":{' "OpenAPI: time off, two path parameters"
 body_lacks '"to_"' "OpenAPI: the keyword member is named to"
 body_has '"/professionals/{id}/availability":{"get":{' "OpenAPI: availability"
+body_has '"/appointments":{"get":{' "OpenAPI: appointments"
 [ -n "$OPENAPI_OUT" ] && cp "$T/body" "$OPENAPI_OUT"
 req GET /swagger ""
 status_is 200 "Swagger UI"

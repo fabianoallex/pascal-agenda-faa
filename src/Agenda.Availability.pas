@@ -3,8 +3,10 @@ unit Agenda.Availability;
 {$I agenda.inc}
 
 (* A professional's free slots for one service: GET
-  /professionals/:id/availability?service=&date=&days=. DTOs and the reads
-  behind them; the computation is Agenda.Slots'.
+  /professionals/:id/availability?service=&date=&days=. DTOs, the reads
+  behind them (FreeStartsOn, which the booking runs too, inside its
+  transaction), and the reader the route uses; the computation is
+  Agenda.Slots'.
 
   - The days are the tenant's local days (TENANTS.TIME_ZONE, an IANA name
     checked when the tenant was created), from date for days days (1 to
@@ -12,14 +14,17 @@ unit Agenda.Availability;
   - Each slot carries its instants in UTC ("Z") and the tenant's clock with
     its offset (local), so a client shows the right hour on both sides of a
     daylight-saving change without a time zone database of its own.
-  - Busy: the professional's time off; appointments join when booking does
-    (M2's next step).
+  - Busy: the professional's time off, and the appointments that aren't
+    cancelled, each until its end plus the buffer its service had when it
+    was booked (BUSY_UNTIL_UTC): a later change to the service doesn't move
+    what is already booked.
   - An inactive professional or service is a 409, not an empty list: the
     caller asked about something that can't be booked, which differs from a
     full day.
   - Every query on a tenant's rows goes through TTenantFilter.Prepare (the
     ${TENANT} tag); the time zone comes from the catalog row of the tenant
-    the token named.
+    the token named. The reads take the caller's query, so the booking makes
+    them on its own connection, after locking the professional.
 
   This comment uses parenthesis-asterisk: it quotes ${TENANT}, whose brace
   would close a brace comment. *)
@@ -28,9 +33,12 @@ interface
 
 uses
   PascalCommon.Optionals,
+  PascalCommon.TimeZones,
   PascalJsonMapper.Json,
+  PascalDb.Interfaces,
   PascalApi.Dto,
-  PascalApi.Tenancy;
+  PascalApi.Tenancy,
+  Agenda.Slots;
 
 const
   CODE_INVALID_DATE = 'invalid_date';
@@ -39,6 +47,8 @@ const
   CODE_PROFESSIONAL_INACTIVE = 'professional_inactive';
   /// date at most this many days before or after today.
   MAX_DATE_DISTANCE_DAYS = 366;
+  /// An appointment's status that frees its time.
+  STATUS_CANCELLED = 'cancelled';
 
 type
   /// GET .../availability: service (required), date (required, YYYY-MM-DD,
@@ -123,6 +133,11 @@ type
   end;
 {$M-}
 
+  /// What booking a service takes, as the service says now.
+  TBookable = record
+    DurationMinutes, BufferMinutes: Integer;
+  end;
+
   TAvailabilityReader = class
   private
     FScope: TTenantDataScope;
@@ -135,19 +150,29 @@ type
       ANow: Int64): IAvailability;
   end;
 
+/// The tenant's zone, from its catalog row (the tenant the token named).
+function TenantZone(const AQuery: IQuery; const AScope: TTenantDataScope): IPcTimeZone;
+
+/// The starts free for a service of ABookable on ADays local days of AZone
+/// from ADay: AProfessionalId's working hours minus its time off and
+/// appointments, read on AQuery.
+function FreeStartsOn(const AQuery: IQuery; const AScope: TTenantDataScope;
+  const AZone: IPcTimeZone; const AProfessionalId: string; const ABookable: TBookable;
+  const ADay: TPcLocalDateTime; ADays: Integer; ANow: Int64): TSlotStarts;
+
 implementation
 
 uses
   SysUtils,
-  PascalCommon.TimeZones,
   PascalCommon.Validators,
-  PascalDb.Interfaces,
   PascalJsonMapper.Mapper,
   PascalCommon.JsonMapper.Optionals,
   PascalApi.OpenApi,
   PascalApi.Http,
-  Agenda.Times,
-  Agenda.Slots;
+  Agenda.Times;
+
+const
+  DAY_SECONDS = 86400;
 
 { DTOs }
 
@@ -201,61 +226,42 @@ begin
   Result := FSlots;
 end;
 
-{ TAvailabilityReader }
+{ reads }
 
-constructor TAvailabilityReader.Create(const AScope: TTenantDataScope);
-begin
-  inherited Create;
-  FScope := AScope;
-end;
-
-type
-  TBookable = record
-    DurationMinutes, BufferMinutes: Integer;
-  end;
-
-// The tenant's zone, from its catalog row (the tenant the token named).
-function TenantZone(const AScope: TTenantDataScope): IPcTimeZone;
+function TenantZone(const AQuery: IQuery; const AScope: TTenantDataScope): IPcTimeZone;
 var
-  LQuery: IQuery;
-  LTx: IScopeTransaction;
   LResult: IQueryResult;
 begin
-  LTx := AScope.Factory.GetPool.AcquireQuery(LQuery);
-  LQuery.Sql := AScope.Factory.SqlLoader['TENANT.TIME_ZONE'].SQL;
-  LQuery.Params.Strings['ID'] := AScope.Discriminator;
-  LResult := LQuery.Open;
+  AQuery.Sql := AScope.Factory.SqlLoader['TENANT.TIME_ZONE'].SQL;
+  AQuery.Params.Strings['ID'] := AScope.Discriminator;
+  LResult := AQuery.Open;
   if LResult.Eof then
     raise ENotFoundException.Create('Tenant not found.');
   Result := PcTimeZones.Find(LResult.Strings['TIME_ZONE']);
 end;
 
-procedure RequireActiveProfessional(const AScope: TTenantDataScope; const AId: string);
+procedure RequireActiveProfessional(const AQuery: IQuery; const AScope: TTenantDataScope;
+  const AId: string);
 var
-  LQuery: IQuery;
-  LTx: IScopeTransaction;
   LResult: IQueryResult;
 begin
-  LTx := AScope.Factory.GetPool.AcquireQuery(LQuery);
-  TTenantFilter.Prepare(LQuery, AScope, 'PROFESSIONAL.BY_ID');
-  LQuery.Params.Strings['ID'] := AId;
-  LResult := LQuery.Open;
+  TTenantFilter.Prepare(AQuery, AScope, 'PROFESSIONAL.BY_ID');
+  AQuery.Params.Strings['ID'] := AId;
+  LResult := AQuery.Open;
   if LResult.Eof then
     raise ENotFoundException.Create('Professional not found.');
   if not LResult.Booleans['ACTIVE'] then
     raise EHttpException.Create(409, 'The professional is inactive.', CODE_PROFESSIONAL_INACTIVE);
 end;
 
-function ActiveService(const AScope: TTenantDataScope; const AId: string): TBookable;
+function ActiveService(const AQuery: IQuery; const AScope: TTenantDataScope;
+  const AId: string): TBookable;
 var
-  LQuery: IQuery;
-  LTx: IScopeTransaction;
   LResult: IQueryResult;
 begin
-  LTx := AScope.Factory.GetPool.AcquireQuery(LQuery);
-  TTenantFilter.Prepare(LQuery, AScope, 'SERVICE.BY_ID');
-  LQuery.Params.Strings['ID'] := AId;
-  LResult := LQuery.Open;
+  TTenantFilter.Prepare(AQuery, AScope, 'SERVICE.BY_ID');
+  AQuery.Params.Strings['ID'] := AId;
+  LResult := AQuery.Open;
   if LResult.Eof then
     raise ENotFoundException.Create('Service not found.');
   if not LResult.Booleans['ACTIVE'] then
@@ -264,19 +270,16 @@ begin
   Result.BufferMinutes := LResult.Integers['BUFFER_MINUTES'];
 end;
 
-function ReadWeek(const AScope: TTenantDataScope; const AProfessionalId: string): TClockIntervalArray;
+function ReadWeek(const AQuery: IQuery; const AScope: TTenantDataScope;
+  const AProfessionalId: string): TClockIntervalArray;
 var
-  LQuery: IQuery;
-  LTx: IScopeTransaction;
   LResult: IQueryResult;
   LCount: Integer;
 begin
-  LTx := AScope.Factory.GetPool.AcquireQuery(LQuery);
-  TTenantFilter.Prepare(LQuery, AScope, 'WORKING_HOURS.BY_PROFESSIONAL');
-  LQuery.Params.Strings['PROFESSIONAL_ID'] := AProfessionalId;
-  LResult := LQuery.Open;
+  TTenantFilter.Prepare(AQuery, AScope, 'WORKING_HOURS.BY_PROFESSIONAL');
+  AQuery.Params.Strings['PROFESSIONAL_ID'] := AProfessionalId;
+  LResult := AQuery.Open;
   Result := nil;
-  SetLength(Result, LResult.RecordCount);
   LCount := 0;
   while not LResult.Eof do
   begin
@@ -291,39 +294,63 @@ begin
   SetLength(Result, LCount);
 end;
 
-// Time off that meets [AFrom, ATo).
-function ReadBusy(const AScope: TTenantDataScope; const AProfessionalId: string;
-  AFrom, ATo: Int64): TSpanArray;
+// The spans of ASqlName's rows (START_UTC, END_UTC) that meet [AFrom, ATo),
+// appended to ASpans.
+procedure AddSpans(const AQuery: IQuery; const AScope: TTenantDataScope;
+  const ASqlName, AProfessionalId: string; AFrom, ATo: Int64; ACancelled: Boolean;
+  var ASpans: TSpanArray);
 var
-  LQuery: IQuery;
-  LTx: IScopeTransaction;
   LResult: IQueryResult;
   LCount: Integer;
 begin
-  LTx := AScope.Factory.GetPool.AcquireQuery(LQuery);
-  TTenantFilter.Prepare(LQuery, AScope, 'TIME_OFF.OVERLAPPING');
-  LQuery.Params.Strings['PROFESSIONAL_ID'] := AProfessionalId;
-  LQuery.Params.Int64s['FROM_UTC'] := AFrom;
-  LQuery.Params.Int64s['TO_UTC'] := ATo;
-  LResult := LQuery.Open;
-  Result := nil;
-  LCount := 0;
+  TTenantFilter.Prepare(AQuery, AScope, ASqlName);
+  AQuery.Params.Strings['PROFESSIONAL_ID'] := AProfessionalId;
+  AQuery.Params.Int64s['FROM_UTC'] := AFrom;
+  AQuery.Params.Int64s['TO_UTC'] := ATo;
+  if ACancelled then
+    AQuery.Params.Strings['CANCELLED'] := STATUS_CANCELLED;
+  LResult := AQuery.Open;
+  LCount := Length(ASpans);
   while not LResult.Eof do
   begin
-    if LCount = Length(Result) then
-      SetLength(Result, LCount * 2 + 8);
-    Result[LCount].StartUtc := LResult.Int64s['START_UTC'];
-    Result[LCount].EndUtc := LResult.Int64s['END_UTC'];
+    SetLength(ASpans, LCount + 1);
+    ASpans[LCount].StartUtc := LResult.Int64s['START_UTC'];
+    ASpans[LCount].EndUtc := LResult.Int64s['END_UTC'];
     Inc(LCount);
     LResult.Next;
   end;
-  SetLength(Result, LCount);
+end;
+
+function FreeStartsOn(const AQuery: IQuery; const AScope: TTenantDataScope;
+  const AZone: IPcTimeZone; const AProfessionalId: string; const ABookable: TBookable;
+  const ADay: TPcLocalDateTime; ADays: Integer; ANow: Int64): TSlotStarts;
+var
+  LFrom, LTo: Int64;
+  LWorking, LBusy: TSpanArray;
+begin
+  DaysWindow(AZone, ADay, ADays, LFrom, LTo);
+  LWorking := WorkingSpans(AZone, ReadWeek(AQuery, AScope, AProfessionalId), ADay, ADays);
+  // The busy spans a start inside the window can meet: its service and
+  // buffer end at most a day after the window.
+  LBusy := nil;
+  AddSpans(AQuery, AScope, 'TIME_OFF.OVERLAPPING', AProfessionalId, LFrom - DAY_SECONDS,
+    LTo + DAY_SECONDS, False, LBusy);
+  AddSpans(AQuery, AScope, 'APPOINTMENT.BUSY', AProfessionalId, LFrom - DAY_SECONDS,
+    LTo + DAY_SECONDS, True, LBusy);
+  Result := FreeSlots(LWorking, LBusy, ABookable.DurationMinutes, ABookable.BufferMinutes,
+    SLOT_STEP_MINUTES, LFrom, LTo, ANow);
+end;
+
+{ TAvailabilityReader }
+
+constructor TAvailabilityReader.Create(const AScope: TTenantDataScope);
+begin
+  inherited Create;
+  FScope := AScope;
 end;
 
 function TAvailabilityReader.Find(const AProfessionalId: string;
   const AFind: IAvailabilityFind; ANow: Int64): IAvailability;
-const
-  DAY = 86400;
 var
   LCheck: TPcValidation;
   LDay: TPcLocalDateTime;
@@ -335,6 +362,8 @@ var
   LSlots: TAvailableSlotArray;
   LSlot: TAvailableSlot;
   LAvailability: TAvailability;
+  LQuery: IQuery;
+  LTx: IScopeTransaction;
   I: Integer;
 begin
   // days' range is the document's (Minimum, Maximum), enforced when the
@@ -349,20 +378,16 @@ begin
   LCheck.RaiseIfAny;
   LDays := AFind.Days.ValueOr(1);
 
-  LZone := TenantZone(FScope);
+  LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
+  LZone := TenantZone(LQuery, FScope);
   DaysWindow(LZone, LDay, LDays, LFrom, LTo);
-  if (LFrom > ANow + Int64(MAX_DATE_DISTANCE_DAYS) * DAY) or
-    (LTo < ANow - Int64(MAX_DATE_DISTANCE_DAYS) * DAY) then
+  if (LFrom > ANow + Int64(MAX_DATE_DISTANCE_DAYS) * DAY_SECONDS) or
+    (LTo < ANow - Int64(MAX_DATE_DISTANCE_DAYS) * DAY_SECONDS) then
     raise EValidationException.Create(Format('"date" must be within %d days of today.',
       [MAX_DATE_DISTANCE_DAYS]), CODE_DATE_OUT_OF_RANGE);
-  RequireActiveProfessional(FScope, AProfessionalId);
-  LBookable := ActiveService(FScope, Trim(AFind.Service));
-
-  // The busy spans a start inside the window can meet: its service and
-  // buffer end at most a day after the window.
-  LStarts := FreeSlots(WorkingSpans(LZone, ReadWeek(FScope, AProfessionalId), LDay, LDays),
-    ReadBusy(FScope, AProfessionalId, LFrom - DAY, LTo + DAY),
-    LBookable.DurationMinutes, LBookable.BufferMinutes, SLOT_STEP_MINUTES, LFrom, LTo, ANow);
+  RequireActiveProfessional(LQuery, FScope, AProfessionalId);
+  LBookable := ActiveService(LQuery, FScope, Trim(AFind.Service));
+  LStarts := FreeStartsOn(LQuery, FScope, LZone, AProfessionalId, LBookable, LDay, LDays, ANow);
 
   LSlots := nil;
   SetLength(LSlots, Length(LStarts));

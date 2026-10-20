@@ -12,8 +12,9 @@ unit Agenda.Services;
     unique key answers a duplicate (409, pascal-api-infra-faa's mapping).
   - The price is cents in the database (Agenda.Money); a fraction of a cent
     is a 400.
-  - A service is deactivated, not deleted, once appointments use it (M2);
-    DELETE removes one nothing references.
+  - A service is deactivated, not deleted, once appointments use it: the
+    appointments' foreign key refuses the DELETE (409); DELETE removes one
+    nothing references.
 
   This comment uses parenthesis-asterisk: it quotes ${TENANT}, whose brace
   would close a brace comment. *)

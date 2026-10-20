@@ -110,7 +110,8 @@ uses
   Agenda.WorkingHours in '..\src\Agenda.WorkingHours.pas',
   Agenda.TimeOff in '..\src\Agenda.TimeOff.pas',
   Agenda.Slots in '..\src\Agenda.Slots.pas',
-  Agenda.Availability in '..\src\Agenda.Availability.pas';
+  Agenda.Availability in '..\src\Agenda.Availability.pas',
+  Agenda.Appointments in '..\src\Agenda.Appointments.pas';
 
 const
   APP_NAME = 'agenda-api';
@@ -742,6 +743,51 @@ begin
   TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IAvailability>(LAvailability));
 end;
 
+{ Appointments: any user books and reads }
+
+procedure GetAppointments(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LFind: IAppointmentFind;
+  LRepo: TAppointmentRepository;
+  LPage: TPage<IAppointment>;
+begin
+  LFind := THorseQueryParams.Read<IAppointmentFind>(AReq);
+  LRepo := TAppointmentRepository.Create(ScopeOf(AReq));
+  try
+    LPage := LRepo.FindPage(LFind, PageRequestFrom(LFind.Page, LFind.Limit,
+      PAGE_DEFAULT_LIMIT, PAGE_MAX_LIMIT));
+  finally
+    LRepo.Free;
+  end;
+  TJsonSend.Send(ARes, PageEnvelopeJson(LPage.Meta,
+    TJsonMapper.Shared.Serialize<TAppointmentArray>(LPage.Items)));
+end;
+
+procedure GetAppointment(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LRepo: TAppointmentRepository;
+begin
+  LRepo := TAppointmentRepository.Create(ScopeOf(AReq));
+  try
+    TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IAppointment>(LRepo.FindById(AReq.Params['id'])));
+  finally
+    LRepo.Free;
+  end;
+end;
+
+procedure PostAppointment(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LRepo: TAppointmentRepository;
+begin
+  LRepo := TAppointmentRepository.Create(ScopeOf(AReq));
+  try
+    TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IAppointment>(LRepo.Book(
+      THorseBody.Read<IAppointmentInsert>(AReq), TJwt.UnixNow)), 201);
+  finally
+    LRepo.Free;
+  end;
+end;
+
 { Setup }
 
 function OpenKeys: IJwtKeyRing;
@@ -1067,6 +1113,24 @@ begin
       .Error(404, 'The tenant has no such professional or service')
       .Error(409, 'professional_inactive, service_inactive')
       .Register(GetAvailability);
+
+    TRouteDoc.Get('/appointments').Summary('The tenant''s appointments, a page at a time')
+      .Tag('appointments')
+      .QueryParams<IAppointmentFind>
+      .ResponsePaged<IAppointment>(200, 'A page of appointments')
+      .Error(400, 'invalid_instant, invalid_status, or an order field that is not allowed')
+      .Register(GetAppointments);
+    TRouteDoc.Get('/appointments/:id').Summary('One appointment').Tag('appointments')
+      .PathParam('id', 'The appointment''s id')
+      .Response<IAppointment>(200)
+      .Error(404, 'The tenant has no appointment with this id')
+      .Register(GetAppointment);
+    TRouteDoc.Post('/appointments').Summary('Book a free slot').Tag('appointments')
+      .Body<IAppointmentInsert>
+      .Response<IAppointment>(201, 'Booked')
+      .Error(400, 'A member missing, unknown_professional, unknown_service, unknown_customer')
+      .Error(409, 'slot_unavailable, professional_inactive, service_inactive')
+      .Register(PostAppointment);
 
     TRouteDoc.Get('/customers').Summary('The tenant''s customers, a page at a time')
       .Tag('customers')
