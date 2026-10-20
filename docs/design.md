@@ -688,3 +688,38 @@ and 426 checks on SQLite, Win32 and Win64, and on PostgreSQL, Win64 (twice). Wha
 the four requests overlapped inside the server every time; the outcome is checked, not the
 interleaving.
 
+### M2 — the slot lock in Redis (2026-10-20)
+
+`src/Agenda.Locks`: `ISlotLock` and `TRedisSlotLock` on pascal-redis-faa 0.2.0 (a new submodule,
+one `TRedisClient` for the process), in front of the booking's transaction, when `REDIS_HOST` is
+set. The decision (`SetNx` around the booking) as the database's helper, not its replacement:
+
+- The key is the slot (`agenda:lock:<tenant>:<professional>:<start>`), so only requests for the
+  same start meet in Redis; the ones that don't get it are a 409 `slot_unavailable` ("Another
+  request is booking this slot.") without reaching the database. Different starts for one
+  professional still meet at the professional's row lock, which stays the final word.
+- `SET NX PX 10000` with a random token, released after the commit with the Lua script that
+  deletes the key only while it holds that token (pascal-redis-faa's README: `GET` then `DEL`
+  could delete a lock another request took after this one expired).
+- **Redis down: the database decides.** Only `ERedisConnectionLost`, `ERedisTimeout` and
+  `ERedisPoolExhausted` let the booking through, logged with the key (never the token); any
+  other Redis error propagates (pascal-api-infra-faa's guide "Messaging", step 6).
+  `REDIS_CONNECT_TIMEOUT_MS` is 500 here, so a booking pays at most that while Redis is away (the
+  guide measured ~2 s with the default).
+- Without `REDIS_HOST` there is no lock and no Redis connection: development stays without Docker.
+
+Tests: the runners start a `redis:7.2-alpine` container for the PostgreSQL run only, so SQLite
+checks the booking without the lock and PostgreSQL with it. 9 checks
+(`tools/http_scenarios_appointments.sh`, through `tools/redis_cmd.py`, a RESP client of 40
+lines: the Linux image has Python, not redis-cli): a slot whose key another request holds is a
+409 and that lock is left alone; free once deleted; the key gone after the booking; then
+`SHUTDOWN NOSAVE`, and the next booking is a 201 from the database, the same slot again a 409 from
+the database, and the log names the key. Result: 57 unit tests; 426 HTTP checks on SQLite and
+435 on PostgreSQL 17 with Redis, FPC Windows and Linux.
+
+**Candidate (pascal-redis-faa):** the lock as a class. Its README shows the acquire (`SET NX PX`)
+and the release script as snippets, and its `LockDistribuidoVcl` sample shows the `DEL` trap;
+every application copies both, with the token and the "only connection failures fall through"
+rule. A `TRedisLock` (`TryAcquire(key, ttl, out token)`, `Release(key, token)`) would hold them
+once. `Agenda.Locks` is written under the libraries' rules and could move as it is, minus the
+log callback's shape.

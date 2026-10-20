@@ -27,6 +27,11 @@ program AgendaApi;
     PASSWORD_ITERATIONS (210000), AUTH_RATE_LIMIT (10 a minute per client
     address on the /auth/ routes), RATE_LIMIT (600 a minute per tenant), CATALOG_TTL (30)
     OTEL_EXPORTER_OTLP_ENDPOINT  spans to an OpenTelemetry collector, when set
+    REDIS_HOST           a slot lock in Redis in front of the booking, when set
+                         (Agenda.Locks; the database decides either way):
+                         REDIS_PORT (6379), REDIS_PASSWORD,
+                         REDIS_CONNECT_TIMEOUT_MS (500), REDIS_LOCK_PREFIX
+                         ('agenda:lock:')
 
   On startup the database is brought to the latest migration, before the
   server listens; --reset deletes the SQLite file first (PostgreSQL: drop and
@@ -53,6 +58,11 @@ program AgendaApi;
     /users, /users/:id   the owner only: list, create (with a password),
                          change, delete; never their own role, active or
                          account (409 "own_account")
+    GET  /professionals/:id/availability?service=&date=&days=
+                         any user: free slots on the tenant's local days
+    POST /appointments, GET /appointments[/:id]
+                         any user: book a free slot (409 "slot_unavailable"
+                         otherwise), list, read
     GET  /health/live, /health/ready, /metrics, /swagger (/swagger/doc.json)
 
   Signing keys: one rotating ring per tenant (TTenantJwtKeyRing), kept and
@@ -92,6 +102,8 @@ uses
   PascalApi.Horse.Observability,
   PascalApi.Horse.Tenancy,
   PascalApi.RefreshTokens,
+  Redis.Types,
+  Redis.Client,
   Agenda.Schema in '..\src\Agenda.Schema.pas',
   Agenda.Database in '..\src\Agenda.Database.pas',
   Agenda.Passwords in '..\src\Agenda.Passwords.pas',
@@ -111,7 +123,8 @@ uses
   Agenda.TimeOff in '..\src\Agenda.TimeOff.pas',
   Agenda.Slots in '..\src\Agenda.Slots.pas',
   Agenda.Availability in '..\src\Agenda.Availability.pas',
-  Agenda.Appointments in '..\src\Agenda.Appointments.pas';
+  Agenda.Appointments in '..\src\Agenda.Appointments.pas',
+  Agenda.Locks in '..\src\Agenda.Locks.pas';
 
 const
   APP_NAME = 'agenda-api';
@@ -148,6 +161,9 @@ var
   GAuth: TAuthService;
   GAuthLimit: Integer;
   GPasswordIterations: Integer;
+  // The slot lock (nil without REDIS_HOST) and its client, one per process.
+  GRedis: TRedisClient;
+  GSlotLock: ISlotLock;
 
 { TAgendaHooks }
 
@@ -779,7 +795,7 @@ procedure PostAppointment(AReq: THorseRequest; ARes: THorseResponse; ANext: TNex
 var
   LRepo: TAppointmentRepository;
 begin
-  LRepo := TAppointmentRepository.Create(ScopeOf(AReq));
+  LRepo := TAppointmentRepository.Create(ScopeOf(AReq), GSlotLock);
   try
     TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IAppointment>(LRepo.Book(
       THorseBody.Read<IAppointmentInsert>(AReq), TJwt.UnixNow)), 201);
@@ -811,6 +827,27 @@ begin
     TSealedJwtKeyStore.Create(TDbJwtKeyStore.Create(GDatabase.Factory),
       TAesGcmSecretCipher.Create(LMaster), True),
     LOptions, TENANT_DEFAULT_CLAIM, GHooks.Error);
+end;
+
+// The slot lock in front of the booking, when REDIS_HOST is set. The client
+// connects on its first command, so a Redis that is down doesn't stop the
+// start: the booking logs it and goes on to the database.
+function OpenSlotLock: ISlotLock;
+var
+  LParams: TRedisParams;
+begin
+  Result := nil;
+  if TAppConfig.Get('REDIS_HOST', '') = '' then
+    Exit;
+  LParams := RedisDefaultParams;
+  LParams.Host := TAppConfig.Get('REDIS_HOST', '');
+  LParams.Port := TAppConfig.GetInt('REDIS_PORT', REDIS_DEFAULT_PORT);
+  LParams.Password := TAppConfig.Get('REDIS_PASSWORD', '');
+  LParams.ConnectTimeoutMs := TAppConfig.GetInt('REDIS_CONNECT_TIMEOUT_MS', 500);
+  LParams.ClientName := APP_NAME;
+  GRedis := TRedisClient.Create(LParams);
+  Result := TRedisSlotLock.Create(GRedis, TAppConfig.Get('REDIS_LOCK_PREFIX', 'agenda:lock:'),
+    GHooks.Error);
 end;
 
 function AuthOptions: TAuthOptions;
@@ -945,6 +982,12 @@ begin
       TDbRefreshTokenStore.Create(GDatabase.Factory), GHooks.Security);
     GAuthLimit := TAppConfig.GetInt('AUTH_RATE_LIMIT', 10);
     GPasswordIterations := AuthOptions.PasswordIterations;
+    GSlotLock := OpenSlotLock;
+    if GSlotLock <> nil then
+      SafeWriteln('slot lock: redis %s:%d', [TAppConfig.Get('REDIS_HOST', ''),
+        TAppConfig.GetInt('REDIS_PORT', REDIS_DEFAULT_PORT)])
+    else
+      SafeWriteln('slot lock: none (the database alone)');
 
     if TAppConfig.Get('OTEL_EXPORTER_OTLP_ENDPOINT', '') <> '' then
       TPcTracing.Start(TPcTracingOptions.FromEnvironment(APP_NAME, APP_VERSION, ReadAppConfig),
@@ -1205,6 +1248,8 @@ begin
     SafeWriteln('%s %s listening on port %d', [APP_NAME, APP_VERSION, GPort]);
     THorse.Listen(GPort);
   finally
+    GSlotLock := nil;
+    GRedis.Free;
     GAuth.Free;
     GKeys := nil;
     GCatalog := nil;

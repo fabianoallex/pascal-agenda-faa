@@ -38,7 +38,7 @@
         <DCC_DcuOutput>.\$(Platform)\$(Config)</DCC_DcuOutput>
         <DCC_ExeOutput>.\$(Platform)\$(Config)</DCC_ExeOutput>
         <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;$(DCC_Namespace)</DCC_Namespace>
-        <DCC_UnitSearchPath>..\src;..\external\pascal-api-infra-faa\src;..\external\pascal-api-infra-faa\src\horse;..\external\horse\src;..\external\pascal-common-faa\src;..\external\pascal-common-faa\bridges\jsonmapper;..\external\pascal-jsonmapper-faa\src;..\external\pascal-db-faa\src;..\external\pascal-db-faa\adapters\firedac;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+        <DCC_UnitSearchPath>..\src;..\external\pascal-api-infra-faa\src;..\external\pascal-api-infra-faa\src\horse;..\external\horse\src;..\external\pascal-common-faa\src;..\external\pascal-common-faa\bridges\jsonmapper;..\external\pascal-jsonmapper-faa\src;..\external\pascal-db-faa\src;..\external\pascal-db-faa\adapters\firedac;..\external\pascal-redis-faa\src;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
         <SanitizedProjectName>AgendaApi</SanitizedProjectName>
         <UsingDelphiRTL>true</UsingDelphiRTL>
     </PropertyGroup>
@@ -85,6 +85,7 @@
         <DCCReference Include="..\src\Agenda.Slots.pas"/>
         <DCCReference Include="..\src\Agenda.Availability.pas"/>
         <DCCReference Include="..\src\Agenda.Appointments.pas"/>
+        <DCCReference Include="..\src\Agenda.Locks.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>

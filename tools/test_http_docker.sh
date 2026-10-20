@@ -12,7 +12,9 @@
 # builds one.
 #
 # DB_ENGINE=postgresql runs the same steps on PostgreSQL: a postgres:17
-# container (PG_IMAGE) on a private network, removed at the end.
+# container (PG_IMAGE) on a private network, removed at the end, and a
+# redis:7.2-alpine container there for the slot lock (tools/redis_cmd.py
+# talks to it; the image has no redis-cli).
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IMAGE="${FPC_IMAGE:-agenda-fpc322}"
@@ -20,22 +22,28 @@ MOUNT="$ROOT"
 command -v cygpath >/dev/null 2>&1 && MOUNT="$(cygpath -w "$ROOT")"
 
 cd "$ROOT"
-for D in pascal-common-faa pascal-jsonmapper-faa pascal-db-faa pascal-api-infra-faa horse; do
+for D in pascal-common-faa pascal-jsonmapper-faa pascal-db-faa pascal-api-infra-faa pascal-redis-faa horse; do
   [ -d "external/$D/src" ] || { echo "external/$D is empty: git submodule update --init"; exit 1; }
 done
 
 ENGINE="${DB_ENGINE:-sqlite}"
 NET=agenda-it-net
 PG=agenda-it-pg
+REDIS=agenda-it-redis
 NETOPT=""
+REDIS_HOST=""
+REDIS_CMD=""
 if [ "$ENGINE" = postgresql ]; then
   cleanup() {
-    docker rm -f "$PG" >/dev/null 2>&1 || true
+    docker rm -f "$PG" "$REDIS" >/dev/null 2>&1 || true
     docker network rm "$NET" >/dev/null 2>&1 || true
   }
   trap cleanup EXIT
   cleanup
   docker network create "$NET" >/dev/null
+  docker run -d --name "$REDIS" --network "$NET" redis:7.2-alpine >/dev/null
+  REDIS_HOST="$REDIS"
+  REDIS_CMD="python3 /t/tools/redis_cmd.py $REDIS 6379"
   docker run -d --name "$PG" --network "$NET" -e POSTGRES_PASSWORD=postgres \
     -e POSTGRES_DB=agenda_scenarios "${PG_IMAGE:-postgres:17}" >/dev/null
   # Over TCP: during its first start the image's server listens on the
@@ -55,6 +63,7 @@ MSYS_NO_PATHCONV=1 docker run --rm $NETOPT -v "$MOUNT:/src:ro" \
   -e DEV_MODE=true -e PASSWORD_ITERATIONS=20000 -e AUTH_RATE_LIMIT=60 \
   -e DB_ENGINE="$ENGINE" -e DB_HOST="$PG" -e DB_NAME=agenda_scenarios \
   -e DB_USER=postgres -e DB_PASSWORD=postgres \
+  -e REDIS_HOST="$REDIS_HOST" -e REDIS_CMD="$REDIS_CMD" \
   -e DB_FILE=/t/run/agenda.sqlite "$IMAGE" sh -c '
   set -e
   mkdir -p /t/units /t/run && cp -r /src/src /src/api /src/tools /src/external /t/
@@ -66,6 +75,7 @@ MSYS_NO_PATHCONV=1 docker run --rm $NETOPT -v "$MOUNT:/src:ro" \
   P="$P -Fu$E/pascal-jsonmapper-faa/src -Fi$E/pascal-jsonmapper-faa/src"
   P="$P -Fu$E/pascal-db-faa/src -Fi$E/pascal-db-faa/src"
   P="$P -Fu$E/pascal-db-faa/adapters/sqldb -Fi$E/pascal-db-faa/adapters/sqldb"
+  P="$P -Fu$E/pascal-redis-faa/src -Fi$E/pascal-redis-faa/src"
   cd /t/api
   fpc -v0 -Mdelphi -dUseCThreads $P -FU/t/units -o/t/AgendaApi AgendaApi.dpr > /t/build.log 2>&1 \
     || { grep -iE "error|fatal" /t/build.log | head -30; exit 1; }

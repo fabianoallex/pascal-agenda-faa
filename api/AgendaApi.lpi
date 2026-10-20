@@ -50,6 +50,10 @@
         <DefaultFilename Value="..\external\pascal-api-infra-faa\packages\pascal_api_infra_faa.lpk" Prefer="True"/>
       </Item>
       <Item>
+        <PackageName Value="pascal_redis_faa"/>
+        <DefaultFilename Value="..\external\pascal-redis-faa\packages\pascal_redis_faa.lpk" Prefer="True"/>
+      </Item>
+      <Item>
         <PackageName Value="FCL"/>
       </Item>
     </RequiredPackages>
@@ -136,6 +140,10 @@
       </Unit>
       <Unit>
         <Filename Value="..\src\Agenda.Appointments.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\src\Agenda.Locks.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
     </Units>

@@ -26,6 +26,11 @@ unit Agenda.Appointments;
     one that the tenant doesn't have is a 400 naming its member, every one
     in the same answer. An inactive professional or service is a 409, as in
     the availability route.
+  - Optionally, a slot lock in front (Agenda.Locks, Redis): requests for the
+    same professional and start meet there first, and the ones that don't
+    get it are a 409 without reaching the database. Released after the
+    commit; without it (no REDIS_HOST, or Redis down) the transaction alone
+    decides, the same way.
   - Every query goes through TTenantFilter.Prepare (the ${TENANT} tag); the
     foreign keys keep a professional, service or customer with appointments
     from being deleted (409).
@@ -41,11 +46,14 @@ uses
   PascalDb.Paging,
   PascalApi.OrderBy,
   PascalApi.Dto,
-  PascalApi.Tenancy;
+  PascalApi.Tenancy,
+  Agenda.Locks;
 
 const
   STATUS_BOOKED = 'booked';
   CODE_SLOT_UNAVAILABLE = 'slot_unavailable';
+  /// The slot lock outlives a booking that hangs by at most this long.
+  SLOT_LOCK_TTL_MS = 10000;
 
 type
   IAppointmentInsert = interface(IInsertDTOBase)
@@ -157,8 +165,10 @@ type
   TAppointmentRepository = class
   private
     FScope: TTenantDataScope;
+    FLock: ISlotLock;
   public
-    constructor Create(const AScope: TTenantDataScope);
+    /// ALock: the slot lock in front of the booking, or nil for none.
+    constructor Create(const AScope: TTenantDataScope; const ALock: ISlotLock = nil);
     /// EValidationException for from/to that aren't instants or a status
     /// that isn't one; EOrderByException (400).
     function FindPage(const AFind: IAppointmentFind; const APage: TPageRequest): TPage<IAppointment>;
@@ -322,10 +332,12 @@ end;
 
 { TAppointmentRepository }
 
-constructor TAppointmentRepository.Create(const AScope: TTenantDataScope);
+constructor TAppointmentRepository.Create(const AScope: TTenantDataScope;
+  const ALock: ISlotLock);
 begin
   inherited Create;
   FScope := AScope;
+  FLock := ALock;
 end;
 
 function TAppointmentRepository.FindPage(const AFind: IAppointmentFind;
@@ -384,7 +396,7 @@ function TAppointmentRepository.Book(const AInsert: IAppointmentInsert;
   ANow: Int64): IAppointment;
 var
   LCheck: TPcValidation;
-  LProfessional, LService, LCustomer, LId: string;
+  LProfessional, LService, LCustomer, LId, LLockKey, LLockToken: string;
   LStart: Int64;
   LProfessionalActive, LServiceActive, LFree: Boolean;
   LBookable: TBookable;
@@ -427,73 +439,85 @@ begin
   LProfessionalActive := False;
   LBookable.DurationMinutes := 0;
   LBookable.BufferMinutes := 0;
-  LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
-  LTx.StartTransaction;
+  // The slot lock first, when there is one: a second request for this
+  // professional and start stops here.
+  LLockKey := Format('%s:%s:%d', [FScope.Discriminator, LProfessional, LStart]);
+  LLockToken := '';
+  if (FLock <> nil) and not FLock.TryAcquire(LLockKey, SLOT_LOCK_TTL_MS, LLockToken) then
+    raise EHttpException.Create(409, 'Another request is booking this slot.',
+      CODE_SLOT_UNAVAILABLE);
   try
-    // The lock first: every change to this professional's time waits here.
-    TTenantFilter.Prepare(LQuery, FScope, 'PROFESSIONAL.TOUCH');
-    LQuery.Params.Int64s['UPDATED_AT'] := ANow;
-    LQuery.Params.Strings['ID'] := LProfessional;
-    if LQuery.ExecSql = 0 then
-      LCheck.Fail('professionalId', 'unknown_professional',
-        '"professionalId": the tenant has no such professional.')
-    else
-    begin
-      TTenantFilter.Prepare(LQuery, FScope, 'PROFESSIONAL.BY_ID');
+    LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
+    LTx.StartTransaction;
+    try
+      // The professional's row first: every change to its time waits here.
+      TTenantFilter.Prepare(LQuery, FScope, 'PROFESSIONAL.TOUCH');
+      LQuery.Params.Int64s['UPDATED_AT'] := ANow;
       LQuery.Params.Strings['ID'] := LProfessional;
-      LProfessionalActive := LQuery.Open.Booleans['ACTIVE'];
-    end;
-    TTenantFilter.Prepare(LQuery, FScope, 'SERVICE.BY_ID');
-    LQuery.Params.Strings['ID'] := LService;
-    LResult := LQuery.Open;
-    if LResult.Eof then
-      LCheck.Fail('serviceId', 'unknown_service', '"serviceId": the tenant has no such service.')
-    else
-    begin
-      LServiceActive := LResult.Booleans['ACTIVE'];
-      LBookable.DurationMinutes := LResult.Integers['DURATION_MINUTES'];
-      LBookable.BufferMinutes := LResult.Integers['BUFFER_MINUTES'];
-    end;
-    TTenantFilter.Prepare(LQuery, FScope, 'CUSTOMER.BY_ID');
-    LQuery.Params.Strings['ID'] := LCustomer;
-    if LQuery.Open.Eof then
-      LCheck.Fail('customerId', 'unknown_customer', '"customerId": the tenant has no such customer.');
-    LCheck.RaiseIfAny;
-    if not LProfessionalActive then
-      raise EHttpException.Create(409, 'The professional is inactive.', CODE_PROFESSIONAL_INACTIVE);
-    if not LServiceActive then
-      raise EHttpException.Create(409, 'The service is inactive.', CODE_SERVICE_INACTIVE);
+      if LQuery.ExecSql = 0 then
+        LCheck.Fail('professionalId', 'unknown_professional',
+          '"professionalId": the tenant has no such professional.')
+      else
+      begin
+        TTenantFilter.Prepare(LQuery, FScope, 'PROFESSIONAL.BY_ID');
+        LQuery.Params.Strings['ID'] := LProfessional;
+        LProfessionalActive := LQuery.Open.Booleans['ACTIVE'];
+      end;
+      TTenantFilter.Prepare(LQuery, FScope, 'SERVICE.BY_ID');
+      LQuery.Params.Strings['ID'] := LService;
+      LResult := LQuery.Open;
+      if LResult.Eof then
+        LCheck.Fail('serviceId', 'unknown_service', '"serviceId": the tenant has no such service.')
+      else
+      begin
+        LServiceActive := LResult.Booleans['ACTIVE'];
+        LBookable.DurationMinutes := LResult.Integers['DURATION_MINUTES'];
+        LBookable.BufferMinutes := LResult.Integers['BUFFER_MINUTES'];
+      end;
+      TTenantFilter.Prepare(LQuery, FScope, 'CUSTOMER.BY_ID');
+      LQuery.Params.Strings['ID'] := LCustomer;
+      if LQuery.Open.Eof then
+        LCheck.Fail('customerId', 'unknown_customer', '"customerId": the tenant has no such customer.');
+      LCheck.RaiseIfAny;
+      if not LProfessionalActive then
+        raise EHttpException.Create(409, 'The professional is inactive.', CODE_PROFESSIONAL_INACTIVE);
+      if not LServiceActive then
+        raise EHttpException.Create(409, 'The service is inactive.', CODE_SERVICE_INACTIVE);
 
-    // The start must be one of that local day's free starts, computed now,
-    // under the lock.
-    LZone := TenantZone(LQuery, FScope);
-    LLocal := LZone.ToLocal(LStart);
-    LStarts := FreeStartsOn(LQuery, FScope, LZone, LProfessional, LBookable,
-      TPcLocalDateTime.Create(LLocal.Year, LLocal.Month, LLocal.Day), 1, ANow);
-    LFree := False;
-    for I := 0 to High(LStarts) do
-      if LStarts[I] = LStart then
-        LFree := True;
-    if not LFree then
-      raise EHttpException.Create(409, 'The professional isn''t free for this service at ' +
-        'startsAt: see GET /professionals/{id}/availability.', CODE_SLOT_UNAVAILABLE);
+      // The start must be one of that local day's free starts, computed now,
+      // under the lock.
+      LZone := TenantZone(LQuery, FScope);
+      LLocal := LZone.ToLocal(LStart);
+      LStarts := FreeStartsOn(LQuery, FScope, LZone, LProfessional, LBookable,
+        TPcLocalDateTime.Create(LLocal.Year, LLocal.Month, LLocal.Day), 1, ANow);
+      LFree := False;
+      for I := 0 to High(LStarts) do
+        if LStarts[I] = LStart then
+          LFree := True;
+      if not LFree then
+        raise EHttpException.Create(409, 'The professional isn''t free for this service at ' +
+          'startsAt: see GET /professionals/{id}/availability.', CODE_SLOT_UNAVAILABLE);
 
-    TTenantFilter.Prepare(LQuery, FScope, 'APPOINTMENT.INSERT');
-    LQuery.Params.Strings['ID'] := LId;
-    LQuery.Params.Strings['PROFESSIONAL_ID'] := LProfessional;
-    LQuery.Params.Strings['SERVICE_ID'] := LService;
-    LQuery.Params.Strings['CUSTOMER_ID'] := LCustomer;
-    LQuery.Params.Int64s['START_UTC'] := LStart;
-    LQuery.Params.Int64s['END_UTC'] := LStart + Int64(LBookable.DurationMinutes) * 60;
-    LQuery.Params.Int64s['BUSY_UNTIL_UTC'] := LStart +
-      Int64(LBookable.DurationMinutes + LBookable.BufferMinutes) * 60;
-    LQuery.Params.Strings['STATUS'] := STATUS_BOOKED;
-    LQuery.Params.Int64s['CREATED_AT'] := ANow;
-    LQuery.ExecSql;
-    LTx.Commit;
-  except
-    LTx.Rollback;
-    raise;
+      TTenantFilter.Prepare(LQuery, FScope, 'APPOINTMENT.INSERT');
+      LQuery.Params.Strings['ID'] := LId;
+      LQuery.Params.Strings['PROFESSIONAL_ID'] := LProfessional;
+      LQuery.Params.Strings['SERVICE_ID'] := LService;
+      LQuery.Params.Strings['CUSTOMER_ID'] := LCustomer;
+      LQuery.Params.Int64s['START_UTC'] := LStart;
+      LQuery.Params.Int64s['END_UTC'] := LStart + Int64(LBookable.DurationMinutes) * 60;
+      LQuery.Params.Int64s['BUSY_UNTIL_UTC'] := LStart +
+        Int64(LBookable.DurationMinutes + LBookable.BufferMinutes) * 60;
+      LQuery.Params.Strings['STATUS'] := STATUS_BOOKED;
+      LQuery.Params.Int64s['CREATED_AT'] := ANow;
+      LQuery.ExecSql;
+      LTx.Commit;
+    except
+      LTx.Rollback;
+      raise;
+    end;
+  finally
+    if FLock <> nil then
+      FLock.Release(LLockKey, LLockToken);
   end;
   Result := FindById(LId);
 end;

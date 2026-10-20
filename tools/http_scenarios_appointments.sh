@@ -100,3 +100,34 @@ req DELETE "/services/$ASVC" "" -H "$OWNER"
 status_is 409 "booking: a booked service can't be deleted"
 req DELETE "/customers/$CUST" "" -H "$OWNER"
 status_is 409 "booking: a customer with appointments can't be deleted"
+
+# The slot lock (Agenda.Locks), when the runner gives a Redis: REDIS_CMD runs
+# one command (tools/redis_cmd.py). Last: it shuts Redis down.
+if [ -n "$REDIS_CMD" ]; then
+  MON3="$(date -u -d "$NEXT_MON + 7 days" +%F)"
+  KEY="agenda:lock:demo:$APRO:$(date -u -d "${MON3}T12:00:00Z" +%s)"
+  $REDIS_CMD SET "$KEY" someone-else PX 60000 >/dev/null
+  book "$APRO" "$ASVC" "$CUST" "${MON3}T12:00:00Z"
+  status_is 409 "lock: a slot another request holds"
+  body_has 'Another request is booking this slot.' "lock: answered before the database"
+  [ "$($REDIS_CMD GET "$KEY")" = someone-else ] && ok || fail "lock: the other request's lock kept"
+  $REDIS_CMD DEL "$KEY" >/dev/null
+  book "$APRO" "$ASVC" "$CUST" "${MON3}T12:00:00Z"
+  status_is 201 "lock: free once the other released it"
+  [ "$($REDIS_CMD EXISTS "$KEY")" = 0 ] && ok || fail "lock: released after the booking"
+
+  # Redis down: the booking goes on to the database, which still decides.
+  $REDIS_CMD SHUTDOWN NOSAVE >/dev/null 2>&1 || true
+  sleep 1
+  book "$APRO" "$ASVC" "$CUST" "${MON3}T13:15:00Z"
+  status_is 201 "lock: Redis down, the database books"
+  book "$APRO" "$ASVC" "$CUST" "${MON3}T13:15:00Z"
+  status_is 409 "lock: Redis down, the database refuses the same slot"
+  body_has '"code":"slot_unavailable"' "lock: the database's slot_unavailable"
+  if [ -n "$SERVER_LOG" ]; then
+    grep -q "slot lock unavailable (acquire agenda:lock:demo:$APRO:" "$SERVER_LOG" && ok \
+      || fail "lock: Redis down logged with its key"
+  fi
+else
+  echo "skipped: no Redis for the slot lock (REDIS_CMD)"
+fi

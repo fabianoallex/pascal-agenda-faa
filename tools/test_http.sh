@@ -16,7 +16,9 @@
 # (PG_IMAGE) on port 55433 (PG_PORT), removed at the end, and the 64-bit
 # libpq.dll of the newest install under C:\Program Files\PostgreSQL
 # (PG_CLIENT to choose another). PostgreSQL has no 32-bit client: a Delphi
-# build for it is Win64.
+# build for it is Win64. That run also starts a redis:7.2-alpine container
+# on port 56379 (REDIS_TEST_PORT) for the slot lock, so the SQLite run checks
+# the booking without it and the PostgreSQL run with it (and with it down).
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LAZBUILD="${LAZBUILD:-lazbuild}"
@@ -53,7 +55,15 @@ if [ "${DB_ENGINE:-sqlite}" = postgresql ]; then
   fi
   export DB_HOST=127.0.0.1 DB_PORT="${PG_PORT:-55433}" DB_NAME=agenda_scenarios
   export DB_USER=postgres DB_PASSWORD=postgres PG_CLIENT
-  trap 'docker rm -f "$PG_CONTAINER" >/dev/null 2>&1 || true' EXIT
+  REDIS_CONTAINER=agenda-test-redis
+  export REDIS_HOST=127.0.0.1 REDIS_PORT="${REDIS_TEST_PORT:-56379}"
+  export REDIS_CMD="python tools/redis_cmd.py $REDIS_HOST $REDIS_PORT"
+  trap 'docker rm -f "$PG_CONTAINER" "$REDIS_CONTAINER" >/dev/null 2>&1 || true' EXIT
+  docker rm -f "$REDIS_CONTAINER" >/dev/null 2>&1 || true
+  docker run -d --name "$REDIS_CONTAINER" -p "$REDIS_PORT:6379" redis:7.2-alpine >/dev/null
+  for I in $(seq 1 30); do
+    docker exec "$REDIS_CONTAINER" redis-cli ping >/dev/null 2>&1 && break; sleep 1
+  done
 fi
 
 # A fresh database: a new file, or a new PostgreSQL container. pg_isready
