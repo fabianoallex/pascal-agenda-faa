@@ -159,7 +159,6 @@ uses
   Agenda.Normalizers,
   PascalCommon.Validators,
   Agenda.Validators,
-  Agenda.Flags,
   Agenda.Tokens;
 
 const
@@ -284,7 +283,7 @@ begin
   if HasSearch(AFind) then
     Result := Result.Strings('SEARCH', PdbLikeContains(PcFoldForSearch(AFind.Search.Value)));
   if AFind.Active.HasValue then
-    Result := Result.Integers('ACTIVE', FlagOf(AFind.Active.Value));
+    Result := Result.Flags('ACTIVE', AFind.Active.Value);
 end;
 
 function TProfessionalRepository.FindPage(const AFind: IProfessionalFind;
@@ -387,7 +386,7 @@ begin
     LQuery.Params.OptStrings['NAME'] := LName;
     LQuery.Params.OptStrings['NAME_KEY'] := TOptionals.Normalize(LName, TNorm.FoldForSearch);
     LQuery.Params.OptNullStrings['EMAIL'] := LEmail;
-    LQuery.Params.OptIntegers['ACTIVE'] := OptFlag(APatch.Active); // an INTEGER column (Agenda.Flags)
+    LQuery.Params.OptFlags['ACTIVE'] := APatch.Active; // an INTEGER column: Flags, never Booleans
     LRows := LQuery.ExecSql;
     LTx.Commit;
   except

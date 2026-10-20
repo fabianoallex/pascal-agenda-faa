@@ -66,7 +66,6 @@
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
         <DCCReference Include="..\src\Agenda.Schema.pas"/>
-        <DCCReference Include="..\src\Agenda.SqlSources.pas"/>
         <DCCReference Include="..\src\Agenda.Database.pas"/>
         <DCCReference Include="..\src\Agenda.Passwords.pas"/>
         <DCCReference Include="..\src\Agenda.Tokens.pas"/>
@@ -76,7 +75,6 @@
         <DCCReference Include="..\src\Agenda.Normalizers.pas"/>
         <DCCReference Include="..\src\Agenda.Validators.pas"/>
         <DCCReference Include="..\src\Agenda.Money.pas"/>
-        <DCCReference Include="..\src\Agenda.Flags.pas"/>
         <DCCReference Include="..\src\Agenda.Services.pas"/>
         <DCCReference Include="..\src\Agenda.Professionals.pas"/>
         <DCCReference Include="..\src\Agenda.Customers.pas"/>

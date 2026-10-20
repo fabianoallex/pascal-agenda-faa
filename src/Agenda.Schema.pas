@@ -8,12 +8,14 @@ unit Agenda.Schema;
   The statements live in a TMemorySqlSource under three directories: COMMON
   for what SQLite and PostgreSQL both run, SQLITE and PG for what one of them
   needs differently. Agenda.Database sets the engine's directory, and
-  Agenda.SqlSources' TFallbackSqlSource answers a key from it, else from
-  COMMON: a key under PG overrides the common one for PostgreSQL only. On
-  2026-10-19 every statement is in COMMON: the types are ones both take
-  (VARCHAR, INTEGER, BIGINT, TIMESTAMP), flags are INTEGER (bound as
-  integers, Agenda.Flags), times are Unix seconds, money is cents, and paging
-  is the dialect's ${PAGE}. An override is the place for what can't be
+  pascal-db-faa's TFallbackSqlSource (0.17.0; built here first, as
+  Agenda.SqlSources) answers a key from it, else from COMMON: a key under
+  PG overrides the common one for PostgreSQL only. On 2026-10-19 every
+  statement is in COMMON: the types are ones both take (VARCHAR, INTEGER,
+  BIGINT, TIMESTAMP), flags are INTEGER (bound with pascal-db-faa's
+  Flags/OptFlags, 0.17.0: PostgreSQL refuses a Boolean parameter for an
+  integer column), times are Unix seconds, money is cents, and paging is
+  the dialect's ${PAGE}. An override is the place for what can't be
   common (RETURNING, ON CONFLICT, a JSONB column); a copy of a statement
   that is the same on both isn't.
 
@@ -57,9 +59,6 @@ function AgendaSqlSource: ISqlSource;
 function AgendaMigrations: TArray<TMigrationItem>;
 
 implementation
-
-uses
-  Agenda.SqlSources;
 
 function AgendaSqlSource: ISqlSource;
 var

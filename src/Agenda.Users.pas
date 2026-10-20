@@ -201,7 +201,6 @@ uses
   Agenda.Passwords,
   Agenda.Normalizers,
   Agenda.Validators,
-  Agenda.Flags,
   Agenda.Tokens;
 
 function UserOrderSpec: TOrderBySpec;
@@ -380,7 +379,7 @@ begin
   if AFind.Role.HasValue then
     Result := Result.Strings('ROLE', AFind.Role.Value);
   if AFind.Active.HasValue then
-    Result := Result.Integers('ACTIVE', FlagOf(AFind.Active.Value));
+    Result := Result.Flags('ACTIVE', AFind.Active.Value);
 end;
 
 function TUserRepository.FindPage(const AFind: IUserFind;
@@ -522,7 +521,7 @@ begin
     LQuery.Params.OptStrings['EMAIL'] := LEmail;
     LQuery.Params.OptStrings['PASSWORD_HASH'] := LHash;
     LQuery.Params.OptStrings['ROLE'] := APatch.Role;
-    LQuery.Params.OptIntegers['ACTIVE'] := OptFlag(APatch.Active); // an INTEGER column (Agenda.Flags)
+    LQuery.Params.OptFlags['ACTIVE'] := APatch.Active; // an INTEGER column: Flags, never Booleans
     LQuery.Params.OptNullStrings['PROFESSIONAL_ID'] := APatch.ProfessionalId;
     LRows := LQuery.ExecSql; // the email or the professional taken: 409
     // A new password or a deactivation ends every session of the user.

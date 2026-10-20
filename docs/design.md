@@ -156,12 +156,17 @@ two libraries would share goes to pascal-common-faa.
   only binds `Integers` to its flag column (it reads one back as a Boolean). pascal-db-faa: say it
   in `docs/optionals.md`, or convert in the parameter (the dialect knows); pascal-api-infra-faa's
   `TQueryArgs.Booleans` has the same trap. Here: `Agenda.Flags` (`OptFlag`, a cross-type map).
+  **Done** in pascal-db-faa 0.17.0 (`IParams.Flags`/`OptFlags`, measured on every adapter: also
+  SQLdb on Firebird stored -1 and Zeos sent `'Y'`, both fixed; gotcha 54) and pascal-api-infra-faa
+  0.21.0 (`TQueryArgs.Flags`); adopted here 2026-10-20, `Agenda.Flags` removed.
 - The refresh rotation in one transaction (pascal-api-infra-faa): **fixed in 0.20.1**, found by
   the PostgreSQL run ("Migrations on two dialects", below).
 - A SQL source that falls back to a common directory (`src/Agenda.SqlSources`,
   `TFallbackSqlSource`, pascal-db-faa's `PascalDb.SqlSources`): the database's directory first,
   then `COMMON`, so SQL that is the same on two databases is written once and a statement that
   differs has its place. Written under pascal-db-faa's rules, unit-tested; built 2026-10-20.
+  **Done** in pascal-db-faa 0.17.0 (same name, the common directory a constructor parameter);
+  adopted here 2026-10-20, `Agenda.SqlSources` and its 7 tests removed.
 - Validation in the libraries (from `Agenda.Validation`'s three overloads per rule and the limits written twice, once in `Describe`): **designed 2026-10-19** in pascal-api-infra-faa's `docs/validation-design.md`; built in pascal-common-faa 1.21.0 and pascal-api-infra-faa 0.20.0, adopted here 2026-10-19 ("Validation from the libraries", below).
 
 - A shared test kit: the DUnitX-to-FPCUnit adapter and the mirror generator, copied in every
@@ -570,3 +575,13 @@ PostgreSQL 17, FPC Windows and Linux, with the restart (no migration on the seco
 from before it verifies); OpenAPI valid. Delphi 12: 48 unit tests (0 leaks) and 333 checks on
 SQLite, Win32 and Win64, and 333 on PostgreSQL, Win64 (no 32-bit libpq); on pascal-api-infra-faa
 v0.20.1.
+
+**On pascal-db-faa 0.17.0 and pascal-api-infra-faa 0.21.0** (2026-10-20). Both candidates of the
+PostgreSQL run came back from the libraries, so the application's copies went: `Agenda.Flags`
+(the PATCHes bind `Params.OptFlags['ACTIVE'] := APatch.Active`, the filters
+`TQueryArgs.Flags('ACTIVE', ...)`, an Integer 1/0 either way) and `Agenda.SqlSources` (the schema
+uses pascal-db-faa's `TFallbackSqlSource`, same behavior; its 7 tests moved to the library, the
+schema's own test stays). Measuring the Booleans in the library found more than PostgreSQL's
+refusal: SQLdb on Firebird stored `True` as -1 and Zeos sent `'Y'` (gotcha 54 there), which this
+application never met (SQLdb, SQLite and PostgreSQL). Result: 41 unit tests; 333 HTTP checks on
+SQLite and on PostgreSQL 17, FPC Windows and Linux.

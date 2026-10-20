@@ -63,10 +63,6 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
-        <Filename Value="..\src\Agenda.SqlSources.pas"/>
-        <IsPartOfProject Value="True"/>
-      </Unit>
-      <Unit>
         <Filename Value="..\src\Agenda.Database.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
@@ -100,10 +96,6 @@
       </Unit>
       <Unit>
         <Filename Value="..\src\Agenda.Money.pas"/>
-        <IsPartOfProject Value="True"/>
-      </Unit>
-      <Unit>
-        <Filename Value="..\src\Agenda.Flags.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>

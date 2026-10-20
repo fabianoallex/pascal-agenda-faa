@@ -127,7 +127,6 @@
         <DCCReference Include="Agenda.NormalizersTests.pas"/>
         <DCCReference Include="Agenda.MoneyTests.pas"/>
         <DCCReference Include="Agenda.SqlSourcesTests.pas"/>
-        <DCCReference Include="..\..\src\Agenda.SqlSources.pas"/>
         <DCCReference Include="..\..\src\Agenda.Schema.pas"/>
         <DCCReference Include="Agenda.TimesTests.pas"/>
         <BuildConfiguration Include="Base">

@@ -196,7 +196,6 @@ uses
   PascalCommon.Validators,
   Agenda.Validators,
   Agenda.Money,
-  Agenda.Flags,
   Agenda.Tokens;
 
 function ServiceOrderSpec: TOrderBySpec;
@@ -349,7 +348,7 @@ begin
   if AFind.Search.HasValue and (PcFoldForSearch(AFind.Search.Value) <> '') then
     Result := Result.Strings('SEARCH', PdbLikeContains(PcFoldForSearch(AFind.Search.Value)));
   if AFind.Active.HasValue then
-    Result := Result.Integers('ACTIVE', FlagOf(AFind.Active.Value));
+    Result := Result.Flags('ACTIVE', AFind.Active.Value);
 end;
 
 function TServiceRepository.FindPage(const AFind: IServiceFind;
@@ -459,7 +458,7 @@ begin
     LQuery.Params.OptStrings['NAME_KEY'] := TOptionals.Normalize(LName, TNorm.FoldForSearch);
     LQuery.Params.OptIntegers['DURATION_MINUTES'] := APatch.DurationMinutes;
     LQuery.Params.OptIntegers['BUFFER_MINUTES'] := APatch.BufferMinutes;
-    LQuery.Params.OptIntegers['ACTIVE'] := OptFlag(APatch.Active); // an INTEGER column (Agenda.Flags)
+    LQuery.Params.OptFlags['ACTIVE'] := APatch.Active; // an INTEGER column: Flags, never Booleans
     // The one if left: the price is stored in cents, and an optional keeps
     // its type (an IOptCurrency can't become an IOptInt64).
     if APatch.Price.HasValue then
