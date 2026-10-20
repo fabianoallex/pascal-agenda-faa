@@ -635,7 +635,8 @@ failures, the 404s and 409s, another tenant, and tenant other (Europe/Lisbon) on
 Sundays of March (five starts in 00:00-03:00: 00:45 WET then 02:00 WEST) and October (thirteen,
 from 23:00Z the day before, 01:00 twice). Its dates come from today (GNU date), so it doesn't
 expire. Result: 57 unit tests; 383 HTTP checks on SQLite and on PostgreSQL 17, FPC Windows and
-Linux.
+Linux. Delphi 12: 57 unit tests (0 leaks) and 383 checks on SQLite, Win32 and Win64, and
+383 on PostgreSQL, Win64.
 
 What it showed:
 - pascal-common-faa 1.22.0's `PascalCommon.TimeZones` covered every need of the computation:
