@@ -205,15 +205,6 @@ end;
 
 { validation }
 
-// AText as Unix seconds; 400 naming AMember unless it is an instant.
-function CheckInstant(const AText, AMember: string): Int64;
-begin
-  if not TryParseInstant(AText, Result) then
-    raise EValidationException.Create(Format('"%s" must be an ISO 8601 date and time with ' +
-      'its zone ("Z" or an offset), such as 2026-12-24T13:00:00Z.', [AMember]),
-      'invalid_instant');
-end;
-
 // An end of the span: there (an absent member is 0, 1899) and whole minutes.
 procedure CheckEnd(const AField: string; AUnix: Int64; var ACheck: TPcValidation);
 begin
@@ -248,23 +239,15 @@ function TTimeOffRepository.FindPage(const AProfessionalId: string; const AFind:
 var
   LOrder: string;
   LArgs: TQueryArgs;
-
-  function Filtered(const ASql: TSQLResult): TSQLResult;
-  begin
-    Result := ASql.ProcessTag('FROM', AFind.From.HasValue).ProcessTag('TO', AFind.To_.HasValue);
-  end;
-
 begin
   LOrder := TimeOffOrderSpec.Build(AFind.OrderBy.ValueOr(''));
-  LArgs := TQueryArgs.New.Strings('PROFESSIONAL_ID', AProfessionalId);
-  if AFind.From.HasValue then
-    LArgs := LArgs.Int64s('FROM_UTC', CheckInstant(AFind.From.Value, 'from'));
-  if AFind.To_.HasValue then
-    LArgs := LArgs.Int64s('TO_UTC', CheckInstant(AFind.To_.Value, 'to'));
+  // [FROM] and [TO] kept only for the bounds that came (TQueryArgs, 0.22.0).
+  LArgs := TQueryArgs.New.Strings('PROFESSIONAL_ID', AProfessionalId)
+    .OptInt64s('FROM_UTC', OptInstant(AFind.From, 'from'), 'FROM')
+    .OptInt64s('TO_UTC', OptInstant(AFind.To_, 'to'), 'TO');
   RequireProfessional(FScope, AProfessionalId);
-  Result := TTenantPagedQuery.Run<ITimeOff>(FScope,
-    Filtered(FScope.Factory.SqlLoader['TIME_OFF.COUNT']),
-    Filtered(FScope.Factory.SqlLoader['TIME_OFF.PAGE']), LOrder, APage, LArgs, ReadTimeOff);
+  Result := TTenantPagedQuery.Run<ITimeOff>(FScope, FScope.Factory.SqlLoader['TIME_OFF.COUNT'],
+    FScope.Factory.SqlLoader['TIME_OFF.PAGE'], LOrder, APage, LArgs, ReadTimeOff);
 end;
 
 function TTimeOffRepository.FindById(const AProfessionalId, AId: string): ITimeOff;

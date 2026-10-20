@@ -14,7 +14,9 @@ uses
   DUnitX.TestFramework,
   Agenda.DUnitXCompat,
   SysUtils,
+  PascalCommon.Optionals,
   PascalJsonMapper.Json,
+  PascalApi.Http,
   Agenda.Times;
 
 type
@@ -28,6 +30,7 @@ type
     [Test] procedure Instant_Offset;
     [Test] procedure Instant_NeedsAZone;
     [Test] procedure Instant_Refuses;
+    [Test] procedure OptInstant_AbsentPresentRefused;
     [Test] procedure Instant_Writes;
     [Test] procedure Instant_RoundTrip;
     [Test] procedure Week_SortsAndAccepts;
@@ -112,6 +115,27 @@ begin
   TAssert.AssertFalse(TryParseInstant('tomorrow at noon Z', U));
   TAssert.AssertFalse(TryParseInstant('1969-12-31T23:59:59Z', U));
   TAssert.AssertFalse(TryParseInstant('', U));
+end;
+
+procedure TTimesTests.OptInstant_AbsentPresentRefused;
+var
+  LText: IOptString;
+  LMessage: string;
+begin
+  LText := TOptNullString.Undefined;
+  TAssert.AssertFalse('absent stays absent', OptInstant(LText, 'from').HasValue);
+  LText := TOptNullString.From('2026-11-10T11:00:00-03:00');
+  TAssert.AssertEquals('present: Unix seconds', Int64(1794319200), OptInstant(LText, 'from').Value);
+  LText := TOptNullString.From('yesterday');
+  LMessage := '';
+  try
+    OptInstant(LText, 'from');
+  except
+    on E: EValidationException do
+      LMessage := E.Code + ': ' + E.Message;
+  end;
+  TAssert.AssertEquals('invalid_instant: "from" must be an ISO 8601 date and time with its ' +
+    'zone ("Z" or an offset), such as 2026-12-24T13:00:00Z.', LMessage);
 end;
 
 // What a time off answers: Unix seconds from the database, through

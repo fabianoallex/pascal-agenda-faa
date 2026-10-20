@@ -311,25 +311,6 @@ begin
   LAppointment.Version := AResult.Integers['VERSION'];
 end;
 
-// AText as Unix seconds; 400 naming AMember unless it is an instant.
-function CheckInstant(const AText, AMember: string): Int64;
-begin
-  if not TryParseInstant(AText, Result) then
-    raise EValidationException.Create(Format('"%s" must be an ISO 8601 date and time with ' +
-      'its zone ("Z" or an offset), such as 2026-12-24T13:00:00Z.', [AMember]),
-      'invalid_instant');
-end;
-
-function IsStatus(const AText: string): Boolean;
-var
-  I: Integer;
-begin
-  Result := False;
-  for I := 0 to High(STATUSES) do
-    if AText = STATUSES[I] then
-      Exit(True);
-end;
-
 { TAppointmentRepository }
 
 constructor TAppointmentRepository.Create(const AScope: TTenantDataScope;
@@ -344,35 +325,22 @@ function TAppointmentRepository.FindPage(const AFind: IAppointmentFind;
   const APage: TPageRequest): TPage<IAppointment>;
 var
   LOrder: string;
+  LCheck: TPcValidation;
   LArgs: TQueryArgs;
-
-  function Filtered(const ASql: TSQLResult): TSQLResult;
-  begin
-    Result := ASql.ProcessTag('PROFESSIONAL', AFind.Professional.HasValue)
-      .ProcessTag('STATUS', AFind.Status.HasValue)
-      .ProcessTag('FROM', AFind.From.HasValue).ProcessTag('TO', AFind.To_.HasValue);
-  end;
-
 begin
   LOrder := AppointmentOrderSpec.Build(AFind.OrderBy.ValueOr(''));
-  LArgs := TQueryArgs.New;
-  if AFind.Professional.HasValue then
-    LArgs := LArgs.Strings('PROFESSIONAL_ID', AFind.Professional.Value);
-  if AFind.Status.HasValue then
-  begin
-    if not IsStatus(AFind.Status.Value) then
-      raise EValidationException.Create('"status" must be booked, confirmed, cancelled, done ' +
-        'or no_show.', 'invalid_status');
-    LArgs := LArgs.Strings('STATUS', AFind.Status.Value);
-  end;
-  if AFind.From.HasValue then
-    LArgs := LArgs.Int64s('FROM_UTC', CheckInstant(AFind.From.Value, 'from'));
-  if AFind.To_.HasValue then
-    LArgs := LArgs.Int64s('TO_UTC', CheckInstant(AFind.To_.Value, 'to'));
+  LCheck := TPcValidation.Create;
+  LCheck.Check('status', AFind.Status, TPcStringValidators.OneOf(STATUSES));
+  LCheck.RaiseIfAny;
+  // Each block kept only for the filter that came (TQueryArgs, 0.22.0).
+  LArgs := TQueryArgs.New
+    .OptStrings('PROFESSIONAL_ID', AFind.Professional, 'PROFESSIONAL')
+    .OptStrings('STATUS', AFind.Status, 'STATUS')
+    .OptInt64s('FROM_UTC', OptInstant(AFind.From, 'from'), 'FROM')
+    .OptInt64s('TO_UTC', OptInstant(AFind.To_, 'to'), 'TO');
   Result := TTenantPagedQuery.Run<IAppointment>(FScope,
-    Filtered(FScope.Factory.SqlLoader['APPOINTMENT.COUNT']),
-    Filtered(FScope.Factory.SqlLoader['APPOINTMENT.PAGE']), LOrder, APage, LArgs,
-    ReadAppointment);
+    FScope.Factory.SqlLoader['APPOINTMENT.COUNT'], FScope.Factory.SqlLoader['APPOINTMENT.PAGE'],
+    LOrder, APage, LArgs, ReadAppointment);
 end;
 
 function TAppointmentRepository.FindById(const AId: string): IAppointment;

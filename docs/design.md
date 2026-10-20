@@ -725,3 +725,29 @@ every application copies both, with the token and the "only connection failures 
 rule. A `TRedisLock` (`TryAcquire(key, ttl, out token)`, `Release(key, token)`) would hold them
 once. `Agenda.Locks` is written under the libraries' rules and could move as it is, minus the
 log callback's shape.
+
+## Filters as optionals (pascal-api-infra-faa 0.22.0, 2026-10-20)
+
+The user's review: every list repository wrote each optional filter twice, a `ProcessTag(TAG,
+HasValue)` on both statements and an `if HasValue then` for the parameter, and asked for
+`TQueryArgs` to take the `IOptXxx` as it is. Planned with the user (the tag explicit per
+argument: tags and parameter names differ here, `PROFESSIONAL` / `PROFESSIONAL_ID`), built in
+the library: `OptStrings`, `OptInt64s`, `OptFlags`... with the tag of the block; an absent filter
+binds nothing and its block goes, and `Run` processes the tags itself. Absent filters stay in the
+arguments, not dropped: a block nobody processes keeps its content (pascal-db-faa's
+`TSQLResult.SQL`), which would leave the condition unbound.
+
+Here: the six repositories (services, professionals, users, customers, time off, appointments)
+lost their `Filtered` functions and their `if`s (148 lines out, 96 in, tests included). What turns
+a filter into its value stays here, as one expression on the optional: the search through
+`TOptionals.Map(AFind.Search, PcFoldForSearch)` (or `Lower(Trim(...))` for emails, or
+`CustomerSearchTerm`), then `SearchPattern` (`src/Agenda.Text`: absent when nothing is left, else
+`PdbLikeContains`); the instants through `OptInstant` (`src/Agenda.Times`: absent stays absent,
+a text that isn't one is the 400 `invalid_instant`); the appointment status through
+`TPcValidation` with `OneOf` before the arguments (its 400 now lists the field, `invalid_fields`).
+The `IOptString` -> `IOptInt64` step is the one `TOptionals.Map` can't do (it keeps the type, the
+cross-type map candidate above): `OptInstant` is that map, written once.
+
+Result: 60 unit tests (3 new: `SearchPattern`, `OptInstant`); 426 HTTP checks on SQLite and 435
+on PostgreSQL 17 with Redis, unchanged (every list filter alone and combined was already covered),
+FPC Windows and Linux.

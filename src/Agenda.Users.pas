@@ -201,6 +201,7 @@ uses
   Agenda.Passwords,
   Agenda.Normalizers,
   Agenda.Validators,
+  Agenda.Text,
   Agenda.Tokens;
 
 function UserOrderSpec: TOrderBySpec;
@@ -358,28 +359,16 @@ begin
   LUser.ProfessionalId := AResult.NullableStrings['PROFESSIONAL_ID'];
 end;
 
-function HasSearch(const AFind: IUserFind): Boolean;
-begin
-  Result := AFind.Search.HasValue and (Trim(AFind.Search.Value) <> '');
-end;
-
-function Filtered(const ASql: TSQLResult; const AFind: IUserFind): TSQLResult;
-begin
-  Result := ASql.ProcessTag('SEARCH', HasSearch(AFind))
-    .ProcessTag('ROLE', AFind.Role.HasValue)
-    .ProcessTag('ACTIVE', AFind.Active.HasValue);
-end;
-
+// The filters of the count and the page, each optional with the tag of its
+// block: Run keeps the block of a present one and drops an absent one's
+// (TQueryArgs, pascal-api-infra-faa 0.22.0).
 function FilterArgs(const AFind: IUserFind): TQueryArgs;
 begin
-  Result := TQueryArgs.New;
-  // Emails are stored lower case (ASCII): the search is too.
-  if HasSearch(AFind) then
-    Result := Result.Strings('SEARCH', PdbLikeContains(LowerCase(Trim(AFind.Search.Value))));
-  if AFind.Role.HasValue then
-    Result := Result.Strings('ROLE', AFind.Role.Value);
-  if AFind.Active.HasValue then
-    Result := Result.Flags('ACTIVE', AFind.Active.Value);
+  // Emails are stored lower case: the search is too.
+  Result := TQueryArgs.New
+    .OptStrings('SEARCH', SearchPattern(TOptionals.Lower(TOptionals.Trim(AFind.Search))), 'SEARCH')
+    .OptStrings('ROLE', AFind.Role, 'ROLE')
+    .OptFlags('ACTIVE', AFind.Active, 'ACTIVE');
 end;
 
 function TUserRepository.FindPage(const AFind: IUserFind;
@@ -388,10 +377,8 @@ var
   LOrder: string;
 begin
   LOrder := UserOrderSpec.Build(AFind.OrderBy.ValueOr(''));
-  Result := TTenantPagedQuery.Run<IUser>(FScope,
-    Filtered(FScope.Factory.SqlLoader['USER.COUNT'], AFind),
-    Filtered(FScope.Factory.SqlLoader['USER.PAGE'], AFind), LOrder, APage, FilterArgs(AFind),
-    ReadUserDto);
+  Result := TTenantPagedQuery.Run<IUser>(FScope, FScope.Factory.SqlLoader['USER.COUNT'],
+    FScope.Factory.SqlLoader['USER.PAGE'], LOrder, APage, FilterArgs(AFind), ReadUserDto);
 end;
 
 function TUserRepository.FindById(const AId: string): IUser;

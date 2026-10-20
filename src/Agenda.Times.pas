@@ -15,6 +15,9 @@ unit Agenda.Times;
 
 interface
 
+uses
+  PascalCommon.Optionals;
+
 const
   MINUTES_PER_DAY = 1440;
   /// Working hours: every time a multiple of this many minutes.
@@ -44,6 +47,11 @@ function ClockToStr(AMinutes: Integer): string;
 /// time before 1970 included. pascal-jsonmapper-faa's JsonStrToUtcDateTime.
 function TryParseInstant(const AText: string; out AUnix: Int64): Boolean;
 
+/// An optional query value as Unix seconds: absent stays absent, a text
+/// that isn't an instant is a 400 naming AMember (invalid_instant). For a
+/// list's from/to filters (TQueryArgs.OptInt64s).
+function OptInstant(const AText: IOptString; const AMember: string): IOptInt64;
+
 /// Unix seconds as a UTC TDateTime (for a TUtcDateTime member).
 function UnixToUtc(AUnix: Int64): TDateTime;
 
@@ -61,7 +69,8 @@ implementation
 
 uses
   SysUtils,
-  PascalJsonMapper.Json;
+  PascalJsonMapper.Json,
+  PascalApi.Http;
 
 const
   UNIX_EPOCH_DAYS = 25569; // 1970-01-01 as a TDateTime
@@ -102,6 +111,20 @@ begin
   end;
   AUnix := UtcToUnix(LValue);
   Result := AUnix >= 0;
+end;
+
+function OptInstant(const AText: IOptString; const AMember: string): IOptInt64;
+var
+  LUnix: Int64;
+begin
+  Result := TOptNullInt64.Undefined;
+  if not Assigned(AText) or not AText.HasValue then
+    Exit;
+  if not TryParseInstant(AText.Value, LUnix) then
+    raise EValidationException.Create(Format('"%s" must be an ISO 8601 date and time with ' +
+      'its zone ("Z" or an offset), such as 2026-12-24T13:00:00Z.', [AMember]),
+      'invalid_instant');
+  Result := TOptNullInt64.From(LUnix);
 end;
 
 function UnixToUtc(AUnix: Int64): TDateTime;

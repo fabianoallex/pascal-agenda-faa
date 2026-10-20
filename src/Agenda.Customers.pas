@@ -283,28 +283,19 @@ begin
   FScope := AScope;
 end;
 
-function SearchOf(const AFind: ICustomerFind): string;
-begin
-  Result := '';
-  if AFind.Search.HasValue then
-    Result := CustomerSearchTerm(AFind.Search.Value);
-end;
 
 function TCustomerRepository.FindPage(const AFind: ICustomerFind;
   const APage: TPageRequest): TPage<ICustomer>;
 var
-  LOrder, LSearch: string;
-  LArgs: TQueryArgs;
+  LOrder: string;
 begin
   LOrder := CustomerOrderSpec.Build(AFind.OrderBy.ValueOr(''));
-  LSearch := SearchOf(AFind);
-  LArgs := TQueryArgs.New;
-  if LSearch <> '' then
-    LArgs := LArgs.Strings('SEARCH', PdbLikeContains(LSearch));
-  Result := TTenantPagedQuery.Run<ICustomer>(FScope,
-    FScope.Factory.SqlLoader['CUSTOMER.COUNT'].ProcessTag('SEARCH', LSearch <> ''),
-    FScope.Factory.SqlLoader['CUSTOMER.PAGE'].ProcessTag('SEARCH', LSearch <> ''),
-    LOrder, APage, LArgs, ReadCustomer);
+  // A phone's digits, or the text folded like a name (CustomerSearchTerm);
+  // the SEARCH block only when something is left to look for.
+  Result := TTenantPagedQuery.Run<ICustomer>(FScope, FScope.Factory.SqlLoader['CUSTOMER.COUNT'],
+    FScope.Factory.SqlLoader['CUSTOMER.PAGE'], LOrder, APage,
+    TQueryArgs.New.OptStrings('SEARCH', SearchPattern(TOptionals.Map(AFind.Search,
+    CustomerSearchTerm)), 'SEARCH'), ReadCustomer);
 end;
 
 function TCustomerRepository.FindById(const AId: string): ICustomer;

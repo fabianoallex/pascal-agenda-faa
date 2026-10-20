@@ -197,6 +197,7 @@ uses
   PascalCommon.Validators,
   Agenda.Validators,
   Agenda.Money,
+  Agenda.Text,
   Agenda.Tokens;
 
 function ServiceOrderSpec: TOrderBySpec;
@@ -335,32 +336,22 @@ begin
   LService.Active := AResult.Integers['ACTIVE'] <> 0;
 end;
 
-// The filters of the count and the page: the same tags and parameters.
-function Filtered(const ASql: TSQLResult; const AFind: IServiceFind): TSQLResult;
-begin
-  Result := ASql
-    .ProcessTag('SEARCH', AFind.Search.HasValue and (PcFoldForSearch(AFind.Search.Value) <> ''))
-    .ProcessTag('ACTIVE', AFind.Active.HasValue);
-end;
-
+// The filters of the count and the page, each optional with the tag of its
+// block: Run keeps the block of a present one and drops an absent one's
+// (TQueryArgs, pascal-api-infra-faa 0.22.0).
 function FilterArgs(const AFind: IServiceFind): TQueryArgs;
 begin
-  Result := TQueryArgs.New;
-  if AFind.Search.HasValue and (PcFoldForSearch(AFind.Search.Value) <> '') then
-    Result := Result.Strings('SEARCH', PdbLikeContains(PcFoldForSearch(AFind.Search.Value)));
-  if AFind.Active.HasValue then
-    Result := Result.Flags('ACTIVE', AFind.Active.Value);
+  Result := TQueryArgs.New
+    .OptStrings('SEARCH', SearchPattern(TOptionals.Map(AFind.Search, PcFoldForSearch)), 'SEARCH')
+    .OptFlags('ACTIVE', AFind.Active, 'ACTIVE');
 end;
 
 function TServiceRepository.FindPage(const AFind: IServiceFind;
   const APage: TPageRequest): TPage<IService>;
 begin
-  // The order is built first: a field not allowed is a 400 before any
-  // database work.
-  Result := TTenantPagedQuery.Run<IService>(FScope,
-    Filtered(FScope.Factory.SqlLoader['SERVICE.COUNT'], AFind),
-    Filtered(FScope.Factory.SqlLoader['SERVICE.PAGE'], AFind),
-    ServiceOrderSpec.Build(AFind.OrderBy.ValueOr('')), APage, FilterArgs(AFind), ReadService);
+  Result := TTenantPagedQuery.Run<IService>(FScope, FScope.Factory.SqlLoader['SERVICE.COUNT'],
+    FScope.Factory.SqlLoader['SERVICE.PAGE'], ServiceOrderSpec.Build(AFind.OrderBy.ValueOr('')),
+    APage, FilterArgs(AFind), ReadService);
 end;
 
 function TServiceRepository.FindById(const AId: string): IService;

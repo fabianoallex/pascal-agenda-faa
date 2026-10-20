@@ -159,6 +159,7 @@ uses
   Agenda.Normalizers,
   PascalCommon.Validators,
   Agenda.Validators,
+  Agenda.Text,
   Agenda.Tokens;
 
 const
@@ -267,31 +268,21 @@ begin
   LProfessional.Active := AResult.Integers['ACTIVE'] <> 0;
 end;
 
-function HasSearch(const AFind: IProfessionalFind): Boolean;
-begin
-  Result := AFind.Search.HasValue and (PcFoldForSearch(AFind.Search.Value) <> '');
-end;
-
-function Filtered(const ASql: TSQLResult; const AFind: IProfessionalFind): TSQLResult;
-begin
-  Result := ASql.ProcessTag('SEARCH', HasSearch(AFind)).ProcessTag('ACTIVE', AFind.Active.HasValue);
-end;
-
+// The filters of the count and the page, each optional with the tag of its
+// block: Run keeps the block of a present one and drops an absent one's
+// (TQueryArgs, pascal-api-infra-faa 0.22.0).
 function FilterArgs(const AFind: IProfessionalFind): TQueryArgs;
 begin
-  Result := TQueryArgs.New;
-  if HasSearch(AFind) then
-    Result := Result.Strings('SEARCH', PdbLikeContains(PcFoldForSearch(AFind.Search.Value)));
-  if AFind.Active.HasValue then
-    Result := Result.Flags('ACTIVE', AFind.Active.Value);
+  Result := TQueryArgs.New
+    .OptStrings('SEARCH', SearchPattern(TOptionals.Map(AFind.Search, PcFoldForSearch)), 'SEARCH')
+    .OptFlags('ACTIVE', AFind.Active, 'ACTIVE');
 end;
 
 function TProfessionalRepository.FindPage(const AFind: IProfessionalFind;
   const APage: TPageRequest): TPage<IProfessional>;
 begin
   Result := TTenantPagedQuery.Run<IProfessional>(FScope,
-    Filtered(FScope.Factory.SqlLoader['PROFESSIONAL.COUNT'], AFind),
-    Filtered(FScope.Factory.SqlLoader['PROFESSIONAL.PAGE'], AFind),
+    FScope.Factory.SqlLoader['PROFESSIONAL.COUNT'], FScope.Factory.SqlLoader['PROFESSIONAL.PAGE'],
     ProfessionalOrderSpec.Build(AFind.OrderBy.ValueOr('')), APage, FilterArgs(AFind),
     ReadProfessional);
 end;

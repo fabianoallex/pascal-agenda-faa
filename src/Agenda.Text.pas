@@ -2,8 +2,8 @@ unit Agenda.Text;
 
 {$I agenda.inc}
 
-{ Phone numbers as people type them (their digits, the stored form), and an
-  email address's normalized form.
+{ Phone numbers as people type them (their digits, the stored form), an
+  email address's normalized form, and a list's search as its LIKE pattern.
 
   The search key and the LIKE pattern that lived here moved to the libraries
   (2026-10-19): pascal-common-faa 1.20.0's PcFoldForSearch and pascal-db-faa
@@ -11,6 +11,9 @@ unit Agenda.Text;
   leave business rules (a CEP, a CPF, a phone) to the application. }
 
 interface
+
+uses
+  PascalCommon.Optionals;
 
 /// True when AText looks like a phone number as people type one: digits,
 /// spaces, "-", ".", "(", ")", and "+" only first; at least one digit.
@@ -26,10 +29,17 @@ function NormalizePhone(const AText: string): string;
 /// compares emails through it.
 function NormalizeEmail(const AEmail: string): string;
 
+/// The LIKE pattern of a list's search (pascal-db-faa's PdbLikeContains),
+/// ASearch already normalized the way the column was (folded, lower case);
+/// absent when the search is absent or nothing is left of it. For
+/// TQueryArgs.OptStrings, which drops the block of an absent filter.
+function SearchPattern(const ASearch: IOptString): IOptString;
+
 implementation
 
 uses
-  SysUtils;
+  SysUtils,
+  PascalDb.SqlLoader;
 
 // Phones are ASCII: indexing string is the same on both compilers here (a
 // non-ASCII byte or unit is refused either way).
@@ -78,6 +88,11 @@ begin
   if (P < 2) or (P = Length(Result)) or (Length(Result) > 254) or
     (Pos('@', Copy(Result, P + 1, MaxInt)) > 0) or (Pos(' ', Result) > 0) then
     Result := '';
+end;
+
+function SearchPattern(const ASearch: IOptString): IOptString;
+begin
+  Result := TOptionals.Map(TOptionals.UndefinedIfEmpty(ASearch), PdbLikeContains);
 end;
 
 end.
