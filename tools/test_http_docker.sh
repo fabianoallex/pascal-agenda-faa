@@ -105,6 +105,7 @@ MSYS_NO_PATHCONV=1 docker run --rm $NETOPT -v "$MOUNT:/src:ro" \
   [ -n "$TOKEN" ] || { echo "FAIL: no token before the restart"; exit 1; }
   VERSION="$(grep -o "at version [0-9]*" /t/server.log | head -1 | tr -cd "0-9")"
   [ -n "$VERSION" ] || { echo "FAIL: no schema version in the log"; exit 1; }
+  python3 $E/pascal-api-infra-faa/tools/json_no_duplicate_keys.py /t/openapi.json
   python3 -m openapi_spec_validator /t/openapi.json
   # pascal-api-infra-faa'"'"'s check: promtool, accepting only the "_count" lint
   # of pascal-db-faa'"'"'s db_client_connection_count (its OpenTelemetry name).

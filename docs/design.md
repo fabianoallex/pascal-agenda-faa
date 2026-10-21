@@ -932,3 +932,13 @@ What promoting showed about the libraries:
   showed that an absent `INullInteger` member is read as null, not refused (the mapper's
   contract: nullable is not required), and that the scenario helpers' `grep '"code"'` matched
   a city's own `code` member.
+- **Found right after, in a browser** (2026-10-21): this application's `/swagger` showed
+  nothing ("duplicated mapping key"). Its `startsAt`/`endsAt` are `TUtcDateTime` described with
+  `.Format('date-time')`, and the library wrote `"format"` twice; openapi-spec-validator reads
+  JSON with the last key winning, so every run had passed. Fixed in pascal-api-infra-faa
+  0.23.1, whose `tools/json_no_duplicate_keys.py` now runs before the validator here too.
+- **And on rereading the skill's index**: `TRedisLock` 0.3.0 made its token with `CreateGUID`,
+  which FPC 3.2.2 bases on a clock-seeded `Random` on some Unix targets (the index says never);
+  two processes started together could share a token. pascal-redis-faa 0.3.1 takes 16 bytes of
+  `PcRandomBytes` (its minimum pascal-common-faa is now 1.15.0). Same results with both:
+  59 unit tests, 522/533 HTTP checks, FPC Windows and Linux, Delphi Win32/Win64.
