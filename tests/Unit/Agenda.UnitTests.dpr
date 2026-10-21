@@ -34,7 +34,9 @@ uses
   Agenda.SqlSourcesTests in 'Agenda.SqlSourcesTests.pas',
   Agenda.TimesTests in 'Agenda.TimesTests.pas',
   Agenda.SlotsTests in 'Agenda.SlotsTests.pas',
-  Agenda.PreconditionsTests in 'Agenda.PreconditionsTests.pas';
+  Agenda.PreconditionsTests in 'Agenda.PreconditionsTests.pas',
+  Agenda.Idempotency in '..\..\src\Agenda.Idempotency.pas',
+  Agenda.IdempotencyTests in 'Agenda.IdempotencyTests.pas';
 
 var
   runner: ITestRunner;

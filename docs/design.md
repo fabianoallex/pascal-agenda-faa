@@ -131,7 +131,7 @@ two libraries would share goes to pascal-common-faa.
 |---|---|---|
 | Password hashing: PBKDF2-HMAC-SHA256, `$pbkdf2-sha256$<iter>$<salt>$<hash>`, constant-time compare, "needs rehash" | pascal-common-faa (has HMAC and `Random`) | no library has it |
 | Refresh tokens: rotation, reuse detection, family revoke, db/Redis store | `PascalApi.RefreshTokens` + `src/redis` | `docs/jwt-keys-design.md` lists them as "an application's flow": promoting reopens that |
-| `Idempotency-Key` middleware: replay, 409 while in flight, 422 on another body | `PascalApi.Idempotency` + Horse, db/Redis store | same pluggable-store shape as the JWT keys |
+| `Idempotency-Key` middleware: replay, 409 while in flight, 422 on another body | `PascalApi.Idempotency` + Horse, db/Redis store | same pluggable-store shape as the JWT keys; **built here 2026-10-21** as `src/Agenda.Idempotency` (memory and database stores, 9 unit tests), see "M2: Idempotency-Key" |
 | Optimistic concurrency: `ETag`/`If-Match`, 412/428 | `PascalApi.Http` + middleware | small; **built here 2026-10-21** as `src/Agenda.Preconditions` (RFC 9110 parsing, 6 unit tests), see "M2: changing and cancelling" |
 | Tenant from the path or host | `PascalApi.Tenancy` | multi-tenancy decision 5 |
 | Signed links: HMAC with expiry, keys from the JWT key ring | `PascalApi.SignedUrl` | cancel, invite, email confirmation |
@@ -823,3 +823,55 @@ What it showed:
   compiled on FPC, but inside a DUnitX fixture method Delphi bound the name to another `Status`
   first ("E2034 Too many actual parameters"). Renamed `IfMatchAnswer`. A generic name for a free
   function in a test unit can be shadowed on one compiler only.
+
+## M2: Idempotency-Key (2026-10-21)
+
+`POST /appointments` takes an optional `Idempotency-Key` (M3's public booking will require it).
+`src/Agenda.Idempotency` (the candidate), migration 12 (`IDEMPOTENCY_KEYS`), the handler in
+`api/AgendaApi.dpr`.
+
+- **A key is per tenant and per request**: the first use stores a fingerprint, the SHA-256 of
+  method, path and body. The same key with another body is a 422 `idempotency_key_reused`; another
+  tenant's key of the same name is its own.
+- **Claimed, then answered**: the first request claims the key (a lease of 30 seconds) and runs; a
+  request with the same key while it runs is a 409 `idempotency_key_in_flight`, never a second run.
+  When it ends the answer is stored and later retries get it back, status, body and ETag, with
+  `Idempotent-Replayed: true`. A client error (one the error handler doesn't log: a 400, the 409
+  `slot_unavailable`) is stored as the handler sends it, so the same request keeps getting the same
+  answer; anything else (a 500, the database gone) releases the key, so a retry runs again. A
+  request that died mid-way leaves a lease the next retry takes over once it runs out.
+- **Expiry**: 24 hours (`IDEMPOTENCY_TTL_HOURS`); an expired key is a new one. The tenant's expired
+  keys are deleted at each claim.
+- **The key**: 1 to 255 visible ASCII characters, bare or as a structured-field string in quotes
+  (the IETF draft writes it `"..."`); otherwise 400 `invalid_idempotency_key`.
+- **The claim in the database**: one transaction whose first statement is a write (the expired
+  keys deleted), then `INSERT ... ON CONFLICT (TENANT_ID, IDEM_KEY) DO NOTHING`: 1 row is a claim,
+  0 rows reads the key (another request, an answer, a lease running or run out; a lease taken over
+  by an `UPDATE ... WHERE LEASE_UNTIL <= :NOW`, so by one request only). That INSERT is the same on
+  SQLite (3.24 and later) and PostgreSQL, so it sits in `COMMON`.
+- **Not atomic with the booking**: the claim, the booking and the stored answer are three
+  transactions. A process that dies after the booking committed and before the answer was stored
+  books again on the retry, and the booking's own check answers 409 `slot_unavailable`: no double
+  booking, but the client sees a 409 for a booking that did happen. Storing the answer in the
+  booking's transaction would close it, at the cost of the store knowing the request's connection.
+
+Scenarios (`tools/http_scenarios_idempotency.sh`, 32 checks): a booking and its retries (the same
+status, body and ETag, marked as a replay, a quoted key the same key, one appointment stored); the
+key with another body (422); another tenant's key of the same name; a 409 `slot_unavailable` and a
+400 replayed with their codes and fields; invalid keys; four requests with one key at once (a 201,
+the others 409 in flight or the 201 replayed, one appointment); without a key, as before. Expiry
+and a lease taken over are unit-tested only (memory store).
+
+Result: 75 unit tests (9 new: `Agenda.IdempotencyTests`); 522 HTTP checks on SQLite and 533 on
+PostgreSQL 17 with Redis, FPC Windows and Linux (Docker; OpenAPI valid). Delphi 12:
+75 unit tests (0 leaks) and 522 checks on SQLite, Win32 and Win64; 533 on PostgreSQL with Redis,
+Win64. **M2 is complete**: free slots, booking with a lock, If-Match, Idempotency-Key.
+
+What it showed:
+- The scenario helper `req` keeps its arguments in the globals `M`, `P` and `B`: a scenario
+  variable named `P` was overwritten too (the retry sent the last GET's path as its body: a 422,
+  which was right). Second time in a day; the helper could use names no scenario would pick.
+- **Candidate shape**: in pascal-api-infra-faa it would be `PascalApi.Idempotency` (the policy and
+  the stores, as here) plus a Horse helper for the handler (replay, complete, fail). A middleware
+  would need to capture the handler's response body, which Horse doesn't expose the same way on
+  both compilers; the handler-level helper doesn't.

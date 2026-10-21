@@ -32,6 +32,7 @@ program AgendaApi;
                          REDIS_PORT (6379), REDIS_PASSWORD,
                          REDIS_CONNECT_TIMEOUT_MS (500), REDIS_LOCK_PREFIX
                          ('agenda:lock:')
+    IDEMPOTENCY_TTL_HOURS how long a booking's Idempotency-Key replays (24)
 
   On startup the database is brought to the latest migration, before the
   server listens; --reset deletes the SQLite file first (PostgreSQL: drop and
@@ -62,7 +63,9 @@ program AgendaApi;
                          any user: free slots on the tenant's local days
     POST /appointments, GET /appointments[/:id]
                          any user: book a free slot (409 "slot_unavailable"
-                         otherwise), list, read; ETag: the version in quotes
+                         otherwise), list, read; ETag: the version in quotes;
+                         Idempotency-Key (optional): a retry replays the first
+                         answer (Agenda.Idempotency)
     PATCH /appointments/:id, POST /appointments/:id/cancel
                          any user, with If-Match (428 without it, 412 for
                          another version): move, confirm, done, no_show;
@@ -129,7 +132,8 @@ uses
   Agenda.Availability in '..\src\Agenda.Availability.pas',
   Agenda.Appointments in '..\src\Agenda.Appointments.pas',
   Agenda.Locks in '..\src\Agenda.Locks.pas',
-  Agenda.Preconditions in '..\src\Agenda.Preconditions.pas';
+  Agenda.Preconditions in '..\src\Agenda.Preconditions.pas',
+  Agenda.Idempotency in '..\src\Agenda.Idempotency.pas';
 
 const
   APP_NAME = 'agenda-api';
@@ -169,6 +173,8 @@ var
   // The slot lock (nil without REDIS_HOST) and its client, one per process.
   GRedis: TRedisClient;
   GSlotLock: ISlotLock;
+  // Idempotency-Key on the booking (Agenda.Idempotency), in the database.
+  GIdempotency: TIdempotency;
 
 { TAgendaHooks }
 
@@ -804,17 +810,69 @@ begin
   end;
 end;
 
-procedure PostAppointment(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+// A stored answer sent again (Agenda.Idempotency): its headers, then its
+// body; Idempotent-Replayed says it is a replay.
+procedure SendReplay(ARes: THorseResponse; const AResponse: TStoredResponse);
 var
-  LRepo: TAppointmentRepository;
+  LRest, LLine: string;
+  P: Integer;
 begin
-  LRepo := TAppointmentRepository.Create(ScopeOf(AReq), GSlotLock);
+  LRest := AResponse.Headers;
+  while LRest <> '' do
+  begin
+    P := Pos(#10, LRest);
+    if P = 0 then
+      P := Length(LRest) + 1;
+    LLine := Copy(LRest, 1, P - 1);
+    Delete(LRest, 1, P);
+    P := Pos(':', LLine);
+    if P > 1 then
+      ARes.AddHeader(Copy(LLine, 1, P - 1), Trim(Copy(LLine, P + 1, MaxInt)));
+  end;
+  ARes.AddHeader('Idempotent-Replayed', 'true');
+  TJsonSend.Send(ARes, AResponse.Body, AResponse.Status);
+end;
+
+procedure PostAppointment(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+const
+  PATH = '/appointments';
+var
+  LScope: TTenantDataScope;
+  LRepo: TAppointmentRepository;
+  LAppointment: IAppointment;
+  LKey, LBody: string;
+  LReplay: TStoredResponse;
+begin
+  LScope := ScopeOf(AReq);
+  // With an Idempotency-Key, a key already answered replays that answer.
+  LKey := Trim(AReq.Headers['Idempotency-Key']);
+  if (LKey <> '') and GIdempotency.Start(LScope.Discriminator, LKey,
+    RequestFingerprint('POST', PATH, AReq.Body), TJwt.UnixNow, LReplay) then
+  begin
+    SendReplay(ARes, LReplay);
+    Exit;
+  end;
+  LRepo := TAppointmentRepository.Create(LScope, GSlotLock);
   try
-    SendAppointment(ARes, LRepo.Book(THorseBody.Read<IAppointmentInsert>(AReq), TJwt.UnixNow),
-      201);
+    try
+      LAppointment := LRepo.Book(THorseBody.Read<IAppointmentInsert>(AReq), TJwt.UnixNow);
+      LBody := TJsonMapper.Shared.ToJson<IAppointment>(LAppointment);
+      if LKey <> '' then
+        GIdempotency.Complete(LScope.Discriminator, LKey, 201,
+          'ETag: ' + VersionETag(LAppointment.Version), LBody);
+    except
+      on E: Exception do
+      begin
+        if LKey <> '' then
+          GIdempotency.Fail(LScope.Discriminator, LKey, E, 'POST', PATH);
+        raise;
+      end;
+    end;
   finally
     LRepo.Free;
   end;
+  ARes.AddHeader('ETag', VersionETag(LAppointment.Version));
+  TJsonSend.Send(ARes, LBody, 201);
 end;
 
 procedure PatchAppointment(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
@@ -1022,6 +1080,8 @@ begin
     GAuthLimit := TAppConfig.GetInt('AUTH_RATE_LIMIT', 10);
     GPasswordIterations := AuthOptions.PasswordIterations;
     GSlotLock := OpenSlotLock;
+    GIdempotency := TIdempotency.Create(TDbIdempotencyStore.Create(GDatabase.Factory),
+      Int64(TAppConfig.GetInt('IDEMPOTENCY_TTL_HOURS', 24)) * 3600);
     if GSlotLock <> nil then
       SafeWriteln('slot lock: redis %s:%d', [TAppConfig.Get('REDIS_HOST', ''),
         TAppConfig.GetInt('REDIS_PORT', REDIS_DEFAULT_PORT)])
@@ -1208,10 +1268,16 @@ begin
       .Error(404, 'The tenant has no appointment with this id')
       .Register(GetAppointment);
     TRouteDoc.Post('/appointments').Summary('Book a free slot').Tag('appointments')
+      .Descr('Idempotency-Key (optional, 1 to 255 visible ASCII characters, such as a ' +
+        'UUID): a retry with the same key and body gets the first answer again, with ' +
+        'Idempotent-Replayed: true, for 24 hours.')
       .Body<IAppointmentInsert>
       .Response<IAppointment>(201, 'Booked')
-      .Error(400, 'A member missing, unknown_professional, unknown_service, unknown_customer')
-      .Error(409, 'slot_unavailable, professional_inactive, service_inactive')
+      .Error(400, 'A member missing, unknown_professional, unknown_service, unknown_customer, ' +
+        'invalid_idempotency_key')
+      .Error(409, 'slot_unavailable, professional_inactive, service_inactive, ' +
+        'idempotency_key_in_flight')
+      .Error(422, 'idempotency_key_reused: the key was used for another request')
       .Register(PostAppointment);
     TRouteDoc.Patch('/appointments/:id').Summary('Move an appointment or set its status')
       .Descr('Send If-Match with the ETag of the version you read (the version in quotes, ' +
@@ -1312,6 +1378,7 @@ begin
     SafeWriteln('%s %s listening on port %d', [APP_NAME, APP_VERSION, GPort]);
     THorse.Listen(GPort);
   finally
+    GIdempotency.Free;
     GSlotLock := nil;
     GRedis.Free;
     GAuth.Free;

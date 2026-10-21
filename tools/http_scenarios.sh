@@ -31,6 +31,9 @@
 #   If-Match required and compared (428, 400, 412), the status rules, a move
 #   over its own old time, four changes racing from one version (one wins),
 #   the cancel notice;
+# - Idempotency-Key (tools/http_scenarios_idempotency.sh): a retry replays the
+#   first answer (a 201, a 409, a 400), another body is a 422, keys per tenant,
+#   four retries at once run once;
 # - the rate limit on /auth/ by client address (last: it uses the window).
 #
 #   sh tools/http_scenarios.sh [port]   (default 9400; AgendaApi must be running,
@@ -256,6 +259,8 @@ fi
 . "$(dirname "$0")/http_scenarios_appointments.sh"
 # --- changing and cancelling (after the booking: its professional and customer)
 . "$(dirname "$0")/http_scenarios_changes.sh"
+# --- Idempotency-Key on the booking
+. "$(dirname "$0")/http_scenarios_idempotency.sh"
 
 # --- OpenAPI document and Swagger UI
 req GET /swagger/doc.json ""

@@ -133,6 +133,8 @@
         <DCCReference Include="..\..\src\Agenda.Slots.pas"/>
         <DCCReference Include="..\..\src\Agenda.Preconditions.pas"/>
         <DCCReference Include="Agenda.PreconditionsTests.pas"/>
+        <DCCReference Include="..\..\src\Agenda.Idempotency.pas"/>
+        <DCCReference Include="Agenda.IdempotencyTests.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>
