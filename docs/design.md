@@ -1045,9 +1045,8 @@ from rules already set.
   unit both use. Not patched here (the libraries are fixed in their repositories).
 - `THorseQueryParams.Read` ignores a query member the Find DTO doesn't have
   (`/public/demo/services?active=false` lists the active ones, 200), where a body's unknown
-  member is a 400 (`UnknownMembers := umError`). Safe here (the public Find DTO has no filter
-  to abuse), but the two edges answer differently; worth a line in the library's guide or an
-  option.
+  member is a 400 (`UnknownMembers := umError`). Not a finding after all: the library's guide
+  says so and why (`docs/guide/dtos-json.md`: a query string often carries a cache buster).
 
 ### M3: built (2026-10-21)
 
@@ -1078,3 +1077,16 @@ OpenAPI valid, no duplicate keys). Delphi 12: 78 unit tests (0 leaks) and 612 ch
 SQLite, Win32 and Win64; 623 on PostgreSQL with Redis, Win64. **M3 is complete**; the user
 chose (2026-10-21) to take the findings to the libraries (the strict Base64url, the required
 Idempotency-Key).
+
+### M3 findings in the libraries (2026-10-21)
+
+- pascal-common-faa **1.24.0**: `PcBase64UrlDecodeStrict`, only the text `PcBase64UrlEncode`
+  writes (added, not changed: the lenient decoder stays, by the library's versioning rule).
+  `Agenda.SignedLinks` uses it instead of its own encode-and-compare.
+- pascal-api-infra-faa **0.24.0**: `TJwt` reads a signature with it (a token with its last
+  character changed, or padded, was valid; now `jrMalformed`), and
+  `THorseIdempotentRequest.Start(..., ARequired)` answers a missing key 400
+  `idempotency_key_required`. The public booking passes `True` and keeps only its own rule, a
+  key of 16 characters at least, checked before `Start`.
+
+The submodules point at those commits; the tags wait for the Delphi runs of both libraries.

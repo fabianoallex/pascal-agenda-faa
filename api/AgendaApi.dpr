@@ -1006,18 +1006,15 @@ begin
     TJsonMapper.Shared.Serialize<TPublicProfessionalArray>(LPage.Items)));
 end;
 
-// Idempotency-Key required, and long enough not to be guessed: a replay
-// hands over the stored answer, link included. Checked before Start, so
-// these 400s are not stored.
-procedure RequirePublicKey(AReq: THorseRequest);
+// A key long enough not to be guessed: a replay hands over the stored
+// answer, link included. Checked before Start (so this 400 is not stored);
+// a missing key is Start's own 400 (ARequired, pascal-api-infra-faa 0.24.0).
+procedure CheckPublicKeyLength(AReq: THorseRequest);
 var
   LHeader: string;
 begin
   LHeader := Trim(AReq.Headers[IDEMPOTENCY_KEY_HEADER]);
-  if LHeader = '' then
-    raise EHttpException.Create(400, 'Idempotency-Key is required: a new one for each ' +
-      'booking, such as a UUID.', 'idempotency_key_required');
-  if Length(NormalizeIdempotencyKey(LHeader)) < PUBLIC_MIN_KEY_CHARS then
+  if (LHeader <> '') and (Length(NormalizeIdempotencyKey(LHeader)) < PUBLIC_MIN_KEY_CHARS) then
     raise EHttpException.Create(400, Format('Idempotency-Key must be %d to %d visible ASCII ' +
       'characters, such as a UUID.', [PUBLIC_MIN_KEY_CHARS, IDEMPOTENCY_MAX_KEY_CHARS]),
       API_CODE_INVALID_IDEMPOTENCY_KEY);
@@ -1030,9 +1027,9 @@ var
   LAgenda: TPublicAgenda;
   LBody: string;
 begin
-  RequirePublicKey(AReq);
+  CheckPublicKeyLength(AReq);
   LScope := ScopeOf(AReq);
-  if LIdem.Start(GIdempotency, AReq, ARes, LScope.Discriminator) then
+  if LIdem.Start(GIdempotency, AReq, ARes, LScope.Discriminator, True) then
     Exit;
   LAgenda := NewPublicAgenda(AReq);
   try

@@ -22,8 +22,10 @@ unit Agenda.SignedLinks;
   days, while a link may have to live as long as the appointment is ahead.
 
   - Verify takes the signature only in its canonical Base64url (what Sign
-    writes): the last character of 32 bytes carries 4 bits, and without
-    this check "...A" and "...B" verified alike.
+    writes, pascal-common-faa 1.24.0's PcBase64UrlDecodeStrict): the last
+    character of 32 bytes carries 4 bits, and with the lenient decoder
+    "...A" and "...B" verified alike (found here, on the Linux run; fixed
+    in the libraries too, for the JWT).
   - Verify checks the signature before the expiry: lsExpired is only ever
     told to someone holding a valid link. It compares in constant time and
     never raises on what a client sent.
@@ -92,8 +94,8 @@ uses
   PascalCommon.Crypto,
   PascalCommon.Utf8;
 
-{$IF PASCALCOMMON_VERSION < 11700}
-  {$MESSAGE FATAL 'Agenda.SignedLinks needs pascal-common-faa 1.17.0 or later (PascalCommon.Crypto)'}
+{$IF PASCALCOMMON_VERSION < 12400}
+  {$MESSAGE FATAL 'Agenda.SignedLinks needs pascal-common-faa 1.24.0 or later (PcBase64UrlDecodeStrict)'}
 {$IFEND}
 
 const
@@ -235,13 +237,8 @@ begin
     Exit(lsMalformed);
   LDot := Pos('.', ASignature);
   if (LDot <= 1) or not KeyIdIsValid(Copy(ASignature, 1, LDot - 1)) or
-    not PcBase64UrlDecode(Copy(ASignature, LDot + 1, MaxInt), LGiven) or
+    not PcBase64UrlDecodeStrict(Copy(ASignature, LDot + 1, MaxInt), LGiven) or
     (Length(LGiven) <> 32) then
-    Exit(lsMalformed);
-  // Only the canonical text: the last of 43 characters carries 4 bits, so
-  // other spellings decode to the same bytes (measured: "...A" and "...B"
-  // were one signature). One link, one spelling.
-  if PcBase64UrlEncode(LGiven) <> Copy(ASignature, LDot + 1, MaxInt) then
     Exit(lsMalformed);
   LIndex := IndexOfKey(Copy(ASignature, 1, LDot - 1));
   if LIndex < 0 then

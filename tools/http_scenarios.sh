@@ -252,6 +252,14 @@ print(h + "." + p2 + "." + s)' "$ACCESS")"
 else
   echo "skipped: no Python for the tampered token"
 fi
+# The signature's last character carries 4 bits: the next one of the
+# alphabet decodes to the same bytes. Valid until pascal-api-infra-faa 0.24.0.
+JWT_LAST="$(printf '%s' "$ACCESS" | tail -c 1)"
+JWT_ALIAS="$(printf '%s' "$JWT_LAST" | awk '{ a = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"; print substr(a, index(a, $0) + 1, 1) }')"
+req GET /me "" -H "Authorization: Bearer ${ACCESS%?}$JWT_ALIAS"
+status_is 401 "an access token with its signature spelled another way"
+req GET /me "" -H "Authorization: Bearer $ACCESS"
+status_is 200 "the access token itself still works"
 
 # --- services and professionals (their own file, same helpers)
 . "$(dirname "$0")/http_scenarios_catalog.sh"
