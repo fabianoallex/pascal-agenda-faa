@@ -6,7 +6,9 @@ both Delphi and Lazarus/FPC. It is built only on the `*-faa` libraries
 pascal-redis-faa and pascal-amqp-faa), to validate them in a real application and to find
 what they lack.
 
-Status: M0 (skeleton: health, metrics, OpenAPI, migrations). Scope, milestones and library
+Status: M0 to M2 done (tenants, login and refresh tokens, the catalog and people, working
+hours and free slots, booking with a slot lock, If-Match and Idempotency-Key); M3 (public
+routes by slug, rate limit by address, signed links) built. Scope, milestones and library
 candidates: [`docs/design.md`](docs/design.md).
 
 ## Getting the code
@@ -16,9 +18,9 @@ git clone <this repository>
 git submodule update --init      # no --recursive: the libraries' own external/ isn't needed
 ```
 
-The libraries are pinned in `external/`, one copy each: pascal-common-faa 1.22.0,
-pascal-jsonmapper-faa 0.7.0, pascal-db-faa 0.17.0, pascal-api-infra-faa 0.22.0,
-pascal-redis-faa 0.2.0, Horse 3.3.12.
+The libraries are pinned in `external/`, one copy each: pascal-common-faa 1.23.0,
+pascal-jsonmapper-faa 0.7.0, pascal-db-faa 0.17.0, pascal-api-infra-faa 0.23.1,
+pascal-redis-faa 0.3.1, Horse 3.3.12.
 
 ## Building and testing
 

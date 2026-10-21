@@ -8,8 +8,9 @@ unit Agenda.Customers;
 
   - Every query goes through TTenantFilter.Prepare (the ${TENANT} tag).
   - Neither the name nor the contacts are unique: two people share a name,
-    a family shares a phone. Public booking (M3) decides how it finds a
-    returning customer.
+    a family shares a phone. The public booking finds a returning customer
+    with FindOrInsert: the same phone (or, without one, the same email) and
+    the same name folded for search (docs/design.md, M3 decision 2).
   - The phone is stored as Agenda.Text's NormalizePhone gives it ("+" and
     digits); the email lower case (Agenda.Normalizers' TNorm.Email).
   - Search: one stored key, SEARCH_KEY = NAME_KEY|EMAIL|phone digits, so one
@@ -122,6 +123,7 @@ type
   TCustomerRepository = class
   private
     FScope: TTenantDataScope;
+    function InsertPrepared(const AName: string; const APhone, AEmail: IOptString): ICustomer;
   public
     constructor Create(const AScope: TTenantDataScope);
     /// EOrderByException for a field not allowed (400).
@@ -130,6 +132,12 @@ type
     function FindById(const AId: string): ICustomer;
     /// EValidationException for invalid data.
     function Insert(const ACustomer: ICustomerInsert): ICustomer;
+    /// The customer with the same phone, or without one the same email, and
+    /// the same name folded for search (the oldest when several); else a new
+    /// one. A customer found is returned as stored, never changed.
+    /// EValidationException for invalid data, or contact_required when
+    /// there is neither a phone nor an email.
+    function FindOrInsert(const ACustomer: ICustomerInsert): ICustomer;
     function Update(const AId: string; const APatch: ICustomerPatch): ICustomer;
     procedure Delete(const AId: string);
   end;
@@ -161,6 +169,7 @@ uses
 
 const
   MAX_NAME_CHARS = 100;
+  CODE_CONTACT_REQUIRED = 'contact_required';
 
 function CustomerOrderSpec: TOrderBySpec;
 begin
@@ -315,26 +324,77 @@ begin
     raise ENotFoundException.Create('Customer not found.');
 end;
 
+// Normalized (Agenda.Normalizers), then checked (Agenda.Validators; the
+// document's limits were enforced at the edge): a contact that didn't come
+// stays absent and isn't checked, with no if. AContactRequired: a phone or an
+// email must come (contact_required on "phone" otherwise).
+procedure PrepareInsert(const ACustomer: ICustomerInsert; AContactRequired: Boolean;
+  out AName: string; out APhone, AEmail: IOptString);
+var
+  LCheck: TPcValidation;
+begin
+  AName := TNorm.DisplayName.Apply(ACustomer.Name);
+  APhone := TOptionals.Normalize(ACustomer.Phone, TNorm.Phone);
+  AEmail := TOptionals.Normalize(ACustomer.Email, TNorm.Email);
+  LCheck := TPcValidation.Create;
+  LCheck.Check('name', AName, TValid.DisplayName);
+  LCheck.Check('phone', APhone, TValid.Phone);
+  LCheck.Check('email', AEmail, TValid.Email);
+  if AContactRequired and not APhone.HasValue and not AEmail.HasValue then
+    LCheck.Fail('phone', CODE_CONTACT_REQUIRED, 'A phone or an email is required.');
+  LCheck.RaiseIfAny;
+end;
+
 function TCustomerRepository.Insert(const ACustomer: ICustomerInsert): ICustomer;
 var
-  LName, LId: string;
+  LName: string;
   LPhone, LEmail: IOptString;
-  LCheck: TPcValidation;
+begin
+  PrepareInsert(ACustomer, False, LName, LPhone, LEmail);
+  Result := InsertPrepared(LName, LPhone, LEmail);
+end;
+
+function TCustomerRepository.FindOrInsert(const ACustomer: ICustomerInsert): ICustomer;
+var
+  LName: string;
+  LPhone, LEmail: IOptString;
+  LQuery: IQuery;
+  LTx: IScopeTransaction;
+  LResult: IQueryResult;
+begin
+  PrepareInsert(ACustomer, True, LName, LPhone, LEmail);
+  Result := nil;
+  LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
+  if LPhone.HasValue then
+  begin
+    TTenantFilter.Prepare(LQuery, FScope, 'CUSTOMER.MATCH_PHONE');
+    LQuery.Params.Strings['PHONE'] := LPhone.Value;
+  end
+  else
+  begin
+    TTenantFilter.Prepare(LQuery, FScope, 'CUSTOMER.MATCH_EMAIL');
+    LQuery.Params.Strings['EMAIL'] := LEmail.Value;
+  end;
+  LQuery.Params.Strings['NAME_KEY'] := TNorm.FoldForSearch.Apply(LName);
+  LResult := LQuery.Open;
+  if not LResult.Eof then
+    Result := ReadCustomer(LResult);
+  // The connection back to the pool before the insert takes one.
+  LResult := nil;
+  LQuery := nil;
+  LTx := nil;
+  if Result = nil then
+    Result := InsertPrepared(LName, LPhone, LEmail);
+end;
+
+function TCustomerRepository.InsertPrepared(const AName: string;
+  const APhone, AEmail: IOptString): ICustomer;
+var
+  LId: string;
   LNow: Int64;
   LQuery: IQuery;
   LTx: IScopeTransaction;
 begin
-  // Normalized (Agenda.Normalizers), then checked (Agenda.Validators; the
-  // document's limits were enforced at the edge): a contact that didn't come
-  // stays absent and isn't checked, with no if.
-  LName := TNorm.DisplayName.Apply(ACustomer.Name);
-  LPhone := TOptionals.Normalize(ACustomer.Phone, TNorm.Phone);
-  LEmail := TOptionals.Normalize(ACustomer.Email, TNorm.Email);
-  LCheck := TPcValidation.Create;
-  LCheck.Check('name', LName, TValid.DisplayName);
-  LCheck.Check('phone', LPhone, TValid.Phone);
-  LCheck.Check('email', LEmail, TValid.Email);
-  LCheck.RaiseIfAny;
   LId := NewId;
   LNow := TJwt.UnixNow;
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
@@ -343,14 +403,14 @@ begin
     // A column per optional contact, kept exactly when it came; absent, the
     // database writes NULL. The tag and the parameter go together.
     TTenantFilter.Prepare(LQuery, FScope, FScope.Factory.SqlLoader['CUSTOMER.INSERT']
-      .ProcessTag('PHONE', LPhone.HasValue)
-      .ProcessTag('EMAIL', LEmail.HasValue));
+      .ProcessTag('PHONE', APhone.HasValue)
+      .ProcessTag('EMAIL', AEmail.HasValue));
     LQuery.Params.Strings['ID'] := LId;
-    LQuery.Params.Strings['NAME'] := LName;
-    LQuery.Params.Strings['NAME_KEY'] := TNorm.FoldForSearch.Apply(LName);
-    LQuery.Params.OptStrings['PHONE'] := LPhone;
-    LQuery.Params.OptStrings['EMAIL'] := LEmail;
-    LQuery.Params.Strings['SEARCH_KEY'] := SearchKey(LName, LPhone.ValueOr(''), LEmail.ValueOr(''));
+    LQuery.Params.Strings['NAME'] := AName;
+    LQuery.Params.Strings['NAME_KEY'] := TNorm.FoldForSearch.Apply(AName);
+    LQuery.Params.OptStrings['PHONE'] := APhone;
+    LQuery.Params.OptStrings['EMAIL'] := AEmail;
+    LQuery.Params.Strings['SEARCH_KEY'] := SearchKey(AName, APhone.ValueOr(''), AEmail.ValueOr(''));
     LQuery.Params.Int64s['CREATED_AT'] := LNow;
     LQuery.Params.Int64s['UPDATED_AT'] := LNow;
     LQuery.ExecSql;

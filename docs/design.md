@@ -1,6 +1,7 @@
 # pascal-agenda-faa — design
 
-Status: scope agreed with the user on 2026-10-18. M0 built (see "Progress").
+Status: scope agreed with the user on 2026-10-18. M0 to M3 built (see "Progress" and the
+milestone sections after it).
 
 ## Why this application exists
 
@@ -69,12 +70,15 @@ Authenticated (tenant from the token claim, as today):
 - `GET /appointments?from=&to=&professional=&status=&page=&order=`,
   `POST /appointments`, `PATCH /appointments/{id}` (`If-Match`), `POST /appointments/{id}/cancel`
 
-Public (rate limited, tenant from the path slug — see decision 2):
+Public (rate limited, tenant from the path slug — see decision 2; the routes as built in
+"M3: design (2026-10-21)", which moved the availability under its professional and put the
+slug in the signed link's path):
 
 - `GET /public/{slug}/services`, `GET /public/{slug}/professionals`
-- `GET /public/{slug}/availability?service=&professional=&date=`
+- `GET /public/{slug}/professionals/{id}/availability?service=&date=&days=`
 - `POST /public/{slug}/appointments` (`Idempotency-Key` required)
-- `POST /public/appointments/{id}/cancel?exp=&sig=` (signed link)
+- `GET /public/{slug}/appointments/{id}?exp=&sig=`,
+  `POST /public/{slug}/appointments/{id}/cancel?exp=&sig=` (signed link)
 
 Operations: `/health`, `/metrics`, `/openapi.json`, `/mcp`.
 
@@ -133,8 +137,8 @@ two libraries would share goes to pascal-common-faa.
 | Refresh tokens: rotation, reuse detection, family revoke, db/Redis store | `PascalApi.RefreshTokens` + `src/redis` | `docs/jwt-keys-design.md` lists them as "an application's flow": promoting reopens that |
 | `Idempotency-Key` middleware: replay, 409 while in flight, 422 on another body | `PascalApi.Idempotency` + Horse, db/Redis store | same pluggable-store shape as the JWT keys; **built here 2026-10-21** as `src/Agenda.Idempotency` (memory and database stores, 9 unit tests), see "M2: Idempotency-Key". **Done** in pascal-api-infra-faa 0.23.0 (`PascalApi.Idempotency`, `THorseIdempotentRequest`); adopted 2026-10-21 ("Candidates promoted (2026-10-21)") |
 | Optimistic concurrency: `ETag`/`If-Match`, 412/428 | `PascalApi.Http` + middleware | small; **built here 2026-10-21** as `src/Agenda.Preconditions` (RFC 9110 parsing, 6 unit tests), see "M2: changing and cancelling". **Done** in pascal-api-infra-faa 0.23.0 (`PascalApi.Preconditions`, no middleware); adopted 2026-10-21 |
-| Tenant from the path or host | `PascalApi.Tenancy` | multi-tenancy decision 5 |
-| Signed links: HMAC with expiry, keys from the JWT key ring | `PascalApi.SignedUrl` | cancel, invite, email confirmation |
+| Tenant from the path or host | `PascalApi.Tenancy` | multi-tenancy decision 5; **built here 2026-10-21** as `src/Agenda.PublicTenancy` (the path's slug; unknown and suspended one 404), see "M3: design" |
+| Signed links: HMAC with expiry | `PascalApi.SignedUrl` | cancel, invite, email confirmation. Not the JWT key ring (user, 2026-10-21: its keys retire in about 30 days, a link may need a year); keys of its own, derived per tenant. **Built here 2026-10-21** as `src/Agenda.SignedLinks`, see "M3: design" |
 | IANA time zones on both compilers | pascal-common-faa | **biggest risk**: neither RTL converts an arbitrary zone. Linux has `/usr/share/zoneinfo`; Windows has the registry (Windows names) or an embedded database. Own design phase before M2. **Done in pascal-common-faa 1.22.0** (`PascalCommon.TimeZones`, the tzdb embedded); adopted 2026-10-20 |
 
 **Probable** (a second case should confirm the shape):
@@ -942,3 +946,135 @@ What promoting showed about the libraries:
   two processes started together could share a token. pascal-redis-faa 0.3.1 takes 16 bytes of
   `PcRandomBytes` (its minimum pascal-common-faa is now 1.15.0). Same results with both:
   59 unit tests, 522/533 HTTP checks, FPC Windows and Linux, Delphi Win32/Win64.
+
+## M3: design (2026-10-21)
+
+Public routes for the end customer, who has no account: the tenant from the path's slug, a rate
+limit per client address, booking with a required `Idempotency-Key`, and a signed link to see
+and cancel the appointment. Three decisions taken with the user (2026-10-21), the rest follows
+from rules already set.
+
+### Decisions (user, 2026-10-21)
+
+1. **The link has keys of its own, not the JWT key ring.** A ring's key retires
+   `MaxTokenSeconds` after the next one starts signing (15 minutes here) and the ring rotates
+   every 30 days, while an appointment may be up to 366 days ahead: a link signed with the
+   ring would stop working long before it is needed. `LINK_SIGNING_KEYS`, in
+   `JWT_KEYS_MASTER_KEY`'s format (`id:<base64 of at least 32 bytes>`, comma separated, the
+   first signs and every one verifies, so a key is rotated by putting the new one first and
+   dropping the old one once its links expired). Each tenant's key is derived from it with
+   HMAC (`HMAC(key, "agenda-link-key|<tenant>")`), so a signature for one tenant never
+   verifies for another. `DEV_MODE` without the setting uses a development key, as for the JWT
+   master key; otherwise the server doesn't start without it.
+2. **A returning customer is found by contact and name.** The phone (normalized) when the
+   booking has one, else the email, plus the name folded for search (`NAME_KEY`): a family
+   sharing a phone stays several customers. No match creates a customer; a match is used as it
+   is (never changed by a public request) and its data never goes back in the answer. At least
+   one contact is required (`contact_required`): it is how the business reaches the customer,
+   and the email will carry the link (M4).
+3. **A suspended tenant answers like an unknown one on the public routes: 404, the same body.**
+   Multi-tenancy decision 7 gives a suspended tenant 403 `tenant_suspended` because the caller
+   already logged in to it; on a public route anyone can try names, and a different answer
+   would say which slugs are customers. A refinement of decision 7 for sources nobody
+   authenticated, to record in pascal-api-infra-faa when the path source moves there.
+
+### What follows from rules already set
+
+- **The tenant from the path** (`Agenda.PublicTenancy`, the `PascalApi.Tenancy` candidate): a
+  middleware after the rate limit takes the segment after `/public/`, checks it against the
+  catalog (`CheckTenant`) and, when usable, marks the request as `TTenantMiddleware` does
+  (`TPascalApiRequestState.TenantId`). From there `TTenantMiddleware.Current`, the access log's
+  `tenant.id` and every repository work as on the authenticated routes. Text that can't be a
+  tenant id never reaches the catalog. `/public` is excluded from the JWT, so these routes
+  read no token: there is no second source to compare with the slug (decision 2's "must
+  agree" has nothing to apply to).
+- **The rate limit**: `/public/*` keyed by client address (`TClientAddress.Resolve`,
+  `TClientAddress.ProxyHops` from `TRUSTED_PROXY_HOPS`), `PUBLIC_RATE_LIMIT` a minute (60). The
+  limit runs before the slug is looked up, so trying names spends the same window.
+- **What a public route shows**: active services (id, name, duration, price) and active
+  professionals (id, name), a page at a time as the staff lists; free slots exactly as the
+  staff route answers them. No email, buffer, customer or version.
+- **Booking** (`POST /public/{slug}/appointments`): professional, service, start, the
+  customer's name, phone and email. `Idempotency-Key` required (400
+  `idempotency_key_required`), and at least 16 characters (400 `invalid_idempotency_key`): the
+  stored answer carries the link, so a key another client could guess would hand it over
+  (the request's body must match too, but a short key like "1" is a mistake worth refusing).
+  The answer: the appointment (no customer, no version) and its two links, `url` (GET) and
+  `cancelUrl` (POST). `PUBLIC_BASE_URL`, when set, makes them absolute.
+- **The link**: `?exp=<unix seconds>&sig=<key id>.<HMAC-SHA256, Base64url>` over
+  `agenda-link|v1|<tenant>|<purpose>|<appointment id>|<exp>`, purpose `appointment`. `exp` is
+  the appointment's start when booked. A missing, malformed or wrong signature, or a key no
+  longer configured, is 403 `invalid_link`; a right signature past `exp` is 410
+  `link_expired` (only a holder of a valid link learns that). The appointment id is inside the
+  signature, so another id with the same `sig` is a wrong signature, never a 404.
+- **Cancelling by link** needs no `If-Match`: the link is the authority, and the customer has
+  no ETag. The tenant's notice still applies (409 `cancel_notice_passed`). Cancelling twice
+  answers the cancelled appointment again (200): a link opened twice is not an error. Another
+  closed status is 409 `appointment_closed`. A change between the read and the write (staff
+  moving it) is read again; if it is then cancelled, 200, otherwise 409
+  `appointment_changed`.
+
+### Known limits, accepted
+
+- **A new customer stays when the booking fails** (a 409 for a slot taken in the meantime):
+  the customer and the booking are two transactions. The idempotency store replays the 409,
+  so a retry doesn't create a second one. Booking inside the customer's transaction would
+  close it, at the cost of `Book` taking a customer to create.
+- **Two first bookings of one new customer at once** can create two customers (no unique key
+  on contact and name: by decision 2, those aren't unique by nature). The front desk merges.
+- **A moved appointment keeps its old link**, whose `exp` is the old start: a later start
+  leaves the customer without a way to cancel from the link after the old date. M4's
+  confirmation sends a new link on every change.
+- **Anyone can book**: the rate limit bounds how fast, not whether. A confirmation step (M4,
+  the email) is the usual answer if it is abused.
+
+### Found while designing (for the libraries)
+
+- `THorseIdempotentRequest.Start` has no "required" mode: without a key it lets the request
+  run. A route that requires one checks the header itself; a `Required` flag (400 with a code
+  of the library's) would do it in one place.
+- **A Base64url signature has more than one spelling.** 32 bytes are 43 characters, and the last
+  one carries 4 bits: the next character of the alphabet decodes to the same bytes (measured on
+  the Linux run: a link whose signature ended in "A" verified with "B"; the Windows run passed
+  only because its signature ended otherwise). Not a forgery (the bytes are the signature's),
+  but one link had two spellings. `Agenda.SignedLinks` now takes only the canonical text
+  (decoded and encoded again, the same). The same holds for pascal-api-infra-faa's JWT: `TJwt`
+  decodes the signature and compares bytes (`PascalApi.Jwt`, `PaBase64UrlDecode` then
+  `PaSameBytes`), so a token with its last character changed that way still verifies. For
+  pascal-common-faa: a strict `PcBase64UrlDecode` (or a canonical check) that the JWT and this
+  unit both use. Not patched here (the libraries are fixed in their repositories).
+- `THorseQueryParams.Read` ignores a query member the Find DTO doesn't have
+  (`/public/demo/services?active=false` lists the active ones, 200), where a body's unknown
+  member is a 400 (`UnknownMembers := umError`). Safe here (the public Find DTO has no filter
+  to abuse), but the two edges answer differently; worth a line in the library's guide or an
+  option.
+
+### M3: built (2026-10-21)
+
+`src/Agenda.SignedLinks` and `src/Agenda.PublicTenancy` (the two candidates, pure, 21 unit
+tests), `src/Agenda.Public` (DTOs and the booking for the public routes),
+`TCustomerRepository.FindOrInsert`, `TAppointmentRepository.CancelByLink` (the cancel's notice
+and write now shared with `Cancel`), migration 13 (`IX_CUSTOMERS_EMAIL`), the six routes and
+the slug's middleware in `api/AgendaApi.dpr`, settings `LINK_SIGNING_KEYS`,
+`PUBLIC_RATE_LIMIT`, `PUBLIC_BASE_URL`, `TRUSTED_PROXY_HOPS` (`.env.example`).
+
+Scenarios (`tools/http_scenarios_public.sh`, 89 checks): no token, and a bad one not read; only
+active services and professionals, without buffer, email or flags; another tenant's list; an
+unknown, a suspended and an upper-case slug with one 404 body; free slots; the key required
+and at least 16 characters; the booking's members before the customer (a 400 creates none);
+`contact_required`; a booking, its replay with the same link and `no-store`; the same slot
+with a new key (409); the returning customer by phone and name written differently, a
+family's phone, an email in another case; the link: shown, its `exp` the start, a changed
+character, the same bytes spelled another way, a later `exp`, no `sig`, another appointment,
+another tenant's path (403), an unknown one (404), signed outside the API with Python as this
+section writes it, and past its expiry (410); cancelling by link twice, the slot free again, a
+confirmed appointment cancelled; the access log's `tenant.id` from the slug; the rate limit
+by address, shared by every slug, the staff routes untouched. The OpenAPI document: the
+public routes, the required key, and `security: []` on the public routes only.
+
+Result: 78 unit tests (from 59), 0 leaks, FPC Windows and Linux; HTTP 612 checks on SQLite
+(from 522) and 623 on PostgreSQL 17 with Redis (from 533), FPC Windows and Linux (Docker;
+OpenAPI valid, no duplicate keys). Delphi 12: 78 unit tests (0 leaks) and 612 checks on
+SQLite, Win32 and Win64; 623 on PostgreSQL with Redis, Win64. **M3 is complete**; the user
+chose (2026-10-21) to take the findings to the libraries (the strict Base64url, the required
+Idempotency-Key).

@@ -131,6 +131,10 @@
         <DCCReference Include="Agenda.TimesTests.pas"/>
         <DCCReference Include="Agenda.SlotsTests.pas"/>
         <DCCReference Include="..\..\src\Agenda.Slots.pas"/>
+        <DCCReference Include="..\..\src\Agenda.SignedLinks.pas"/>
+        <DCCReference Include="..\..\src\Agenda.PublicTenancy.pas"/>
+        <DCCReference Include="Agenda.SignedLinksTests.pas"/>
+        <DCCReference Include="Agenda.PublicTenancyTests.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>

@@ -27,8 +27,9 @@ PORT="${PORT:-9400}"
 cd "$ROOT"
 
 # The scenarios' settings: development master key, a lower PBKDF2 cost (the
-# rate-limit check logs in dozens of times), the /auth/ limit they expect.
-export DEV_MODE=true PASSWORD_ITERATIONS=20000 AUTH_RATE_LIMIT=60
+# rate-limit check logs in dozens of times), the /auth/ and /public/ limits
+# they expect.
+export DEV_MODE=true PASSWORD_ITERATIONS=20000 AUTH_RATE_LIMIT=60 PUBLIC_RATE_LIMIT=60
 
 if [ -z "$AGENDA_EXE" ]; then
   DLL="${SQLITE_DLL:-.deps/sqlite3.dll}"

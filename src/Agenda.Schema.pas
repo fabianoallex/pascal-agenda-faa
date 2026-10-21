@@ -242,6 +242,10 @@ begin
       'CREATED_AT BIGINT NOT NULL, ' +
       'CONSTRAINT PK_IDEMPOTENCY_KEYS PRIMARY KEY (TENANT_ID, IDEM_KEY));' +
       'CREATE INDEX IX_IDEMPOTENCY_KEYS_EXPIRES ON IDEMPOTENCY_KEYS (TENANT_ID, EXPIRES_AT);')
+    // The public booking finds a returning customer by email when the
+    // booking has no phone (CUSTOMER.MATCH_EMAIL; the phone has its index).
+    .Add(COMMON_SQL_DIR, 'MIG.0013',
+      'CREATE INDEX IX_CUSTOMERS_EMAIL ON CUSTOMERS (TENANT_ID, EMAIL);')
 
     // --- operations
     .Add(COMMON_SQL_DIR, 'HEALTH.PING', 'SELECT 1 AS ONE')
@@ -510,7 +514,15 @@ begin
       'UPDATE CUSTOMERS SET NAME = :NAME, NAME_KEY = :NAME_KEY, PHONE = :PHONE, ' +
       'EMAIL = :EMAIL, SEARCH_KEY = :SEARCH_KEY, UPDATED_AT = :UPDATED_AT ' +
       'WHERE ID = :ID AND ${TENANT}')
-    .Add(COMMON_SQL_DIR, 'CUSTOMER.DELETE', 'DELETE FROM CUSTOMERS WHERE ID = :ID AND ${TENANT}');
+    .Add(COMMON_SQL_DIR, 'CUSTOMER.DELETE', 'DELETE FROM CUSTOMERS WHERE ID = :ID AND ${TENANT}')
+    // A returning customer (the public booking, M3 decision 2): the same
+    // contact and the same name folded for search; the oldest when several.
+    .Add(COMMON_SQL_DIR, 'CUSTOMER.MATCH_PHONE',
+      'SELECT ID, NAME, PHONE, EMAIL FROM CUSTOMERS WHERE PHONE = :PHONE AND ' +
+      'NAME_KEY = :NAME_KEY AND ${TENANT} ORDER BY CREATED_AT, ID')
+    .Add(COMMON_SQL_DIR, 'CUSTOMER.MATCH_EMAIL',
+      'SELECT ID, NAME, PHONE, EMAIL FROM CUSTOMERS WHERE EMAIL = :EMAIL AND ' +
+      'NAME_KEY = :NAME_KEY AND ${TENANT} ORDER BY CREATED_AT, ID');
 end;
 
 function AgendaMigrations: TArray<TMigrationItem>;
@@ -526,7 +538,7 @@ function AgendaMigrations: TArray<TMigrationItem>;
 
 begin
   Result := nil;
-  SetLength(Result, 12);
+  SetLength(Result, 13);
   Result[0] := Item(1, 'MIG.0001');
   Result[1] := Item(2, 'MIG.0002');
   Result[2] := Item(3, 'MIG.0003');
@@ -539,6 +551,7 @@ begin
   Result[9] := Item(10, 'MIG.0010');
   Result[10] := Item(11, 'MIG.0011');
   Result[11] := Item(12, 'MIG.0012');
+  Result[12] := Item(13, 'MIG.0013');
 end;
 
 end.

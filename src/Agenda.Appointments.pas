@@ -74,6 +74,7 @@ const
   CODE_NOT_STARTED = 'not_started';
   CODE_CANCEL_NOTICE_PASSED = 'cancel_notice_passed';
   CODE_USE_CANCEL = 'use_cancel';
+  CODE_APPOINTMENT_CHANGED = 'appointment_changed';
   /// The slot lock outlives a booking that hangs by at most this long.
   SLOT_LOCK_TTL_MS = 10000;
 
@@ -209,6 +210,7 @@ type
     FScope: TTenantDataScope;
     FLock: TRedisLock;
     function LockSlot(const AKey: string; out AToken: string): Boolean;
+    function WriteCancel(const AId: string; AVersion: Integer; ANow: Int64): Boolean;
   public
     /// ALock: the slot lock in front of the booking (not owned), or nil for
     /// none.
@@ -229,6 +231,11 @@ type
       ANow: Int64): IAppointment;
     /// The same If-Match answers; 409 when it is closed or past the notice.
     function Cancel(const AId, AIfMatch: string; ANow: Int64): IAppointment;
+    /// A cancel by a signed link (the caller verified it): no If-Match. One
+    /// already cancelled is answered as it is; 409 when otherwise closed,
+    /// past the notice, or changed by someone else while cancelling
+    /// (appointment_changed). 404.
+    function CancelByLink(const AId: string; ANow: Int64): IAppointment;
   end;
 
 function AppointmentOrderSpec: TOrderBySpec;
@@ -749,25 +756,29 @@ begin
   Result := FindById(AId);
 end;
 
-function TAppointmentRepository.Cancel(const AId, AIfMatch: string;
-  ANow: Int64): IAppointment;
+// 409 when cancelling is past the tenant's notice for ARow's start.
+procedure CheckCancelNotice(const AScope: TTenantDataScope; const ARow: TAppointmentRow;
+  ANow: Int64);
 var
-  LRow: TAppointmentRow;
   LNotice: Integer;
   LLatest: Int64;
-  LQuery: IQuery;
-  LTx: IScopeTransaction;
 begin
-  RequireIfMatchSent(AIfMatch);
-  LRow := ReadRow(FScope, AId);
-  RequireIfMatch(AIfMatch, VersionETag(LRow.Version));
-  RequireOpen(LRow);
-  LNotice := CancelNoticeHours(FScope);
-  LLatest := LRow.StartUtc - Int64(LNotice) * 3600;
+  LNotice := CancelNoticeHours(AScope);
+  LLatest := ARow.StartUtc - Int64(LNotice) * 3600;
   if ANow > LLatest then
     raise EHttpException.Create(409, Format('Cancelling needs %d hours'' notice: it was ' +
       'possible until %s.', [LNotice, JsonUtcDateTimeToStr(UnixToUtc(LLatest))]),
       CODE_CANCEL_NOTICE_PASSED);
+end;
+
+// The status cancelled, from AVersion only: False when the row has another
+// version by now.
+function TAppointmentRepository.WriteCancel(const AId: string; AVersion: Integer;
+  ANow: Int64): Boolean;
+var
+  LQuery: IQuery;
+  LTx: IScopeTransaction;
+begin
   LTx := FScope.Factory.GetPool.AcquireQuery(LQuery);
   LTx.StartTransaction;
   try
@@ -775,18 +786,50 @@ begin
       .ProcessTag('MOVE', False)
       .ProcessTag('STATUS', True));
     LQuery.Params.Strings['ID'] := AId;
-    LQuery.Params.Integers['VERSION'] := LRow.Version;
+    LQuery.Params.Integers['VERSION'] := AVersion;
     LQuery.Params.Int64s['UPDATED_AT'] := ANow;
     LQuery.Params.Strings['STATUS'] := STATUS_CANCELLED;
-    if LQuery.ExecSql = 0 then
-      RaisePreconditionFailed;
+    Result := LQuery.ExecSql > 0;
     LTx.Commit;
   except
     LTx.Rollback;
     raise;
   end;
-  LQuery := nil;
-  LTx := nil;
+end;
+
+function TAppointmentRepository.Cancel(const AId, AIfMatch: string;
+  ANow: Int64): IAppointment;
+var
+  LRow: TAppointmentRow;
+begin
+  RequireIfMatchSent(AIfMatch);
+  LRow := ReadRow(FScope, AId);
+  RequireIfMatch(AIfMatch, VersionETag(LRow.Version));
+  RequireOpen(LRow);
+  CheckCancelNotice(FScope, LRow, ANow);
+  if not WriteCancel(AId, LRow.Version, ANow) then
+    RaisePreconditionFailed;
+  Result := FindById(AId);
+end;
+
+function TAppointmentRepository.CancelByLink(const AId: string; ANow: Int64): IAppointment;
+var
+  LRow: TAppointmentRow;
+begin
+  LRow := ReadRow(FScope, AId);
+  // A link opened twice is not an error.
+  if LRow.Status = STATUS_CANCELLED then
+    Exit(FindById(AId));
+  RequireOpen(LRow);
+  CheckCancelNotice(FScope, LRow, ANow);
+  if not WriteCancel(AId, LRow.Version, ANow) then
+  begin
+    // Someone changed it in between: cancelled is what the link wanted.
+    LRow := ReadRow(FScope, AId);
+    if LRow.Status <> STATUS_CANCELLED then
+      raise EHttpException.Create(409, 'The appointment changed while cancelling: try again.',
+        CODE_APPOINTMENT_CHANGED);
+  end;
   Result := FindById(AId);
 end;
 

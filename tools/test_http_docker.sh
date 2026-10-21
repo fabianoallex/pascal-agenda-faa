@@ -60,7 +60,7 @@ echo "== engine: $ENGINE"
 
 # $NETOPT is unquoted on purpose: empty, or "--network <name>".
 MSYS_NO_PATHCONV=1 docker run --rm $NETOPT -v "$MOUNT:/src:ro" \
-  -e DEV_MODE=true -e PASSWORD_ITERATIONS=20000 -e AUTH_RATE_LIMIT=60 \
+  -e DEV_MODE=true -e PASSWORD_ITERATIONS=20000 -e AUTH_RATE_LIMIT=60 -e PUBLIC_RATE_LIMIT=60 \
   -e DB_ENGINE="$ENGINE" -e DB_HOST="$PG" -e DB_NAME=agenda_scenarios \
   -e DB_USER=postgres -e DB_PASSWORD=postgres \
   -e REDIS_HOST="$REDIS_HOST" -e REDIS_CMD="$REDIS_CMD" \

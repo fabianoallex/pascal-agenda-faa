@@ -34,10 +34,16 @@
 # - Idempotency-Key (tools/http_scenarios_idempotency.sh): a retry replays the
 #   first answer (a 201, a 409, a 400), another body is a 422, keys per tenant,
 #   four retries at once run once;
+# - the public routes (tools/http_scenarios_public.sh): no token, the tenant
+#   from the slug (unknown and suspended one 404), active services and
+#   professionals only, booking with a required key and the customer found
+#   by contact and name, the signed link (tampered, moved, expired), cancel
+#   by link twice, the rate limit by address;
 # - the rate limit on /auth/ by client address (last: it uses the window).
 #
 #   sh tools/http_scenarios.sh [port]   (default 9400; AgendaApi must be running,
-#                                        with AUTH_RATE_LIMIT=60)
+#                                        with AUTH_RATE_LIMIT=60 and
+#                                        PUBLIC_RATE_LIMIT=60)
 #
 # The same script for every build (FPC Windows/Linux, Delphi Win32/Win64).
 # OPENAPI_OUT / METRICS_OUT: also save the document and the metrics, for the
@@ -261,6 +267,8 @@ fi
 . "$(dirname "$0")/http_scenarios_changes.sh"
 # --- Idempotency-Key on the booking
 . "$(dirname "$0")/http_scenarios_idempotency.sh"
+# --- the public routes (last of the files: it fills the /public/ window)
+. "$(dirname "$0")/http_scenarios_public.sh"
 
 # --- OpenAPI document and Swagger UI
 req GET /swagger/doc.json ""
@@ -281,6 +289,20 @@ body_lacks '"to_"' "OpenAPI: the keyword member is named to"
 body_has '"/professionals/{id}/availability":{"get":{' "OpenAPI: availability"
 body_has '"/appointments":{"get":{' "OpenAPI: appointments"
 body_has '"/appointments/{id}/cancel":{"post":{' "OpenAPI: the cancel route"
+body_has '"/public/{slug}/services":{"get":{' "OpenAPI: the public services"
+body_has '"/public/{slug}/appointments/{id}/cancel":{"post":{' "OpenAPI: the cancel by link"
+body_has '{"name":"Idempotency-Key","in":"header","description":"Required: 16 to 255' "OpenAPI: the public key, required"
+if [ -n "$PY" ]; then
+  # Every public operation, and only those, marked as needing no token.
+  "$PY" -I -c '
+import json, sys
+paths = json.load(open(sys.argv[1], encoding="utf-8"))["paths"]
+bad = [p + " " + m for p, ops in paths.items() for m, op in ops.items()
+       if p.startswith("/public/") != (op.get("security") == [])
+       and not p.startswith(("/health", "/metrics", "/swagger", "/auth/"))]
+print(" ".join(bad)); sys.exit(1 if bad else 0)' "$T/body" > "$T/security" && ok \
+    || fail "OpenAPI: security [] on the public routes only (wrong: $(cat "$T/security"))"
+fi
 [ -n "$OPENAPI_OUT" ] && cp "$T/body" "$OPENAPI_OUT"
 req GET /swagger ""
 status_is 200 "Swagger UI"

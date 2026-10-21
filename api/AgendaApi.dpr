@@ -34,6 +34,13 @@ program AgendaApi;
                          REDIS_CONNECT_TIMEOUT_MS (500), REDIS_LOCK_PREFIX
                          ('agenda:lock:')
     IDEMPOTENCY_TTL_HOURS how long a booking's Idempotency-Key replays (24)
+    LINK_SIGNING_KEYS    signs the public links (Agenda.SignedLinks):
+                         "id:<base64 of 32 bytes>", comma separated, the
+                         first signs; required unless DEV_MODE=true
+    PUBLIC_RATE_LIMIT    a minute per client address on /public/ (60)
+    PUBLIC_BASE_URL      what goes before /public/... in a link ('': a path)
+    TRUSTED_PROXY_HOPS   proxies in front of the API that append to
+                         X-Forwarded-For (0: only a loopback peer's counts)
 
   On startup the database is brought to the latest migration, before the
   server listens; --reset deletes the SQLite file first (PostgreSQL: drop and
@@ -73,6 +80,21 @@ program AgendaApi;
                          cancel within the tenant's notice
     GET  /health/live, /health/ready, /metrics, /swagger (/swagger/doc.json)
 
+  Public, no token (docs/design.md, M3): the tenant is the path's slug
+  (Agenda.PublicTenancy: unknown and suspended are one 404), rate limited by
+  client address:
+    GET  /public/:slug/services, /public/:slug/professionals
+                         the active ones: id, name (a service's duration and
+                         price)
+    GET  /public/:slug/professionals/:id/availability?service=&date=&days=
+    POST /public/:slug/appointments
+                         Idempotency-Key required; the customer by phone or
+                         email and name (found or created); the answer has
+                         the appointment's signed links
+    GET  /public/:slug/appointments/:id?exp=&sig=
+    POST /public/:slug/appointments/:id/cancel?exp=&sig=
+                         the signed link: 403 invalid_link, 410 link_expired
+
   Signing keys: one rotating ring per tenant (TTenantJwtKeyRing), kept and
   sealed in the database (TDbJwtKeyStore + TSealedJwtKeyStore). No legacy
   secret: a token without kid is refused.
@@ -106,6 +128,7 @@ uses
   PascalApi.JwtKeys,
   PascalApi.Tenancy,
   PascalApi.Horse.Middlewares,
+  PascalApi.OpenApi,
   PascalApi.Horse.OpenApi,
   PascalApi.Horse.Observability,
   PascalApi.Horse.Tenancy,
@@ -135,7 +158,10 @@ uses
   Agenda.TimeOff in '..\src\Agenda.TimeOff.pas',
   Agenda.Slots in '..\src\Agenda.Slots.pas',
   Agenda.Availability in '..\src\Agenda.Availability.pas',
-  Agenda.Appointments in '..\src\Agenda.Appointments.pas';
+  Agenda.Appointments in '..\src\Agenda.Appointments.pas',
+  Agenda.SignedLinks in '..\src\Agenda.SignedLinks.pas',
+  Agenda.PublicTenancy in '..\src\Agenda.PublicTenancy.pas',
+  Agenda.Public in '..\src\Agenda.Public.pas';
 
 const
   APP_NAME = 'agenda-api';
@@ -143,8 +169,15 @@ const
   DEFAULT_PORT = 9400;
   // The 32 bytes "development-master-key-change-me": DEV_MODE only.
   DEV_MASTER_KEY = 'dev:ZGV2ZWxvcG1lbnQtbWFzdGVyLWtleS1jaGFuZ2UtbWU=';
-  OPEN_PATHS: array[0..6] of string = ('/health', '/metrics', '/swagger', '/auth/login',
-    '/auth/refresh', '/auth/logout', '/favicon.ico');
+  // The 32 bytes "development-link-signing-key-123": DEV_MODE only.
+  DEV_LINK_KEY = 'dev:ZGV2ZWxvcG1lbnQtbGluay1zaWduaW5nLWtleS0xMjM=';
+  // /public: the end customer's routes, with no token; the tenant is the
+  // path's (PublicTenant, below).
+  OPEN_PATHS: array[0..7] of string = ('/health', '/metrics', '/swagger', '/auth/login',
+    '/auth/refresh', '/auth/logout', '/favicon.ico', '/public');
+  // A public booking's Idempotency-Key: its stored answer carries the link,
+  // so a short key another client could guess is refused.
+  PUBLIC_MIN_KEY_CHARS = 16;
 
 type
   // Horse's and the libraries' callbacks are methods on FPC ("of object"),
@@ -163,7 +196,8 @@ type
     function NewFactory(const ADatabaseKey, APoolName: string): IDBFactory;
     /// Agenda.Auth's signer: the JWT middleware's key ring.
     function SignClaims(const AClaims: string): string;
-    /// The rate limit: /auth/* by client address, the rest by tenant.
+    /// The rate limit: /auth/* and /public/* by client address, the rest by
+    /// tenant.
     function RateKey(AReq: THorseRequest): string;
     function RateLimitFor(AReq: THorseRequest): Integer;
   end;
@@ -181,6 +215,10 @@ var
   GSlotLock: TRedisLock;
   // Idempotency-Key on the booking (PascalApi.Idempotency), in the database.
   GIdempotency: TIdempotency;
+  // The public routes: the link keys, their rate limit, the links' base.
+  GLinks: TSignedLinks;
+  GPublicLimit: Integer;
+  GPublicBaseUrl: string;
 
 { TAgendaHooks }
 
@@ -230,12 +268,20 @@ begin
   Result := Copy(LowerCase(AReq.PathInfo), 1, 6) = '/auth/';
 end;
 
+function IsPublicPath(AReq: THorseRequest): Boolean;
+begin
+  Result := IsUnderPathPrefix(LowerCase(AReq.PathInfo), PUBLIC_PATH_PREFIX);
+end;
+
 function TAgendaHooks.RateKey(AReq: THorseRequest): string;
 var
   LInfo: TTenantInfo;
 begin
   if IsAuthPath(AReq) then
     Result := 'auth:' + TClientAddress.Resolve(AReq)
+  else if IsPublicPath(AReq) then
+    // Not by slug: trying names spends one window.
+    Result := 'public:' + TClientAddress.Resolve(AReq)
   else if TTenantMiddleware.TryCurrent(AReq, LInfo) then
     Result := 'tenant:' + LInfo.Id
   else
@@ -246,7 +292,29 @@ function TAgendaHooks.RateLimitFor(AReq: THorseRequest): Integer;
 begin
   Result := 0; // the options' Limit
   if IsAuthPath(AReq) then
-    Result := GAuthLimit;
+    Result := GAuthLimit
+  else if IsPublicPath(AReq) then
+    Result := GPublicLimit;
+end;
+
+// The tenant of a /public/<slug>/ path, after the rate limit: marked as
+// TTenantMiddleware marks a token's (so ScopeOf, the access log's tenant.id
+// and the repositories work alike), or one 404 for a slug that is unknown,
+// suspended or can't be an id (M3 decision 3). Other paths pass untouched;
+// TTenantMiddleware, before it, already cleared the mark on them.
+procedure PublicTenant(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LInfo: TTenantInfo;
+begin
+  if IsUnderPathPrefix(AReq.PathInfo, PUBLIC_PATH_PREFIX) then
+  begin
+    // Raised, not sent: TLoggerMiddleware (first) answers a middleware's
+    // exception as the error handler answers a handler's, the same 404 body.
+    if not ResolvePathTenant(GCatalog, AReq.PathInfo, PUBLIC_PATH_PREFIX, LInfo) then
+      raise ENotFoundException.Create('Not found.');
+    TPascalApiRequestState.Get(AReq).TenantId := LInfo.Id;
+  end;
+  ANext();
 end;
 
 var
@@ -883,7 +951,157 @@ begin
   end;
 end;
 
+{ Public: the end customer, with no token; the tenant from the path }
+
+function NewPublicAgenda(AReq: THorseRequest): TPublicAgenda;
+begin
+  Result := TPublicAgenda.Create(ScopeOf(AReq), GLinks, GSlotLock, GPublicBaseUrl);
+end;
+
+// An answer with a signed link in it is a credential: no cache keeps it.
+function NoStoreHeaders: string;
+begin
+  Result := HeaderLines([HttpHeader('Cache-Control', 'no-store')]);
+end;
+
+procedure SendPublicAppointment(ARes: THorseResponse; const AAppointment: IPublicAppointment);
+begin
+  THorseIdempotency.AddHeaders(ARes, NoStoreHeaders);
+  TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IPublicAppointment>(AAppointment));
+end;
+
+procedure GetPublicServices(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LFind: IPublicFind;
+  LAgenda: TPublicAgenda;
+  LPage: TPage<IPublicService>;
+begin
+  LFind := THorseQueryParams.Read<IPublicFind>(AReq);
+  LAgenda := NewPublicAgenda(AReq);
+  try
+    LPage := LAgenda.Services(LFind, PageRequestFrom(LFind.Page, LFind.Limit,
+      PAGE_DEFAULT_LIMIT, PAGE_MAX_LIMIT));
+  finally
+    LAgenda.Free;
+  end;
+  TJsonSend.Send(ARes, PageEnvelopeJson(LPage.Meta,
+    TJsonMapper.Shared.Serialize<TPublicServiceArray>(LPage.Items)));
+end;
+
+procedure GetPublicProfessionals(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LFind: IPublicFind;
+  LAgenda: TPublicAgenda;
+  LPage: TPage<IPublicProfessional>;
+begin
+  LFind := THorseQueryParams.Read<IPublicFind>(AReq);
+  LAgenda := NewPublicAgenda(AReq);
+  try
+    LPage := LAgenda.Professionals(LFind, PageRequestFrom(LFind.Page, LFind.Limit,
+      PAGE_DEFAULT_LIMIT, PAGE_MAX_LIMIT));
+  finally
+    LAgenda.Free;
+  end;
+  TJsonSend.Send(ARes, PageEnvelopeJson(LPage.Meta,
+    TJsonMapper.Shared.Serialize<TPublicProfessionalArray>(LPage.Items)));
+end;
+
+// Idempotency-Key required, and long enough not to be guessed: a replay
+// hands over the stored answer, link included. Checked before Start, so
+// these 400s are not stored.
+procedure RequirePublicKey(AReq: THorseRequest);
+var
+  LHeader: string;
+begin
+  LHeader := Trim(AReq.Headers[IDEMPOTENCY_KEY_HEADER]);
+  if LHeader = '' then
+    raise EHttpException.Create(400, 'Idempotency-Key is required: a new one for each ' +
+      'booking, such as a UUID.', 'idempotency_key_required');
+  if Length(NormalizeIdempotencyKey(LHeader)) < PUBLIC_MIN_KEY_CHARS then
+    raise EHttpException.Create(400, Format('Idempotency-Key must be %d to %d visible ASCII ' +
+      'characters, such as a UUID.', [PUBLIC_MIN_KEY_CHARS, IDEMPOTENCY_MAX_KEY_CHARS]),
+      API_CODE_INVALID_IDEMPOTENCY_KEY);
+end;
+
+procedure PostPublicAppointment(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LScope: TTenantDataScope;
+  LIdem: THorseIdempotentRequest;
+  LAgenda: TPublicAgenda;
+  LBody: string;
+begin
+  RequirePublicKey(AReq);
+  LScope := ScopeOf(AReq);
+  if LIdem.Start(GIdempotency, AReq, ARes, LScope.Discriminator) then
+    Exit;
+  LAgenda := NewPublicAgenda(AReq);
+  try
+    try
+      LBody := TJsonMapper.Shared.ToJson<IPublicAppointment>(
+        LAgenda.Book(THorseBody.Read<IPublicBookingInsert>(AReq), TJwt.UnixNow));
+      LIdem.Complete(201, LBody, NoStoreHeaders);
+    except
+      on E: Exception do
+      begin
+        LIdem.Fail(E);
+        raise;
+      end;
+    end;
+  finally
+    LAgenda.Free;
+  end;
+  LIdem.Send(201, LBody, NoStoreHeaders);
+end;
+
+procedure GetPublicAppointment(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LAgenda: TPublicAgenda;
+  LAppointment: IPublicAppointment;
+begin
+  LAgenda := NewPublicAgenda(AReq);
+  try
+    LAppointment := LAgenda.Show(AReq.Params['id'], AReq.Query['exp'], AReq.Query['sig'],
+      TJwt.UnixNow);
+  finally
+    LAgenda.Free;
+  end;
+  SendPublicAppointment(ARes, LAppointment);
+end;
+
+procedure CancelPublicAppointment(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LAgenda: TPublicAgenda;
+  LAppointment: IPublicAppointment;
+begin
+  LAgenda := NewPublicAgenda(AReq);
+  try
+    LAppointment := LAgenda.Cancel(AReq.Params['id'], AReq.Query['exp'], AReq.Query['sig'],
+      TJwt.UnixNow);
+  finally
+    LAgenda.Free;
+  end;
+  SendPublicAppointment(ARes, LAppointment);
+end;
+
 { Setup }
+
+// The public links' keys (LINK_SIGNING_KEYS), as OpenKeys reads the JWT
+// master key: required, unless DEV_MODE gives a development one.
+function OpenLinks: TSignedLinks;
+var
+  LKeys: string;
+begin
+  LKeys := TAppConfig.Get('LINK_SIGNING_KEYS', '');
+  if LKeys = '' then
+  begin
+    if not TAppConfig.GetBool('DEV_MODE', False) then
+      raise Exception.Create('LINK_SIGNING_KEYS is required (or DEV_MODE=true for ' +
+        'development). Generate one with: openssl rand -base64 32, and set "l1:<that>".');
+    SafeWriteln('WARNING DEV_MODE: the public links are signed with a development key');
+    LKeys := DEV_LINK_KEY;
+  end;
+  Result := TSignedLinks.Create(LKeys);
+end;
 
 function OpenKeys: IJwtKeyRing;
 var
@@ -1062,6 +1280,13 @@ begin
     GAuthLimit := TAppConfig.GetInt('AUTH_RATE_LIMIT', 10);
     GPasswordIterations := AuthOptions.PasswordIterations;
     GSlotLock := OpenSlotLock;
+    GLinks := OpenLinks;
+    GPublicLimit := TAppConfig.GetInt('PUBLIC_RATE_LIMIT', 60);
+    GPublicBaseUrl := TAppConfig.Get('PUBLIC_BASE_URL', '');
+    // A trailing "/" would double the one every link's path starts with.
+    while (GPublicBaseUrl <> '') and (GPublicBaseUrl[Length(GPublicBaseUrl)] = '/') do
+      Delete(GPublicBaseUrl, Length(GPublicBaseUrl), 1);
+    TClientAddress.ProxyHops := TAppConfig.GetInt('TRUSTED_PROXY_HOPS', 0);
     GIdempotency := TIdempotency.Create(TDbIdempotencyStore.Create(GDatabase.Factory),
       Int64(TAppConfig.GetInt('IDEMPOTENCY_TTL_HOURS', 24)) * 3600);
     if GSlotLock <> nil then
@@ -1086,6 +1311,12 @@ begin
     GRateLimit.KeyExtractor := GHooks.RateKey;
     GRateLimit.LimitFor := GHooks.RateLimitFor;
     THorse.Use(TRateLimitMiddleware.New(GRateLimit));
+    // After the rate limit: trying slugs spends the address's window.
+    {$IFDEF FPC}
+    THorse.Use(@PublicTenant);
+    {$ELSE}
+    THorse.Use(PublicTenant);
+    {$ENDIF}
 
     TRouteDoc.Post('/auth/login').Summary('Log in: tokens for a user of one tenant').Tag('auth')
       .Body<ILoginRequest>
@@ -1360,6 +1591,85 @@ begin
       .Error(409, 'own_account: you can''t delete yourself')
       .Register(DeleteUser);
 
+    TRouteDoc.Get('/public/:slug/services').Summary('A tenant''s active services (no account)')
+      .Tag('public')
+      .PathParam('slug', 'The tenant')
+      .QueryParams<IPublicFind>
+      .ResponsePaged<IPublicService>(200, 'A page of services')
+      .Error(400, 'A parameter or an order field that is not allowed')
+      .Error(404, 'No such tenant')
+      .Error(429, 'Too many requests from this address')
+      .Register(GetPublicServices);
+    TRouteDoc.Get('/public/:slug/professionals')
+      .Summary('A tenant''s active professionals (no account)').Tag('public')
+      .PathParam('slug', 'The tenant')
+      .QueryParams<IPublicFind>
+      .ResponsePaged<IPublicProfessional>(200, 'A page of professionals')
+      .Error(400, 'A parameter or an order field that is not allowed')
+      .Error(404, 'No such tenant')
+      .Error(429, 'Too many requests from this address')
+      .Register(GetPublicProfessionals);
+    TRouteDoc.Get('/public/:slug/professionals/:id/availability')
+      .Summary('Free slots of a professional for a service (no account)').Tag('public')
+      .PathParam('slug', 'The tenant')
+      .PathParam('id', 'The professional''s id')
+      .QueryParams<IAvailabilityFind>
+      .Response<IAvailability>(200)
+      .Error(400, 'service or date missing, invalid_date, date_out_of_range, days out of range')
+      .Error(404, 'No such tenant, professional or service')
+      .Error(409, 'professional_inactive, service_inactive')
+      .Error(429, 'Too many requests from this address')
+      .Register(GetAvailability);
+    TRouteDoc.Post('/public/:slug/appointments').Summary('Book a free slot (no account)')
+      .Tag('public')
+      .Descr('The customer is found by phone (or, without one, email) and name, or ' +
+        'created. Idempotency-Key is required: a retry with the same key and body gets the ' +
+        'first answer again, links included. The answer''s url shows the appointment and ' +
+        'its cancelUrl cancels it, with no account, until it starts.')
+      .PathParam('slug', 'The tenant')
+      .HeaderParam('Idempotency-Key', Format('Required: %d to 255 visible ASCII characters, ' +
+        'such as a UUID', [PUBLIC_MIN_KEY_CHARS]), True)
+      .Body<IPublicBookingInsert>
+      .Response<IPublicAppointment>(201, 'Booked')
+      .ResponseHeader('Idempotent-Replayed', '"true" on an answer sent again')
+      .Error(400, 'A member missing, contact_required, unknown_professional, unknown_service, ' +
+        'idempotency_key_required, invalid_idempotency_key')
+      .Error(404, 'No such tenant')
+      .Error(409, 'slot_unavailable, professional_inactive, service_inactive, ' +
+        'idempotency_key_in_flight')
+      .Error(422, 'idempotency_key_reused: the key was used for another request')
+      .Error(429, 'Too many requests from this address')
+      .NoMcp
+      .Register(PostPublicAppointment);
+    TRouteDoc.Get('/public/:slug/appointments/:id').Summary('An appointment, by its signed link')
+      .Tag('public')
+      .PathParam('slug', 'The tenant')
+      .PathParam('id', 'The appointment''s id')
+      .QueryParam('exp', 'From the link', ptString, True)
+      .QueryParam('sig', 'From the link', ptString, True)
+      .Response<IPublicAppointment>(200)
+      .Error(403, 'invalid_link')
+      .Error(404, 'No such tenant or appointment')
+      .Error(410, 'link_expired')
+      .Error(429, 'Too many requests from this address')
+      .Register(GetPublicAppointment);
+    TRouteDoc.Post('/public/:slug/appointments/:id/cancel')
+      .Summary('Cancel an appointment, by its signed link').Tag('public')
+      .Descr('No If-Match: the link is enough. Possible until the tenant''s notice (24 ' +
+        'hours by default) before the start; cancelling again answers the cancelled ' +
+        'appointment.')
+      .PathParam('slug', 'The tenant')
+      .PathParam('id', 'The appointment''s id')
+      .QueryParam('exp', 'From the link', ptString, True)
+      .QueryParam('sig', 'From the link', ptString, True)
+      .Response<IPublicAppointment>(200, 'Cancelled')
+      .Error(403, 'invalid_link')
+      .Error(404, 'No such tenant or appointment')
+      .Error(409, 'appointment_closed, cancel_notice_passed, appointment_changed')
+      .Error(410, 'link_expired')
+      .Error(429, 'Too many requests from this address')
+      .Register(CancelPublicAppointment);
+
     TMetricsEndpoint.Register;
     THealthEndpoint.AddCheck('database', GHooks.DatabaseReady);
     THealthEndpoint.Register('/health', GHooks.Error);
@@ -1369,6 +1679,7 @@ begin
     THorse.Listen(GPort);
   finally
     GIdempotency.Free;
+    GLinks.Free;
     GSlotLock.Free;
     GRedis.Free;
     GAuth.Free;

@@ -85,6 +85,9 @@
         <DCCReference Include="..\src\Agenda.Slots.pas"/>
         <DCCReference Include="..\src\Agenda.Availability.pas"/>
         <DCCReference Include="..\src\Agenda.Appointments.pas"/>
+        <DCCReference Include="..\src\Agenda.SignedLinks.pas"/>
+        <DCCReference Include="..\src\Agenda.PublicTenancy.pas"/>
+        <DCCReference Include="..\src\Agenda.Public.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>
