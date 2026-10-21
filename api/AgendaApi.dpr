@@ -28,7 +28,8 @@ program AgendaApi;
     address on the /auth/ routes), RATE_LIMIT (600 a minute per tenant), CATALOG_TTL (30)
     OTEL_EXPORTER_OTLP_ENDPOINT  spans to an OpenTelemetry collector, when set
     REDIS_HOST           a slot lock in Redis in front of the booking, when set
-                         (Agenda.Locks; the database decides either way):
+                         (pascal-redis-faa's TRedisLock; the database decides
+                         either way):
                          REDIS_PORT (6379), REDIS_PASSWORD,
                          REDIS_CONNECT_TIMEOUT_MS (500), REDIS_LOCK_PREFIX
                          ('agenda:lock:')
@@ -65,7 +66,7 @@ program AgendaApi;
                          any user: book a free slot (409 "slot_unavailable"
                          otherwise), list, read; ETag: the version in quotes;
                          Idempotency-Key (optional): a retry replays the first
-                         answer (Agenda.Idempotency)
+                         answer (pascal-api-infra-faa's PascalApi.Idempotency)
     PATCH /appointments/:id, POST /appointments/:id/cancel
                          any user, with If-Match (428 without it, 412 for
                          another version): move, confirm, done, no_show;
@@ -109,8 +110,12 @@ uses
   PascalApi.Horse.Observability,
   PascalApi.Horse.Tenancy,
   PascalApi.RefreshTokens,
+  PascalApi.Preconditions,
+  PascalApi.Idempotency,
+  PascalApi.Horse.Idempotency,
   Redis.Types,
   Redis.Client,
+  Redis.Lock,
   Agenda.Schema in '..\src\Agenda.Schema.pas',
   Agenda.Database in '..\src\Agenda.Database.pas',
   Agenda.Passwords in '..\src\Agenda.Passwords.pas',
@@ -130,10 +135,7 @@ uses
   Agenda.TimeOff in '..\src\Agenda.TimeOff.pas',
   Agenda.Slots in '..\src\Agenda.Slots.pas',
   Agenda.Availability in '..\src\Agenda.Availability.pas',
-  Agenda.Appointments in '..\src\Agenda.Appointments.pas',
-  Agenda.Locks in '..\src\Agenda.Locks.pas',
-  Agenda.Preconditions in '..\src\Agenda.Preconditions.pas',
-  Agenda.Idempotency in '..\src\Agenda.Idempotency.pas';
+  Agenda.Appointments in '..\src\Agenda.Appointments.pas';
 
 const
   APP_NAME = 'agenda-api';
@@ -152,6 +154,10 @@ type
     procedure Error(const ALine: string);
     procedure Security(const ALine: string);
     procedure Migration(const AEvent: TMigrationEvent);
+    /// TRedisLock.OnUnavailable: Redis didn't answer, the database decides.
+    /// The key is logged, never the token.
+    procedure SlotLockUnavailable(ASender: TObject; const AOperation, AKey: string;
+      AError: Exception);
     function DatabaseReady: Boolean;
     /// TTenantDataResolver's: every tenant is in the one database.
     function NewFactory(const ADatabaseKey, APoolName: string): IDBFactory;
@@ -172,8 +178,8 @@ var
   GPasswordIterations: Integer;
   // The slot lock (nil without REDIS_HOST) and its client, one per process.
   GRedis: TRedisClient;
-  GSlotLock: ISlotLock;
-  // Idempotency-Key on the booking (Agenda.Idempotency), in the database.
+  GSlotLock: TRedisLock;
+  // Idempotency-Key on the booking (PascalApi.Idempotency), in the database.
   GIdempotency: TIdempotency;
 
 { TAgendaHooks }
@@ -181,6 +187,13 @@ var
 procedure TAgendaHooks.Error(const ALine: string);
 begin
   SafeWriteln('ERROR ' + ALine);
+end;
+
+procedure TAgendaHooks.SlotLockUnavailable(ASender: TObject; const AOperation, AKey: string;
+  AError: Exception);
+begin
+  Error(Format('slot lock unavailable (%s %s), the database decides: %s: %s',
+    [AOperation, AKey, AError.ClassName, AError.Message]));
 end;
 
 procedure TAgendaHooks.Security(const ALine: string);
@@ -772,7 +785,7 @@ end;
 
 { Appointments: any user books, reads, changes and cancels }
 
-// The body and its ETag (Agenda.Preconditions): what If-Match sends back.
+// The body and its ETag (PascalApi.Preconditions): what If-Match sends back.
 procedure SendAppointment(ARes: THorseResponse; const AAppointment: IAppointment;
   AStatus: Integer = 200);
 begin
@@ -810,69 +823,38 @@ begin
   end;
 end;
 
-// A stored answer sent again (Agenda.Idempotency): its headers, then its
-// body; Idempotent-Replayed says it is a replay.
-procedure SendReplay(ARes: THorseResponse; const AResponse: TStoredResponse);
-var
-  LRest, LLine: string;
-  P: Integer;
-begin
-  LRest := AResponse.Headers;
-  while LRest <> '' do
-  begin
-    P := Pos(#10, LRest);
-    if P = 0 then
-      P := Length(LRest) + 1;
-    LLine := Copy(LRest, 1, P - 1);
-    Delete(LRest, 1, P);
-    P := Pos(':', LLine);
-    if P > 1 then
-      ARes.AddHeader(Copy(LLine, 1, P - 1), Trim(Copy(LLine, P + 1, MaxInt)));
-  end;
-  ARes.AddHeader('Idempotent-Replayed', 'true');
-  TJsonSend.Send(ARes, AResponse.Body, AResponse.Status);
-end;
-
+// With an Idempotency-Key (pascal-api-infra-faa 0.23.0), a key already
+// answered replays that answer (THorseIdempotentRequest: its headers,
+// Idempotent-Replayed, its body); the tenant is the key's scope.
 procedure PostAppointment(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
-const
-  PATH = '/appointments';
 var
   LScope: TTenantDataScope;
+  LIdem: THorseIdempotentRequest;
   LRepo: TAppointmentRepository;
   LAppointment: IAppointment;
-  LKey, LBody: string;
-  LReplay: TStoredResponse;
+  LBody, LHeaders: string;
 begin
   LScope := ScopeOf(AReq);
-  // With an Idempotency-Key, a key already answered replays that answer.
-  LKey := Trim(AReq.Headers['Idempotency-Key']);
-  if (LKey <> '') and GIdempotency.Start(LScope.Discriminator, LKey,
-    RequestFingerprint('POST', PATH, AReq.Body), TJwt.UnixNow, LReplay) then
-  begin
-    SendReplay(ARes, LReplay);
+  if LIdem.Start(GIdempotency, AReq, ARes, LScope.Discriminator) then
     Exit;
-  end;
   LRepo := TAppointmentRepository.Create(LScope, GSlotLock);
   try
     try
       LAppointment := LRepo.Book(THorseBody.Read<IAppointmentInsert>(AReq), TJwt.UnixNow);
       LBody := TJsonMapper.Shared.ToJson<IAppointment>(LAppointment);
-      if LKey <> '' then
-        GIdempotency.Complete(LScope.Discriminator, LKey, 201,
-          'ETag: ' + VersionETag(LAppointment.Version), LBody);
+      LHeaders := HeaderLines([HttpHeader('ETag', VersionETag(LAppointment.Version))]);
+      LIdem.Complete(201, LBody, LHeaders);
     except
       on E: Exception do
       begin
-        if LKey <> '' then
-          GIdempotency.Fail(LScope.Discriminator, LKey, E, 'POST', PATH);
+        LIdem.Fail(E);
         raise;
       end;
     end;
   finally
     LRepo.Free;
   end;
-  ARes.AddHeader('ETag', VersionETag(LAppointment.Version));
-  TJsonSend.Send(ARes, LBody, 201);
+  LIdem.Send(201, LBody, LHeaders);
 end;
 
 procedure PatchAppointment(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
@@ -929,7 +911,7 @@ end;
 // The slot lock in front of the booking, when REDIS_HOST is set. The client
 // connects on its first command, so a Redis that is down doesn't stop the
 // start: the booking logs it and goes on to the database.
-function OpenSlotLock: ISlotLock;
+function OpenSlotLock: TRedisLock;
 var
   LParams: TRedisParams;
 begin
@@ -943,8 +925,8 @@ begin
   LParams.ConnectTimeoutMs := TAppConfig.GetInt('REDIS_CONNECT_TIMEOUT_MS', 500);
   LParams.ClientName := APP_NAME;
   GRedis := TRedisClient.Create(LParams);
-  Result := TRedisSlotLock.Create(GRedis, TAppConfig.Get('REDIS_LOCK_PREFIX', 'agenda:lock:'),
-    GHooks.Error);
+  Result := TRedisLock.Create(GRedis, TAppConfig.Get('REDIS_LOCK_PREFIX', 'agenda:lock:'));
+  Result.OnUnavailable := GHooks.SlotLockUnavailable;
 end;
 
 function AuthOptions: TAuthOptions;
@@ -1265,14 +1247,18 @@ begin
     TRouteDoc.Get('/appointments/:id').Summary('One appointment').Tag('appointments')
       .PathParam('id', 'The appointment''s id')
       .Response<IAppointment>(200)
+      .ResponseHeader('ETag', 'The version read, for If-Match')
       .Error(404, 'The tenant has no appointment with this id')
       .Register(GetAppointment);
     TRouteDoc.Post('/appointments').Summary('Book a free slot').Tag('appointments')
       .Descr('Idempotency-Key (optional, 1 to 255 visible ASCII characters, such as a ' +
         'UUID): a retry with the same key and body gets the first answer again, with ' +
         'Idempotent-Replayed: true, for 24 hours.')
+      .HeaderParam('Idempotency-Key', 'Optional: 1 to 255 visible ASCII characters, such as a UUID')
       .Body<IAppointmentInsert>
       .Response<IAppointment>(201, 'Booked')
+      .ResponseHeader('ETag', 'The new appointment''s version')
+      .ResponseHeader('Idempotent-Replayed', '"true" on an answer sent again')
       .Error(400, 'A member missing, unknown_professional, unknown_service, unknown_customer, ' +
         'invalid_idempotency_key')
       .Error(409, 'slot_unavailable, professional_inactive, service_inactive, ' +
@@ -1284,8 +1270,10 @@ begin
         'as in "3"). The answer carries the new ETag.')
       .Tag('appointments')
       .PathParam('id', 'The appointment''s id')
+      .HeaderParam('If-Match', 'The ETag of the version read, as in "3"', True)
       .Body<IAppointmentPatch>
       .Response<IAppointment>(200, 'Changed')
+      .ResponseHeader('ETag', 'The new version')
       .Error(400, 'invalid_if_match, invalid_instant, a status that isn''t one, use_cancel')
       .Error(404, 'The tenant has no appointment with this id')
       .Error(409, 'appointment_closed, not_started, slot_unavailable, professional_inactive')
@@ -1297,7 +1285,9 @@ begin
         'tenant''s notice (24 hours by default) before the start.')
       .Tag('appointments')
       .PathParam('id', 'The appointment''s id')
+      .HeaderParam('If-Match', 'The ETag of the version read, as in "3"', True)
       .Response<IAppointment>(200, 'Cancelled')
+      .ResponseHeader('ETag', 'The new version')
       .Error(400, 'invalid_if_match')
       .Error(404, 'The tenant has no appointment with this id')
       .Error(409, 'appointment_closed, cancel_notice_passed')
@@ -1379,7 +1369,7 @@ begin
     THorse.Listen(GPort);
   finally
     GIdempotency.Free;
-    GSlotLock := nil;
+    GSlotLock.Free;
     GRedis.Free;
     GAuth.Free;
     GKeys := nil;

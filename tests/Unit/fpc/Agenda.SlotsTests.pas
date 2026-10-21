@@ -46,7 +46,6 @@ type
     procedure Slots_Busy_WithBuffer;
     procedure Slots_NotBeforeNow;
     procedure Slots_NoWeek_NoSlots;
-    procedure Local_WithOffset_BothOccurrences;
   end;
 
 implementation
@@ -252,10 +251,10 @@ begin
   LStarts := FreeSlots(WorkingSpans(LZone, Week([Interval(7, 0, 180)]), LDay, 1), nil,
     60, 0, 60, LFrom, LTo, 0);
   TAssert.AssertEquals('00:00, 01:00 EDT, 01:00 EST, 02:00', 4, Length(LStarts));
-  TAssert.AssertEquals('2026-11-01T00:00:00-04:00', LocalIso(LZone, LStarts[0]));
-  TAssert.AssertEquals('2026-11-01T01:00:00-04:00', LocalIso(LZone, LStarts[1]));
-  TAssert.AssertEquals('2026-11-01T01:00:00-05:00', LocalIso(LZone, LStarts[2]));
-  TAssert.AssertEquals('2026-11-01T02:00:00-05:00', LocalIso(LZone, LStarts[3]));
+  TAssert.AssertEquals('2026-11-01T00:00:00-04:00', PcLocalIsoString(LZone, LStarts[0]));
+  TAssert.AssertEquals('2026-11-01T01:00:00-04:00', PcLocalIsoString(LZone, LStarts[1]));
+  TAssert.AssertEquals('2026-11-01T01:00:00-05:00', PcLocalIsoString(LZone, LStarts[2]));
+  TAssert.AssertEquals('2026-11-01T02:00:00-05:00', PcLocalIsoString(LZone, LStarts[3]));
 end;
 
 procedure TSlotsTests.Slots_NightShift_CrossMidnight_BelongToTheirDay;
@@ -324,15 +323,6 @@ begin
   TAssert.AssertEquals('a service longer than the day''s hours', 0,
     Length(FreeSlots(WorkingSpans(NewYork, Week([Interval(1, 540, 600)]), LDay, 7), nil,
     90, 0, 15, LFrom, LTo, 0)));
-end;
-
-procedure TSlotsTests.Local_WithOffset_BothOccurrences;
-begin
-  TAssert.AssertEquals('2026-11-01T01:30:00-04:00', LocalIso(NewYork, NY_2026_11_01_0130_EDT));
-  TAssert.AssertEquals('2026-11-01T01:30:00-05:00', LocalIso(NewYork, NY_2026_11_01_0130_EST));
-  TAssert.AssertEquals('2026-11-02T05:00:00+00:00', LocalIso(PcUtcZone, NY_2026_11_02_0000));
-  TAssert.AssertEquals('2026-11-02T10:45:00+05:45',
-    LocalIso(PcTimeZones.Find('Asia/Kathmandu'), NY_2026_11_02_0000));
 end;
 
 initialization

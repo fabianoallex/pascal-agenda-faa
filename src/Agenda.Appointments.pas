@@ -21,7 +21,8 @@ unit Agenda.Appointments;
   - The row keeps what the booking took: END_UTC (the service's end) and
     BUSY_UNTIL_UTC (plus its buffer); a later change to the service doesn't
     move it. STATUS starts as booked, VERSION as 1.
-  - Changes need If-Match (Agenda.Preconditions): the ETag is the version in
+  - Changes need If-Match (pascal-api-infra-faa's PascalApi.Preconditions):
+    the ETag is the version in
     quotes, sent with every appointment read, booked or changed. Absent is a
     428, another version a 412. The row is read first (404, the If-Match
     check, the rules), then written by an UPDATE that also names the version
@@ -40,11 +41,11 @@ unit Agenda.Appointments;
     one that the tenant doesn't have is a 400 naming its member, every one
     in the same answer. An inactive professional or service is a 409, as in
     the availability route.
-  - Optionally, a slot lock in front (Agenda.Locks, Redis): requests for the
-    same professional and start meet there first, and the ones that don't
-    get it are a 409 without reaching the database. Released after the
-    commit; without it (no REDIS_HOST, or Redis down) the transaction alone
-    decides, the same way.
+  - Optionally, a slot lock in front (pascal-redis-faa's TRedisLock): requests
+    for the same professional and start meet there first, and the ones that
+    don't get it (rlBusy) are a 409 without reaching the database. Released
+    after the commit; without it (no REDIS_HOST, or rlUnavailable: Redis
+    down) the transaction alone decides, the same way.
   - Every query goes through TTenantFilter.Prepare (the ${TENANT} tag); the
     foreign keys keep a professional, service or customer with appointments
     from being deleted (409).
@@ -61,7 +62,7 @@ uses
   PascalApi.OrderBy,
   PascalApi.Dto,
   PascalApi.Tenancy,
-  Agenda.Locks;
+  Redis.Lock;
 
 const
   STATUS_BOOKED = 'booked';
@@ -206,10 +207,12 @@ type
   TAppointmentRepository = class
   private
     FScope: TTenantDataScope;
-    FLock: ISlotLock;
+    FLock: TRedisLock;
+    function LockSlot(const AKey: string; out AToken: string): Boolean;
   public
-    /// ALock: the slot lock in front of the booking, or nil for none.
-    constructor Create(const AScope: TTenantDataScope; const ALock: ISlotLock = nil);
+    /// ALock: the slot lock in front of the booking (not owned), or nil for
+    /// none.
+    constructor Create(const AScope: TTenantDataScope; ALock: TRedisLock = nil);
     /// EValidationException for from/to that aren't instants or a status
     /// that isn't one; EOrderByException (400).
     function FindPage(const AFind: IAppointmentFind; const APage: TPageRequest): TPage<IAppointment>;
@@ -243,7 +246,7 @@ uses
   PascalApi.OpenApi,
   PascalApi.Http,
   PascalApi.PagedQuery,
-  Agenda.Preconditions,
+  PascalApi.Preconditions,
   Agenda.Times,
   Agenda.Tokens,
   Agenda.Slots,
@@ -459,11 +462,20 @@ end;
 { TAppointmentRepository }
 
 constructor TAppointmentRepository.Create(const AScope: TTenantDataScope;
-  const ALock: ISlotLock);
+  ALock: TRedisLock);
 begin
   inherited Create;
   FScope := AScope;
   FLock := ALock;
+end;
+
+// False only when another request holds the slot. Without a lock, or with
+// Redis down (rlUnavailable, logged by its OnUnavailable), True with AToken
+// '': the transaction decides alone, and Release of '' does nothing.
+function TAppointmentRepository.LockSlot(const AKey: string; out AToken: string): Boolean;
+begin
+  AToken := '';
+  Result := (FLock = nil) or (FLock.Acquire(AKey, SLOT_LOCK_TTL_MS, AToken) <> rlBusy);
 end;
 
 function TAppointmentRepository.FindPage(const AFind: IAppointmentFind;
@@ -552,7 +564,7 @@ begin
   // professional and start stops here.
   LLockKey := SlotLockKey(FScope, LProfessional, LStart);
   LLockToken := '';
-  if (FLock <> nil) and not FLock.TryAcquire(LLockKey, SLOT_LOCK_TTL_MS, LLockToken) then
+  if not LockSlot(LLockKey, LLockToken) then
     raise EHttpException.Create(409, 'Another request is booking this slot.',
       CODE_SLOT_UNAVAILABLE);
   try
@@ -675,7 +687,7 @@ begin
   if LMove.HasValue and (FLock <> nil) then
   begin
     LLockKey := SlotLockKey(FScope, LRow.ProfessionalId, LStart);
-    if not FLock.TryAcquire(LLockKey, SLOT_LOCK_TTL_MS, LLockToken) then
+    if not LockSlot(LLockKey, LLockToken) then
       raise EHttpException.Create(409, 'Another request is booking this slot.',
         CODE_SLOT_UNAVAILABLE);
     LLocked := True;

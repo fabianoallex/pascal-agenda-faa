@@ -225,7 +225,7 @@ begin
       'REFERENCES CUSTOMERS (TENANT_ID, ID));' +
       'CREATE INDEX IX_APPOINTMENTS_PROFESSIONAL ON APPOINTMENTS (TENANT_ID, PROFESSIONAL_ID, START_UTC);' +
       'CREATE INDEX IX_APPOINTMENTS_START ON APPOINTMENTS (TENANT_ID, START_UTC);')
-    // IDEMPOTENCY_KEYS (Agenda.Idempotency): a key per tenant, the request it
+    // IDEMPOTENCY_KEYS (PascalApi.Idempotency): a key per tenant, the request it
     // was first used for, and once done the answer to replay. RESPONSE_BODY
     // is TEXT, which both engines take.
     .Add(COMMON_SQL_DIR, 'MIG.0012',
@@ -462,7 +462,7 @@ begin
       'AND BUSY_UNTIL_UTC > :FROM_UTC AND START_UTC < :TO_UTC ' +
       '[EXCEPT {] AND ID <> :EXCEPT_ID [} EXCEPT]')
 
-    // --- idempotency keys (Agenda.Idempotency's TDbIdempotencyStore; the
+    // --- idempotency keys (PascalApi.Idempotency's TDbIdempotencyStore; the
     // tenant bound as TENANT_ID, the store's contract). ON CONFLICT ... DO
     // NOTHING is the same on SQLite (3.24 and later) and PostgreSQL: 0 rows
     // when the key is there.

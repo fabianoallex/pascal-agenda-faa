@@ -72,9 +72,6 @@ function JoinSpans(const ASpans: TSpanArray): TSpanArray;
 function FreeSlots(const AWorking, ABusy: TSpanArray; ADurationMinutes, ABufferMinutes,
   AStepMinutes: Integer; AFrom, ATo, ANow: Int64): TSlotStarts;
 
-/// AUtc as AZone's clock with its offset: '2026-11-01T01:30:00-04:00'.
-function LocalIso(const AZone: IPcTimeZone; AUtc: Int64): string;
-
 implementation
 
 uses
@@ -228,21 +225,6 @@ begin
     end;
   end;
   SetLength(Result, LCount);
-end;
-
-function LocalIso(const AZone: IPcTimeZone; AUtc: Int64): string;
-var
-  LOffset: Integer;
-  LSign: Char;
-begin
-  LOffset := AZone.OffsetAt(AUtc);
-  if LOffset < 0 then
-    LSign := '-'
-  else
-    LSign := '+';
-  LOffset := Abs(LOffset) div 60;
-  Result := AZone.ToLocal(AUtc).ToString + Format('%s%.2d:%.2d',
-    [LSign, LOffset div 60, LOffset mod 60]);
 end;
 
 end.

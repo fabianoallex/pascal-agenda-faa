@@ -24,7 +24,6 @@ uses
   Agenda.Times in '..\..\src\Agenda.Times.pas',
   Agenda.Slots in '..\..\src\Agenda.Slots.pas',
   Agenda.Schema in '..\..\src\Agenda.Schema.pas',
-  Agenda.Preconditions in '..\..\src\Agenda.Preconditions.pas',
   Agenda.DUnitXCompat in 'Agenda.DUnitXCompat.pas',
   Agenda.PasswordsTests in 'Agenda.PasswordsTests.pas',
   Agenda.TokensTests in 'Agenda.TokensTests.pas',
@@ -33,10 +32,7 @@ uses
   Agenda.MoneyTests in 'Agenda.MoneyTests.pas',
   Agenda.SqlSourcesTests in 'Agenda.SqlSourcesTests.pas',
   Agenda.TimesTests in 'Agenda.TimesTests.pas',
-  Agenda.SlotsTests in 'Agenda.SlotsTests.pas',
-  Agenda.PreconditionsTests in 'Agenda.PreconditionsTests.pas',
-  Agenda.Idempotency in '..\..\src\Agenda.Idempotency.pas',
-  Agenda.IdempotencyTests in 'Agenda.IdempotencyTests.pas';
+  Agenda.SlotsTests in 'Agenda.SlotsTests.pas';
 
 var
   runner: ITestRunner;

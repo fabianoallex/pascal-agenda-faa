@@ -131,8 +131,8 @@ two libraries would share goes to pascal-common-faa.
 |---|---|---|
 | Password hashing: PBKDF2-HMAC-SHA256, `$pbkdf2-sha256$<iter>$<salt>$<hash>`, constant-time compare, "needs rehash" | pascal-common-faa (has HMAC and `Random`) | no library has it |
 | Refresh tokens: rotation, reuse detection, family revoke, db/Redis store | `PascalApi.RefreshTokens` + `src/redis` | `docs/jwt-keys-design.md` lists them as "an application's flow": promoting reopens that |
-| `Idempotency-Key` middleware: replay, 409 while in flight, 422 on another body | `PascalApi.Idempotency` + Horse, db/Redis store | same pluggable-store shape as the JWT keys; **built here 2026-10-21** as `src/Agenda.Idempotency` (memory and database stores, 9 unit tests), see "M2: Idempotency-Key" |
-| Optimistic concurrency: `ETag`/`If-Match`, 412/428 | `PascalApi.Http` + middleware | small; **built here 2026-10-21** as `src/Agenda.Preconditions` (RFC 9110 parsing, 6 unit tests), see "M2: changing and cancelling" |
+| `Idempotency-Key` middleware: replay, 409 while in flight, 422 on another body | `PascalApi.Idempotency` + Horse, db/Redis store | same pluggable-store shape as the JWT keys; **built here 2026-10-21** as `src/Agenda.Idempotency` (memory and database stores, 9 unit tests), see "M2: Idempotency-Key". **Done** in pascal-api-infra-faa 0.23.0 (`PascalApi.Idempotency`, `THorseIdempotentRequest`); adopted 2026-10-21 ("Candidates promoted (2026-10-21)") |
+| Optimistic concurrency: `ETag`/`If-Match`, 412/428 | `PascalApi.Http` + middleware | small; **built here 2026-10-21** as `src/Agenda.Preconditions` (RFC 9110 parsing, 6 unit tests), see "M2: changing and cancelling". **Done** in pascal-api-infra-faa 0.23.0 (`PascalApi.Preconditions`, no middleware); adopted 2026-10-21 |
 | Tenant from the path or host | `PascalApi.Tenancy` | multi-tenancy decision 5 |
 | Signed links: HMAC with expiry, keys from the JWT key ring | `PascalApi.SignedUrl` | cancel, invite, email confirmation |
 | IANA time zones on both compilers | pascal-common-faa | **biggest risk**: neither RTL converts an arbitrary zone. Linux has `/usr/share/zoneinfo`; Windows has the registry (Windows names) or an embedded database. Own design phase before M2. **Done in pascal-common-faa 1.22.0** (`PascalCommon.TimeZones`, the tzdb embedded); adopted 2026-10-20 |
@@ -875,3 +875,60 @@ What it showed:
   the stores, as here) plus a Horse helper for the handler (replay, complete, fail). A middleware
   would need to capture the handler's response body, which Horse doesn't expose the same way on
   both compilers; the handler-level helper doesn't.
+
+## Candidates promoted (2026-10-21)
+
+The user decided (2026-10-21) to promote what M2 built and proved. Each library got it with its
+own tests, docs and a release, green on FPC (Windows, Linux) and Delphi 12 (Win32, Win64) before
+its tag; then this application moved its submodules to the tags and dropped its copies.
+
+| Candidate | Library | What it replaced here |
+|---|---|---|
+| Optimistic concurrency | pascal-api-infra-faa 0.23.0 `PascalApi.Preconditions` (`VersionETag`, `EvaluateIfMatch`, `RequireIfMatchSent`, `RequireIfMatch`, `RaisePreconditionFailed`) | `src/Agenda.Preconditions` and its 6 tests |
+| Idempotency-Key | pascal-api-infra-faa 0.23.0 `PascalApi.Idempotency` (`TIdempotency`, `TDbIdempotencyStore` with the same statement names) + `PascalApi.Horse.Idempotency` (`THorseIdempotentRequest`) | `src/Agenda.Idempotency` and its 9 tests; `SendReplay` and the key handling in `PostAppointment` |
+| Header parameters and response headers in the document | pascal-api-infra-faa 0.23.0 `TRouteDocBuilder.HeaderParam`, `ResponseHeader` | `If-Match`, `Idempotency-Key`, `ETag` told only in `Descr`; now in the OpenAPI document too |
+| A required query member | pascal-api-infra-faa 0.23.0 `THorseQueryParams.Read` (a non-optional member missing is a `required` field failure) | the availability's own `service` and `date` checks |
+| The slot lock | pascal-redis-faa 0.3.0 `TRedisLock` (`Redis.Lock`) | `src/Agenda.Locks` (`ISlotLock`, `TRedisSlotLock`) |
+| An instant with its zone's offset | pascal-common-faa 1.23.0 `PcLocalIsoString` | `Agenda.Slots.LocalIso` and its test |
+
+What stays here: the policy that a Redis that doesn't answer lets the booking through
+(`TAppointmentRepository.LockSlot`: `rlBusy` is a 409, `rlUnavailable` goes on with no token, the
+database decides) and its log line, now from `TRedisLock.OnUnavailable` in the same words the
+scenario reads; the keys' table and its SQL (migration 12, `IDEMPOTENCY.*`), which the library's
+store reads by the names it already had; the "*" refused by If-Match (the library's default).
+
+Every HTTP check stayed green and unchanged in number: 522 on SQLite, 533 on PostgreSQL 17 with
+Redis, on FPC Windows and Linux (Docker; OpenAPI valid) and on Delphi 12 (SQLite Win32 and
+Win64, PostgreSQL with Redis Win64); unit tests 0 leaks on all four. The 400s kept their codes (the availability's missing `service` and `date` are still
+`invalid_fields` with a `required` field each, the same message), the 428/412/400 of If-Match and
+the 400/409/422 of the key the same codes and texts (the libraries' English messages are the
+ones this application wrote). The unit tests went from 75 to 59: the 16 that moved live in the
+libraries now (with more around them: 24 in pascal-api-infra-faa, 17 in pascal-redis-faa, 4 in
+pascal-common-faa).
+
+What promoting showed about the libraries:
+
+- **The lock's "unavailable" was a third answer hidden in a Boolean.** `ISlotLock.TryAcquire`
+  answered `True` with an empty token for "Redis didn't answer", which only this application's
+  caller knew to read. `TRedisLock.Acquire` returns `rlAcquired`/`rlBusy`/`rlUnavailable`, and
+  the choice to go on without the lock stays with the application: the library classifies, it
+  doesn't decide. `TryAcquire` there raises on unavailability; `Extend` came in from the
+  library's own sample.
+- **`LocalIso` truncated an offset with seconds.** Zones' local mean time before 1900 has them
+  (New York's -04:56:02); the truncated text named another instant. Unreachable here (dates
+  within 366 days of today), but a library function keeps them, as Python and java.time do.
+- **A library's client messages belong in its message table.** The two units carried their
+  English messages as literals; in pascal-api-infra-faa they went to `TApiMessages` (with
+  Portuguese), and the codes got the library's prefix (`API_CODE_PRECONDITION_REQUIRED`...).
+- **Making required query members required changes a library's behavior**, so it is in its
+  CHANGELOG under "Changed": a Find DTO with a plain member that clients may omit now answers
+  400. Every Find DTO here but the availability's uses optionals, so nothing else moved.
+- **A header parameter can't be an MCP argument**: the MCP executor sends no headers of the
+  model's, so the library leaves them out of the tools, and its sample marks the route that
+  requires `If-Match` `NoMcp`. This application has no MCP endpoint.
+- **The sample that proves a feature found its own edges**: pascal-api-infra-faa's sample 02
+  (`PUT /cities/:code` with If-Match, an Idempotency-Key on `POST /cities`, on SQLite and
+  PostgreSQL, four concurrent requests each) went from 98/99 to 151/152 checks. Writing it
+  showed that an absent `INullInteger` member is read as null, not refused (the mapper's
+  contract: nullable is not required), and that the scenario helpers' `grep '"code"'` matched
+  a city's own `code` member.

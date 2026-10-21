@@ -370,14 +370,12 @@ var
   LTx: IScopeTransaction;
   I: Integer;
 begin
-  // days' range is the document's (Minimum, Maximum), enforced when the
-  // query was read; what it can't say is checked here, every member at once.
+  // service and date are required and days' range is the document's
+  // (Minimum, Maximum): both enforced when the query was read
+  // (THorseQueryParams.Read, pascal-api-infra-faa 0.23.0). What it can't say
+  // is checked here.
   LCheck := TPcValidation.Create;
-  if Trim(AFind.Service) = '' then
-    LCheck.Fail('service', PC_VALIDATION_REQUIRED, '"service" is required.');
-  if AFind.Date = '' then
-    LCheck.Fail('date', PC_VALIDATION_REQUIRED, '"date" is required.')
-  else if not TryParseLocalDate(AFind.Date, LDay) then
+  if not TryParseLocalDate(AFind.Date, LDay) then
     LCheck.Fail('date', CODE_INVALID_DATE, '"date" must be a date, YYYY-MM-DD.');
   LCheck.RaiseIfAny;
   LDays := AFind.Days.ValueOr(1);
@@ -401,7 +399,7 @@ begin
     LSlots[I] := LSlot;
     LSlot.StartsAt := UnixToUtc(LStarts[I]);
     LSlot.EndsAt := UnixToUtc(LStarts[I] + Int64(LBookable.DurationMinutes) * 60);
-    LSlot.Local := LocalIso(LZone, LStarts[I]);
+    LSlot.Local := PcLocalIsoString(LZone, LStarts[I]);
   end;
   LAvailability := TAvailability.Create;
   Result := LAvailability;
