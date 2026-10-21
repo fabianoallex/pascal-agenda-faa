@@ -1089,4 +1089,7 @@ Idempotency-Key).
   `idempotency_key_required`. The public booking passes `True` and keeps only its own rule, a
   key of 16 characters at least, checked before `Start`.
 
-The submodules point at those commits; the tags wait for the Delphi runs of both libraries.
+Both tagged (v1.24.0, v0.24.0) after their Delphi 12 runs, Win32 and Win64: pascal-common-faa
+397 tests, pascal-api-infra-faa 425 tests (0 leaks) and its samples' 253/151/160 checks
+(SQLite), 152/160 on PostgreSQL (Win64). This application on them: 78 tests, 614 checks on
+SQLite (Win32, Win64) and 625 on PostgreSQL with Redis (Win64), as on FPC Windows and Linux.
