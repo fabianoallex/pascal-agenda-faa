@@ -237,6 +237,8 @@ begin
       'VALUES (:ID, :NAME, :TIME_ZONE, ''shared'', 0)')
     // The tenant's IANA zone (Agenda.Availability): its days and clock.
     .Add(COMMON_SQL_DIR, 'TENANT.TIME_ZONE', 'SELECT TIME_ZONE FROM TENANTS WHERE ID = :ID')
+    // How long before a start an appointment can still be cancelled.
+    .Add(COMMON_SQL_DIR, 'TENANT.CANCEL_NOTICE', 'SELECT CANCEL_NOTICE_HOURS FROM TENANTS WHERE ID = :ID')
     .Add(COMMON_SQL_DIR, 'TENANT.SET_SUSPENDED', 'UPDATE TENANTS SET SUSPENDED = :SUSPENDED WHERE ID = :ID')
 
     // --- JWT signing keys (TDbJwtKeyStore)
@@ -420,19 +422,28 @@ begin
       '[FROM {] AND END_UTC > :FROM_UTC [} FROM] [TO {] AND START_UTC < :TO_UTC [} TO] ' +
       'ORDER BY ${ORDER} ${PAGE}')
     .Add(COMMON_SQL_DIR, 'APPOINTMENT.BY_ID',
-      'SELECT ID, PROFESSIONAL_ID, SERVICE_ID, CUSTOMER_ID, START_UTC, END_UTC, STATUS, VERSION ' +
-      'FROM APPOINTMENTS WHERE ID = :ID AND ${TENANT}')
+      'SELECT ID, PROFESSIONAL_ID, SERVICE_ID, CUSTOMER_ID, START_UTC, END_UTC, BUSY_UNTIL_UTC, ' +
+      'STATUS, VERSION FROM APPOINTMENTS WHERE ID = :ID AND ${TENANT}')
     .Add(COMMON_SQL_DIR, 'APPOINTMENT.INSERT',
       'INSERT INTO APPOINTMENTS (TENANT_ID, ID, PROFESSIONAL_ID, SERVICE_ID, CUSTOMER_ID, ' +
       'START_UTC, END_UTC, BUSY_UNTIL_UTC, STATUS, VERSION, CREATED_AT, UPDATED_AT) VALUES ' +
       '(:TENANT_ID, :ID, :PROFESSIONAL_ID, :SERVICE_ID, :CUSTOMER_ID, :START_UTC, :END_UTC, ' +
       ':BUSY_UNTIL_UTC, :STATUS, 1, :CREATED_AT, :CREATED_AT)')
+    // A change (Agenda.Appointments): only from the version read, which it
+    // moves up. [MOVE] the instants, [STATUS] the status.
+    .Add(COMMON_SQL_DIR, 'APPOINTMENT.UPDATE',
+      'UPDATE APPOINTMENTS SET VERSION = VERSION + 1, UPDATED_AT = :UPDATED_AT ' +
+      '[MOVE {], START_UTC = :START_UTC, END_UTC = :END_UTC, BUSY_UNTIL_UTC = :BUSY_UNTIL_UTC [} MOVE] ' +
+      '[STATUS {], STATUS = :STATUS [} STATUS] ' +
+      'WHERE ID = :ID AND VERSION = :VERSION AND ${TENANT}')
     // Free slots (Agenda.Availability): what is busy, buffer included, in
-    // [from, to); the status bound, not quoted in the SQL.
+    // [from, to); the status bound, not quoted in the SQL. [EXCEPT]: an
+    // appointment being moved doesn't block itself.
     .Add(COMMON_SQL_DIR, 'APPOINTMENT.BUSY',
       'SELECT START_UTC, BUSY_UNTIL_UTC AS END_UTC FROM APPOINTMENTS ' +
       'WHERE PROFESSIONAL_ID = :PROFESSIONAL_ID AND ${TENANT} AND STATUS <> :CANCELLED ' +
-      'AND BUSY_UNTIL_UTC > :FROM_UTC AND START_UTC < :TO_UTC')
+      'AND BUSY_UNTIL_UTC > :FROM_UTC AND START_UTC < :TO_UTC ' +
+      '[EXCEPT {] AND ID <> :EXCEPT_ID [} EXCEPT]')
 
     // --- customers (a tenant's rows)
     .Add(COMMON_SQL_DIR, 'CUSTOMER.COUNT',

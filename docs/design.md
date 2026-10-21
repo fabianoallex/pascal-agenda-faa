@@ -132,7 +132,7 @@ two libraries would share goes to pascal-common-faa.
 | Password hashing: PBKDF2-HMAC-SHA256, `$pbkdf2-sha256$<iter>$<salt>$<hash>`, constant-time compare, "needs rehash" | pascal-common-faa (has HMAC and `Random`) | no library has it |
 | Refresh tokens: rotation, reuse detection, family revoke, db/Redis store | `PascalApi.RefreshTokens` + `src/redis` | `docs/jwt-keys-design.md` lists them as "an application's flow": promoting reopens that |
 | `Idempotency-Key` middleware: replay, 409 while in flight, 422 on another body | `PascalApi.Idempotency` + Horse, db/Redis store | same pluggable-store shape as the JWT keys |
-| Optimistic concurrency: `ETag`/`If-Match`, 412/428 | `PascalApi.Http` + middleware | small |
+| Optimistic concurrency: `ETag`/`If-Match`, 412/428 | `PascalApi.Http` + middleware | small; **built here 2026-10-21** as `src/Agenda.Preconditions` (RFC 9110 parsing, 6 unit tests), see "M2: changing and cancelling" |
 | Tenant from the path or host | `PascalApi.Tenancy` | multi-tenancy decision 5 |
 | Signed links: HMAC with expiry, keys from the JWT key ring | `PascalApi.SignedUrl` | cancel, invite, email confirmation |
 | IANA time zones on both compilers | pascal-common-faa | **biggest risk**: neither RTL converts an arbitrary zone. Linux has `/usr/share/zoneinfo`; Windows has the registry (Windows names) or an embedded database. Own design phase before M2. **Done in pascal-common-faa 1.22.0** (`PascalCommon.TimeZones`, the tzdb embedded); adopted 2026-10-20 |
@@ -754,3 +754,72 @@ FPC Windows and Linux. Delphi 12: 60 unit tests (0 leaks), 426 checks on SQLite 
 435 on PostgreSQL with Redis (Win64). The library's 0.22.0 on Delphi 12: 398 unit tests (0 leaks,
 Win32 and Win64), samples 253/98/160 on both and sample 02/03 on PostgreSQL (Win64) 99/160;
 tagged v0.22.0, which the submodule pins.
+
+## M2: changing and cancelling (2026-10-21)
+
+`PATCH /appointments/:id` (`startsAt`, `status`) and `POST /appointments/:id/cancel`, any user,
+both with `If-Match`. `src/Agenda.Preconditions` (the candidate), `src/Agenda.Appointments`.
+
+- **The ETag is the version in quotes** (`"3"`), a strong validator, sent on every appointment
+  read, booked or changed; the body's `version` is the same number, so a client that read a list
+  can build it. `If-Match` follows RFC 9110: a list of tags, blanks and empty elements allowed,
+  strong comparison (a weak `W/"3"` never matches). Absent: 428 `precondition_required`; `*` is
+  also a 428 here (it names no version: a choice of the API, the unit takes `AAcceptAny`); not the
+  RFC's syntax (`3` without quotes): 400 `invalid_if_match`; another version: 412
+  `precondition_failed`. The 428 and 400 come before the body's checks and the 404; the 412 after
+  the read.
+- **Read, check, then a write that names the version read**: the row is read on its own
+  connection (404, the If-Match check, the rules), then `APPOINTMENT.UPDATE ... WHERE VERSION =
+  :VERSION` moves it up; a change that landed in between matches no row, a 412. Reading outside
+  the transaction keeps the SQLite rule the booking follows: a transaction's first statement is
+  a write (a read first would take a shared lock that two writers can't both upgrade). Four
+  PATCHes from one version at once: one 200, three 412 (checked).
+- **Status**: PATCH sets `confirmed`, `done` or `no_show`; `cancelled` is the cancel route's
+  (400 `use_cancel`), `booked` isn't settable (400). Only a booked or confirmed appointment
+  changes (409 `appointment_closed`); `done` and `no_show` only once it has started (409
+  `not_started`). An empty PATCH changes nothing and keeps the version.
+- **A move is a booking's check again**: the new start's slot lock (Redis, when there is one),
+  then one transaction that touches the professional's row, checks it is active, and accepts the
+  start only if `FreeStartsOn` lists it for that local day, with the appointment's own busy span
+  left out (`APPOINTMENT.BUSY`'s new `[EXCEPT]` block). It keeps the duration and buffer it was
+  booked with, as the booking stored them (a later change to the service doesn't move it).
+- **Cancel**: booked or confirmed, and no later than `TENANTS.CANCEL_NOTICE_HOURS` (24 by
+  default) before the start: 409 `cancel_notice_passed`, naming the hours and the last instant.
+  The rule applies to every user here; whether the owner (or the front desk) may cancel inside the
+  notice is open, and M3's signed link is where it matters most.
+
+Scenarios (`tools/http_scenarios_changes.sh`, 64 checks; 2 more in the Redis block of
+`tools/http_scenarios_appointments.sh`): the ETag on booking and reading; every If-Match answer
+(absent, `*`, unquoted, unknown, weak, another tenant's id); confirmed, then a lost update caught;
+the status rules; a move 15 minutes over its own old time and the availability following it;
+moves onto another booking, into its buffer, off the grid, into the past, with seconds, with a
+text that isn't an instant, from an old version; four changes racing from one version; cancel
+with and without If-Match, twice, and the slot free again; the notice, with a professional who
+works every hour and a booking within the next half hour; with Redis, a move onto a slot whose
+lock another request holds. **Not checked over HTTP**: `done` and `no_show` on a started
+appointment (the API can't book in the past and the scenarios don't wait); the 409 before the
+start is.
+
+Result: 66 unit tests (6 new: `Agenda.PreconditionsTests`, 0 leaks); 490 HTTP checks on SQLite
+and 501 on PostgreSQL 17 with Redis, FPC Windows and Linux (Docker; OpenAPI valid). Delphi 12:
+66 unit tests (0 leaks) and 490 checks on SQLite, Win32 and Win64; 501 on PostgreSQL with Redis,
+Win64.
+
+What it showed:
+- **Candidate, now built** (`Agenda.Preconditions`, no Horse, no database): `VersionETag`,
+  `EvaluateIfMatch`, `RequireIfMatchSent`, `RequireIfMatch`, `RaisePreconditionFailed`. In
+  pascal-api-infra-faa it would sit in `PascalApi.Http` with the other header parsers
+  (`ParseBearer`); a middleware isn't needed, since the check needs the row.
+- **Small candidate (pascal-api-infra-faa):** `TRouteDocBuilder` can't document a header
+  parameter (`If-Match`) or a response header (`ETag`): `AddParam` takes a location but is
+  private, and there is no `HeaderParam`. The routes say it in `Descr`.
+- **pascal-db-faa, as documented and met again:** a tag block nobody processes keeps its content,
+  so `APPOINTMENT.BUSY`'s `[EXCEPT]` is processed on every call, also when there is nothing to
+  leave out.
+- The scenario helper `req` keeps its body in a global `B`: a scenario variable named `B` was
+  overwritten by the next request (the cancel checks hit `/appointments//cancel`). The new file
+  names its ids `CA`, `CB`.
+- **Delphi gotcha (for the skill):** a unit-level test helper named `Status` (three parameters)
+  compiled on FPC, but inside a DUnitX fixture method Delphi bound the name to another `Status`
+  first ("E2034 Too many actual parameters"). Renamed `IfMatchAnswer`. A generic name for a free
+  function in a test unit can be shadowed on one compiler only.

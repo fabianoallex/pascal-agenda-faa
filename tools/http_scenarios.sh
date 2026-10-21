@@ -27,6 +27,10 @@
 # - booking (tools/http_scenarios_appointments.sh): only a start the free
 #   slots list, four requests racing for one slot (one wins), the body's
 #   failures in one 400, what an appointment names kept from deletion;
+# - changing and cancelling (tools/http_scenarios_changes.sh): the ETag,
+#   If-Match required and compared (428, 400, 412), the status rules, a move
+#   over its own old time, four changes racing from one version (one wins),
+#   the cancel notice;
 # - the rate limit on /auth/ by client address (last: it uses the window).
 #
 #   sh tools/http_scenarios.sh [port]   (default 9400; AgendaApi must be running,
@@ -250,6 +254,8 @@ fi
 . "$(dirname "$0")/http_scenarios_availability.sh"
 # --- booking (after the free slots: it books their professional)
 . "$(dirname "$0")/http_scenarios_appointments.sh"
+# --- changing and cancelling (after the booking: its professional and customer)
+. "$(dirname "$0")/http_scenarios_changes.sh"
 
 # --- OpenAPI document and Swagger UI
 req GET /swagger/doc.json ""
@@ -269,6 +275,7 @@ body_has '"/professionals/{id}/time-off/{offId}":{"get":{' "OpenAPI: time off, t
 body_lacks '"to_"' "OpenAPI: the keyword member is named to"
 body_has '"/professionals/{id}/availability":{"get":{' "OpenAPI: availability"
 body_has '"/appointments":{"get":{' "OpenAPI: appointments"
+body_has '"/appointments/{id}/cancel":{"post":{' "OpenAPI: the cancel route"
 [ -n "$OPENAPI_OUT" ] && cp "$T/body" "$OPENAPI_OUT"
 req GET /swagger ""
 status_is 200 "Swagger UI"

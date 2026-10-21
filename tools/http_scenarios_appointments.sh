@@ -115,6 +115,14 @@ if [ -n "$REDIS_CMD" ]; then
   book "$APRO" "$ASVC" "$CUST" "${MON3}T12:00:00Z"
   status_is 201 "lock: free once the other released it"
   [ "$($REDIS_CMD EXISTS "$KEY")" = 0 ] && ok || fail "lock: released after the booking"
+  # A move (PATCH, tools/http_scenarios_changes.sh) takes the new start's lock too.
+  LOCKED="$(id_of)"
+  KEY2="agenda:lock:demo:$APRO:$(date -u -d "${MON3}T12:15:00Z" +%s)"
+  $REDIS_CMD SET "$KEY2" someone-else PX 60000 >/dev/null
+  req PATCH "/appointments/$LOCKED" "{\"startsAt\":\"${MON3}T12:15:00Z\"}" -H "$STAFF" -H 'If-Match: "1"'
+  status_is 409 "lock: a move onto a slot another request holds"
+  body_has 'Another request is booking this slot.' "lock: the move answered before the database"
+  $REDIS_CMD DEL "$KEY2" >/dev/null
 
   # Redis down: the booking goes on to the database, which still decides.
   $REDIS_CMD SHUTDOWN NOSAVE >/dev/null 2>&1 || true

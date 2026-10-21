@@ -62,7 +62,11 @@ program AgendaApi;
                          any user: free slots on the tenant's local days
     POST /appointments, GET /appointments[/:id]
                          any user: book a free slot (409 "slot_unavailable"
-                         otherwise), list, read
+                         otherwise), list, read; ETag: the version in quotes
+    PATCH /appointments/:id, POST /appointments/:id/cancel
+                         any user, with If-Match (428 without it, 412 for
+                         another version): move, confirm, done, no_show;
+                         cancel within the tenant's notice
     GET  /health/live, /health/ready, /metrics, /swagger (/swagger/doc.json)
 
   Signing keys: one rotating ring per tenant (TTenantJwtKeyRing), kept and
@@ -124,7 +128,8 @@ uses
   Agenda.Slots in '..\src\Agenda.Slots.pas',
   Agenda.Availability in '..\src\Agenda.Availability.pas',
   Agenda.Appointments in '..\src\Agenda.Appointments.pas',
-  Agenda.Locks in '..\src\Agenda.Locks.pas';
+  Agenda.Locks in '..\src\Agenda.Locks.pas',
+  Agenda.Preconditions in '..\src\Agenda.Preconditions.pas';
 
 const
   APP_NAME = 'agenda-api';
@@ -759,7 +764,15 @@ begin
   TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IAvailability>(LAvailability));
 end;
 
-{ Appointments: any user books and reads }
+{ Appointments: any user books, reads, changes and cancels }
+
+// The body and its ETag (Agenda.Preconditions): what If-Match sends back.
+procedure SendAppointment(ARes: THorseResponse; const AAppointment: IAppointment;
+  AStatus: Integer = 200);
+begin
+  ARes.AddHeader('ETag', VersionETag(AAppointment.Version));
+  TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IAppointment>(AAppointment), AStatus);
+end;
 
 procedure GetAppointments(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
 var
@@ -785,7 +798,7 @@ var
 begin
   LRepo := TAppointmentRepository.Create(ScopeOf(AReq));
   try
-    TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IAppointment>(LRepo.FindById(AReq.Params['id'])));
+    SendAppointment(ARes, LRepo.FindById(AReq.Params['id']));
   finally
     LRepo.Free;
   end;
@@ -797,8 +810,34 @@ var
 begin
   LRepo := TAppointmentRepository.Create(ScopeOf(AReq), GSlotLock);
   try
-    TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IAppointment>(LRepo.Book(
-      THorseBody.Read<IAppointmentInsert>(AReq), TJwt.UnixNow)), 201);
+    SendAppointment(ARes, LRepo.Book(THorseBody.Read<IAppointmentInsert>(AReq), TJwt.UnixNow),
+      201);
+  finally
+    LRepo.Free;
+  end;
+end;
+
+procedure PatchAppointment(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LRepo: TAppointmentRepository;
+begin
+  LRepo := TAppointmentRepository.Create(ScopeOf(AReq), GSlotLock);
+  try
+    SendAppointment(ARes, LRepo.Update(AReq.Params['id'], AReq.Headers['If-Match'],
+      THorseBody.Read<IAppointmentPatch>(AReq), TJwt.UnixNow));
+  finally
+    LRepo.Free;
+  end;
+end;
+
+procedure CancelAppointment(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LRepo: TAppointmentRepository;
+begin
+  LRepo := TAppointmentRepository.Create(ScopeOf(AReq));
+  try
+    SendAppointment(ARes, LRepo.Cancel(AReq.Params['id'], AReq.Headers['If-Match'],
+      TJwt.UnixNow));
   finally
     LRepo.Free;
   end;
@@ -1174,6 +1213,31 @@ begin
       .Error(400, 'A member missing, unknown_professional, unknown_service, unknown_customer')
       .Error(409, 'slot_unavailable, professional_inactive, service_inactive')
       .Register(PostAppointment);
+    TRouteDoc.Patch('/appointments/:id').Summary('Move an appointment or set its status')
+      .Descr('Send If-Match with the ETag of the version you read (the version in quotes, ' +
+        'as in "3"). The answer carries the new ETag.')
+      .Tag('appointments')
+      .PathParam('id', 'The appointment''s id')
+      .Body<IAppointmentPatch>
+      .Response<IAppointment>(200, 'Changed')
+      .Error(400, 'invalid_if_match, invalid_instant, a status that isn''t one, use_cancel')
+      .Error(404, 'The tenant has no appointment with this id')
+      .Error(409, 'appointment_closed, not_started, slot_unavailable, professional_inactive')
+      .Error(412, 'precondition_failed: it changed since that version')
+      .Error(428, 'precondition_required: If-Match missing, or "*"')
+      .Register(PatchAppointment);
+    TRouteDoc.Post('/appointments/:id/cancel').Summary('Cancel an appointment')
+      .Descr('Send If-Match with the ETag of the version you read. Possible until the ' +
+        'tenant''s notice (24 hours by default) before the start.')
+      .Tag('appointments')
+      .PathParam('id', 'The appointment''s id')
+      .Response<IAppointment>(200, 'Cancelled')
+      .Error(400, 'invalid_if_match')
+      .Error(404, 'The tenant has no appointment with this id')
+      .Error(409, 'appointment_closed, cancel_notice_passed')
+      .Error(412, 'precondition_failed: it changed since that version')
+      .Error(428, 'precondition_required: If-Match missing, or "*"')
+      .Register(CancelAppointment);
 
     TRouteDoc.Get('/customers').Summary('The tenant''s customers, a page at a time')
       .Tag('customers')

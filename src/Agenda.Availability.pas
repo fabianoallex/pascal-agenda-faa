@@ -155,10 +155,12 @@ function TenantZone(const AQuery: IQuery; const AScope: TTenantDataScope): IPcTi
 
 /// The starts free for a service of ABookable on ADays local days of AZone
 /// from ADay: AProfessionalId's working hours minus its time off and
-/// appointments, read on AQuery.
+/// appointments, read on AQuery. AExceptAppointment: one appointment left
+/// out of the busy ones (a move: its own time is free to it).
 function FreeStartsOn(const AQuery: IQuery; const AScope: TTenantDataScope;
   const AZone: IPcTimeZone; const AProfessionalId: string; const ABookable: TBookable;
-  const ADay: TPcLocalDateTime; ADays: Integer; ANow: Int64): TSlotStarts;
+  const ADay: TPcLocalDateTime; ADays: Integer; ANow: Int64;
+  const AExceptAppointment: string = ''): TSlotStarts;
 
 implementation
 
@@ -169,6 +171,7 @@ uses
   PascalCommon.JsonMapper.Optionals,
   PascalApi.OpenApi,
   PascalApi.Http,
+  PascalDb.SqlLoader,
   Agenda.Times;
 
 const
@@ -294,21 +297,17 @@ begin
   SetLength(Result, LCount);
 end;
 
-// The spans of ASqlName's rows (START_UTC, END_UTC) that meet [AFrom, ATo),
-// appended to ASpans.
-procedure AddSpans(const AQuery: IQuery; const AScope: TTenantDataScope;
-  const ASqlName, AProfessionalId: string; AFrom, ATo: Int64; ACancelled: Boolean;
+// The spans of ASql's rows (START_UTC, END_UTC) that meet [AFrom, ATo),
+// appended to ASpans. The query is prepared and its own parameters bound.
+procedure AddSpans(const AQuery: IQuery; const AProfessionalId: string; AFrom, ATo: Int64;
   var ASpans: TSpanArray);
 var
   LResult: IQueryResult;
   LCount: Integer;
 begin
-  TTenantFilter.Prepare(AQuery, AScope, ASqlName);
   AQuery.Params.Strings['PROFESSIONAL_ID'] := AProfessionalId;
   AQuery.Params.Int64s['FROM_UTC'] := AFrom;
   AQuery.Params.Int64s['TO_UTC'] := ATo;
-  if ACancelled then
-    AQuery.Params.Strings['CANCELLED'] := STATUS_CANCELLED;
   LResult := AQuery.Open;
   LCount := Length(ASpans);
   while not LResult.Eof do
@@ -323,7 +322,8 @@ end;
 
 function FreeStartsOn(const AQuery: IQuery; const AScope: TTenantDataScope;
   const AZone: IPcTimeZone; const AProfessionalId: string; const ABookable: TBookable;
-  const ADay: TPcLocalDateTime; ADays: Integer; ANow: Int64): TSlotStarts;
+  const ADay: TPcLocalDateTime; ADays: Integer; ANow: Int64;
+  const AExceptAppointment: string): TSlotStarts;
 var
   LFrom, LTo: Int64;
   LWorking, LBusy: TSpanArray;
@@ -333,10 +333,14 @@ begin
   // The busy spans a start inside the window can meet: its service and
   // buffer end at most a day after the window.
   LBusy := nil;
-  AddSpans(AQuery, AScope, 'TIME_OFF.OVERLAPPING', AProfessionalId, LFrom - DAY_SECONDS,
-    LTo + DAY_SECONDS, False, LBusy);
-  AddSpans(AQuery, AScope, 'APPOINTMENT.BUSY', AProfessionalId, LFrom - DAY_SECONDS,
-    LTo + DAY_SECONDS, True, LBusy);
+  TTenantFilter.Prepare(AQuery, AScope, 'TIME_OFF.OVERLAPPING');
+  AddSpans(AQuery, AProfessionalId, LFrom - DAY_SECONDS, LTo + DAY_SECONDS, LBusy);
+  TTenantFilter.Prepare(AQuery, AScope, AScope.Factory.SqlLoader['APPOINTMENT.BUSY']
+    .ProcessTag('EXCEPT', AExceptAppointment <> ''));
+  AQuery.Params.Strings['CANCELLED'] := STATUS_CANCELLED;
+  if AExceptAppointment <> '' then
+    AQuery.Params.Strings['EXCEPT_ID'] := AExceptAppointment;
+  AddSpans(AQuery, AProfessionalId, LFrom - DAY_SECONDS, LTo + DAY_SECONDS, LBusy);
   Result := FreeSlots(LWorking, LBusy, ABookable.DurationMinutes, ABookable.BufferMinutes,
     SLOT_STEP_MINUTES, LFrom, LTo, ANow);
 end;
