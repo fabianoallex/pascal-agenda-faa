@@ -750,4 +750,7 @@ cross-type map candidate above): `OptInstant` is that map, written once.
 
 Result: 60 unit tests (3 new: `SearchPattern`, `OptInstant`); 426 HTTP checks on SQLite and 435
 on PostgreSQL 17 with Redis, unchanged (every list filter alone and combined was already covered),
-FPC Windows and Linux.
+FPC Windows and Linux. Delphi 12: 60 unit tests (0 leaks), 426 checks on SQLite (Win32, Win64),
+435 on PostgreSQL with Redis (Win64). The library's 0.22.0 on Delphi 12: 398 unit tests (0 leaks,
+Win32 and Win64), samples 253/98/160 on both and sample 02/03 on PostgreSQL (Win64) 99/160;
+tagged v0.22.0, which the submodule pins.
