@@ -87,7 +87,7 @@ Operations: `/health`, `/metrics`, `/openapi.json`, `/mcp`.
 - **api**: Horse, every pascal-api-infra-faa middleware, OpenAPI and MCP.
 - **worker**: consumes AMQP (pascal-amqp-faa); sends confirmations and reminders; a scheduler
   with a lease (one instance runs each reminder).
-- **Outbox relay**: in the api or the worker; reads `outbox` and publishes to AMQP.
+- **Outbox relay**: in the api or the worker; reads `outbox` and hands each event to a sink (AMQP here; see "Library candidates").
 - Development: SQLite, no Docker needed for the api alone.
 - `docker compose`: PostgreSQL, Redis, RabbitMQ, Mailpit (fake SMTP), OpenTelemetry
   Collector, Prometheus; api and worker built with plain `fpc` on Linux.
@@ -143,8 +143,25 @@ two libraries would share goes to pascal-common-faa.
 
 **Probable** (a second case should confirm the shape):
 
-- Transactional outbox + relay to AMQP: needs pascal-db-faa and pascal-amqp-faa together, so a
-  bridge (`src/amqp` in pascal-api-infra-faa, or a bridge in pascal-amqp-faa).
+- Transactional outbox + relay (the dual write problem). Shape discussed with the user on
+  2026-10-23, to be built here in M4:
+  - **Core**, on pascal-db-faa only: `Enqueue` writes one row per event (type, payload, trace
+    context) in the caller's transaction; a polling relay reads a batch and hands each event to
+    an `IOutboxSink`, then marks it delivered. Delivery is at-least-once: consumers deduplicate
+    by the event id. The table and its SQL are the application's, as with `PascalApi.Idempotency`.
+    Per dialect: claiming a batch with several relays (`FOR UPDATE SKIP LOCKED` on PostgreSQL and
+    MySQL 8, `READPAST` on SQL Server, a lease on Firebird and SQLite).
+  - **Broker sink**: publishes each event once (a fanout/topic exchange; one queue per
+    consumer, each keeps its own state). Needs pascal-amqp-faa, so a bridge (`src/amqp` in
+    pascal-api-infra-faa, or a bridge in pascal-amqp-faa); Redis could be another sink.
+  - **Local sink** (no broker): a dispatcher with a handler per event type, run in the relay's
+    process; one `outbox_deliveries` row per event and handler (status, attempts, last error),
+    so a failing handler neither blocks nor re-runs the others.
+  - The `outbox` table is the same for both sinks: an application can start with the local one
+    and move to a broker without changing the code that writes events.
+  - Not a sink: a side effect such as email belongs to a handler or a consumer, not to the
+    transport (a sink sees every event; SMTP can't deduplicate; a slow server would stall the
+    relay). Out of scope: CDC (reading the database log, as Debezium does); polling is enough.
 - Scheduler with a lease (Redis `SetNx` or a database row): the core in pascal-common-faa.
 - RFC 9457 errors (`application/problem+json`) as an option of `TErrorHandlerMiddleware`.
 - Typed HTTP client for Delphi/Lazarus with refresh, retry and trace propagation (M6).
