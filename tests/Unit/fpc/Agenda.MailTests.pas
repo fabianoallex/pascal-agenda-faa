@@ -38,9 +38,24 @@ type
 implementation
 
 uses
+  {$IFNDEF FPC}
+  System.IOUtils,
+  {$ENDIF}
   Classes,
   PascalCommon.Crypto,
   PascalCommon.Random;
+
+// The temporary directory, with its delimiter: GetTempDir is FPC's RTL only
+// (Delphi: E2003), TPath.GetTempPath Delphi's.
+function TempDir: string;
+begin
+  {$IFDEF FPC}
+  Result := GetTempDir;
+  {$ELSE}
+  Result := TPath.GetTempPath;
+  {$ENDIF}
+  Result := IncludeTrailingPathDelimiter(Result);
+end;
 
 // The text of one encoded word, decoded ('' when it isn't one).
 function DecodeWord(const AWord: string): string;
@@ -227,7 +242,7 @@ var
   LCount: Integer;
   LText: TStringList;
 begin
-  LDir := IncludeTrailingPathDelimiter(GetTempDir) + 'agenda-mail-' +
+  LDir := TempDir + 'agenda-mail-' +
     LowerCase(PcBytesToHex(PcRandomBytes(6)));
   LSender := TEmlMailSender.Create(LDir);
   LSender.Send(Sample);

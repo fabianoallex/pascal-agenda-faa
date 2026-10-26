@@ -51,9 +51,24 @@ type
 implementation
 
 uses
+  {$IFNDEF FPC}
+  System.IOUtils,
+  {$ENDIF}
   PascalCommon.Crypto,
   PascalCommon.Random,
   PascalCommon.Tracing;
+
+// The temporary directory, with its delimiter: GetTempDir is FPC's RTL only
+// (Delphi: E2003), TPath.GetTempPath Delphi's.
+function TempDir: string;
+begin
+  {$IFDEF FPC}
+  Result := GetTempDir;
+  {$ELSE}
+  Result := TPath.GetTempPath;
+  {$ENDIF}
+  Result := IncludeTrailingPathDelimiter(Result);
+end;
 
 const
   TENANT = 'demo';
@@ -139,7 +154,7 @@ procedure TOutboxTests.SetUp;
 begin
   FErrors := 0;
   FLastError := '';
-  FFile := IncludeTrailingPathDelimiter(GetTempDir) + 'agenda-outbox-' +
+  FFile := TempDir + 'agenda-outbox-' +
     LowerCase(PcBytesToHex(PcRandomBytes(6))) + '.sqlite';
   FDb := TAgendaDatabase.CreateSQLite(FFile);
   FDb.Migrate(nil);
