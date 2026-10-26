@@ -1219,7 +1219,7 @@ JWT keys rotate on a request).
   the next one is more than 366 days ahead (from 2026-10-26, 2027-10-31 is 370) and the
   availability route answers `date_out_of_range`; the one just gone has no free slot left.
   `tools/http_scenarios_availability.sh` now skips that Sunday's checks then, with a `SKIP`
-  line (6 for October, 5 for March). Not a bug of the route: a time bomb in the script.
+  line (6 checks for October, 4 for March). Not a bug of the route: a time bomb in the script.
 - Result: 78 unit tests, 0 leaks (FPC Windows); HTTP 608 checks on SQLite and 619 on
   PostgreSQL 17 with Redis (6 skipped, above), FPC Windows, migration 14 applied and a second
   start applying none.
