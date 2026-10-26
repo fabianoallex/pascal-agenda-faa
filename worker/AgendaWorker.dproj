@@ -38,7 +38,7 @@
         <DCC_DcuOutput>.\$(Platform)\$(Config)</DCC_DcuOutput>
         <DCC_ExeOutput>.\$(Platform)\$(Config)</DCC_ExeOutput>
         <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;$(DCC_Namespace)</DCC_Namespace>
-        <DCC_UnitSearchPath>..\src;..\external\pascal-api-infra-faa\src;..\external\pascal-common-faa\src;..\external\pascal-common-faa\bridges\jsonmapper;..\external\pascal-jsonmapper-faa\src;..\external\pascal-db-faa\src;..\external\pascal-db-faa\adapters\firedac;..\external\pascal-redis-faa\src;..\external\synapse;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+        <DCC_UnitSearchPath>..\src;..\external\pascal-api-infra-faa\src;..\external\pascal-common-faa\src;..\external\pascal-common-faa\bridges\jsonmapper;..\external\pascal-jsonmapper-faa\src;..\external\pascal-db-faa\src;..\external\pascal-db-faa\adapters\firedac;..\external\pascal-redis-faa\src;..\external\pascal-amqp-faa\src;..\external\synapse;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
         <SanitizedProjectName>AgendaWorker</SanitizedProjectName>
         <UsingDelphiRTL>true</UsingDelphiRTL>
     </PropertyGroup>
@@ -71,6 +71,7 @@
         <DCCReference Include="..\src\Agenda.Settings.pas"/>
         <DCCReference Include="..\src\Agenda.Events.pas"/>
         <DCCReference Include="..\src\Agenda.Outbox.pas"/>
+        <DCCReference Include="..\src\Agenda.Outbox.Amqp.pas"/>
         <DCCReference Include="..\src\Agenda.Mail.pas"/>
         <DCCReference Include="..\src\Agenda.Notifications.pas"/>
         <DCCReference Include="..\src\Agenda.Leases.pas"/>

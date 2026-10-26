@@ -36,6 +36,7 @@ uses
   Agenda.Notifications in '..\..\src\Agenda.Notifications.pas',
   Agenda.Leases in '..\..\src\Agenda.Leases.pas',
   Agenda.Reminders in '..\..\src\Agenda.Reminders.pas',
+  Agenda.Outbox.Amqp in '..\..\src\Agenda.Outbox.Amqp.pas',
   Agenda.DUnitXCompat in 'Agenda.DUnitXCompat.pas',
   Agenda.PasswordsTests in 'Agenda.PasswordsTests.pas',
   Agenda.TokensTests in 'Agenda.TokensTests.pas',
@@ -49,7 +50,8 @@ uses
   Agenda.PublicTenancyTests in 'Agenda.PublicTenancyTests.pas',
   Agenda.OutboxTests in 'Agenda.OutboxTests.pas',
   Agenda.MailTests in 'Agenda.MailTests.pas',
-  Agenda.WorkerTests in 'Agenda.WorkerTests.pas';
+  Agenda.WorkerTests in 'Agenda.WorkerTests.pas',
+  Agenda.OutboxAmqpTests in 'Agenda.OutboxAmqpTests.pas';
 
 var
   runner: ITestRunner;

@@ -678,6 +678,19 @@ begin
       'LEASE_UNTIL = NULL, UPDATED_AT = :NOW WHERE TENANT_ID = :TENANT_ID ' +
       'AND EVENT_ID = :EVENT_ID AND HANDLER = :HANDLER AND LEASE_OWNER = :OWNER')
 
+    // --- a broker consumer's record (Agenda.Outbox.Amqp; decision 6): the
+    // events it handled, so a redelivery is acked without running again.
+    // Across tenants, as the outbox. INSERT: ON CONFLICT, as the leases'.
+    .Add(COMMON_SQL_DIR, 'PROCESSED.EXISTS',
+      'SELECT 1 AS FOUND FROM PROCESSED_EVENTS WHERE CONSUMER = :CONSUMER ' +
+      'AND TENANT_ID = :TENANT_ID AND EVENT_ID = :EVENT_ID')
+    .Add(COMMON_SQL_DIR, 'PROCESSED.INSERT',
+      'INSERT INTO PROCESSED_EVENTS (CONSUMER, TENANT_ID, EVENT_ID, PROCESSED_AT) ' +
+      'VALUES (:CONSUMER, :TENANT_ID, :EVENT_ID, :NOW) ' +
+      'ON CONFLICT (CONSUMER, TENANT_ID, EVENT_ID) DO NOTHING')
+    .Add(COMMON_SQL_DIR, 'PROCESSED.PURGE',
+      'DELETE FROM PROCESSED_EVENTS WHERE PROCESSED_AT < :BEFORE')
+
     // --- the scheduler's leases (Agenda.Leases; a library candidate). TAKE:
     // the owner's own or one that ran out; INSERT: a job with no row yet
     // (ON CONFLICT, as the idempotency keys': 0 rows when another took it).

@@ -9,18 +9,34 @@ program AgendaWorker;
     AgendaWorker --drain    run passes until one finds nothing to do, then
                             exit (0, or 1 when a pass failed): for scripts
 
-  The loop, every OUTBOX_POLL_MS (at once again while a pass found work):
-  - the relay (Agenda.Outbox) hands each pending event to the local sink,
-    which writes a delivery per handler; then the sink runs them: today one
-    handler, the customer's email (Agenda.Notifications);
-  - every REMINDER_INTERVAL_SECONDS, with the "reminders" lease
-    (Agenda.Leases: the database's row, or Redis with REDIS_HOST), the
-    reminders' pass (Agenda.Reminders), and once an hour the outbox's purge.
-  A pass that raises is logged and the loop goes on (a database restarting,
-  a mail server down: the outbox retries).
+  Two ways to carry the events (decision 5), the same handler either way:
+  - AMQP_HOST unset, the local sink: the relay (Agenda.Outbox) hands each
+    pending event to the local sink, which writes a delivery per handler;
+    the loop then runs them.
+  - AMQP_HOST set, the broker (Agenda.Outbox.Amqp): the relay publishes each
+    event to the exchange (confirmed), and a consumer on the "agenda.email"
+    queue runs the handler, on pascal-amqp-faa's threads, recording each
+    event in PROCESSED_EVENTS; a failure waits AMQP_RETRY_MS in the retry
+    queue, and after the tries the message is parked in "agenda.email.dead".
+  The handler today is one, the customer's email (Agenda.Notifications).
+
+  The loop, every OUTBOX_POLL_MS (at once again while a pass found work): the
+  relay, the local sink's deliveries, and every REMINDER_INTERVAL_SECONDS,
+  with the "reminders" lease (Agenda.Leases: the database's row, or Redis
+  with REDIS_HOST), the reminders' pass (Agenda.Reminders); once an hour the
+  purge of delivered events and processed records. A pass that raises is
+  logged and the loop goes on (a database restarting, a mail server or a
+  broker down: the outbox retries).
+
+  --drain with the broker: done when a round found nothing, the work and
+  retry queues are empty and no handler runs, three times in a row 250 ms
+  apart (a message the broker already pushed but the library hasn't handed
+  to a callback yet is in neither count); at most DRAIN_MAX_SECONDS.
 
   The worker doesn't migrate: it waits for the api to bring the database to
-  the schema it was built for, so one process migrates.
+  the schema it was built for, so one process migrates. It waits for the
+  broker too, when it can't be reached at the start; later drops are the
+  connection's own reconnection (the topology and the consumer come back).
 
   Settings, from the environment or a .env file next to the executable
   (pascal-api-infra-faa's TAppConfig), besides the api's DB_*, DEV_MODE,
@@ -28,7 +44,8 @@ program AgendaWorker;
 
     OUTBOX_POLL_MS            the loop's sleep when idle (1000)
     OUTBOX_BATCH              events a relay pass claims (50)
-    OUTBOX_KEEP_DAYS          delivered events kept before the purge (7)
+    OUTBOX_KEEP_DAYS          delivered events and processed records kept
+                              before the purge (7)
     REMINDER_INTERVAL_SECONDS between reminders' passes (60)
     MAIL_FROM                 the sender, "Name <address>"; required unless
                               DEV_MODE=true
@@ -38,6 +55,12 @@ program AgendaWorker;
     SMTP_PORT (25), SMTP_USER, SMTP_PASSWORD,
     SMTP_SECURITY             plain (default), starttls or tls
     SMTP_TIMEOUT_MS (30000)
+    AMQP_HOST                 the broker; unset: the local sink
+    AMQP_PORT (5672), AMQP_USER (guest), AMQP_PASSWORD (guest), AMQP_VHOST (/)
+    AMQP_EXCHANGE             the events' topic exchange (agenda.events)
+    AMQP_RETRY_MS             a failed email's wait in the retry queue (30000;
+                              changing it means deleting agenda.email.retry)
+    AMQP_PREFETCH             messages a consumer holds at once (10)
 
   Every log line goes through SafeWriteln. *)
 
@@ -53,18 +76,21 @@ uses
   PascalJsonMapper.Mapper,
   PascalCommon.SafeLog,
   PascalCommon.Tracing,
+  PascalCommon.Threading,
   PascalApi.Config,
   PascalApi.Otlp,
   PascalApi.Jwt,
   Redis.Types,
   Redis.Client,
   Redis.Lock,
+  AMQP.Connection,
   Agenda.Schema in '..\src\Agenda.Schema.pas',
   Agenda.Database in '..\src\Agenda.Database.pas',
   Agenda.SignedLinks in '..\src\Agenda.SignedLinks.pas',
   Agenda.Settings in '..\src\Agenda.Settings.pas',
   Agenda.Events in '..\src\Agenda.Events.pas',
   Agenda.Outbox in '..\src\Agenda.Outbox.pas',
+  Agenda.Outbox.Amqp in '..\src\Agenda.Outbox.Amqp.pas',
   Agenda.Mail in '..\src\Agenda.Mail.pas',
   Agenda.Notifications in '..\src\Agenda.Notifications.pas',
   Agenda.Leases in '..\src\Agenda.Leases.pas',
@@ -73,13 +99,18 @@ uses
 
 const
   APP_NAME = 'agenda-worker';
-  APP_VERSION = '0.0.1';
+  APP_VERSION = '0.0.2';
   DEV_MAIL_FROM = 'Agenda <no-reply@agenda.localhost>';
   JOB_REMINDERS = 'reminders';
   PURGE_EVERY_SECONDS = 3600;
   SCHEMA_WAIT_MS = 2000;
-  // --drain: at most this many rounds (a handler failing forever ends too).
-  DRAIN_MAX_ROUNDS = 100;
+  // --drain: at most this long (a handler failing forever ends too).
+  DRAIN_MAX_SECONDS = 90;
+  DRAIN_QUIET_ROUNDS = 3;
+  DRAIN_QUIET_MS = 250;
+  // The email's queue and its PROCESSED_EVENTS consumer name.
+  EMAIL_QUEUE = 'agenda.email';
+  EMAIL_BINDING = 'appointment.#';
 
 type
   // The libraries' callbacks are methods on FPC ("of object").
@@ -90,17 +121,22 @@ type
     procedure Skipped(const AEvent: TOutboxEvent; const AReason: string);
     procedure LeaseUnavailable(ASender: TObject; const AOperation, AKey: string;
       AError: Exception);
+    procedure AmqpDisconnected(AConnection: TAMQPConnection);
+    procedure AmqpReconnected(AConnection: TAMQPConnection);
+    procedure AmqpReconnectError(AConnection: TAMQPConnection; AAttempt: Integer;
+      const AError: string);
   end;
 
 var
   GHooks: TWorkerHooks;
-  GFailed: Boolean;
+  GFailed: Integer;
 
 { TWorkerHooks }
 
 procedure TWorkerHooks.Error(const ALine: string);
 begin
-  GFailed := True;
+  // The broker's callbacks run on other threads.
+  PcAtomicSet(GFailed, 1);
   SafeWriteln('ERROR ' + ALine);
 end;
 
@@ -126,6 +162,22 @@ procedure TWorkerHooks.LeaseUnavailable(ASender: TObject; const AOperation, AKey
 begin
   Error(Format('lease unavailable (%s %s), the pass waits: %s: %s',
     [AOperation, AKey, AError.ClassName, AError.Message]));
+end;
+
+procedure TWorkerHooks.AmqpDisconnected(AConnection: TAMQPConnection);
+begin
+  SafeWriteln('WARNING broker connection lost; reconnecting');
+end;
+
+procedure TWorkerHooks.AmqpReconnected(AConnection: TAMQPConnection);
+begin
+  SafeWriteln('broker connection back');
+end;
+
+procedure TWorkerHooks.AmqpReconnectError(AConnection: TAMQPConnection; AAttempt: Integer;
+  const AError: string);
+begin
+  SafeWriteln('WARNING broker reconnection, try %d: %s', [AAttempt, AError]);
 end;
 
 { Setup }
@@ -178,6 +230,50 @@ begin
   Result := TRedisClient.Create(LParams);
 end;
 
+// The broker's connection, reconnecting by itself (the consumer and the
+// topology come back with it).
+function OpenAmqp: TAMQPConnection;
+var
+  LParams: TAMQPConnectionParams;
+begin
+  LParams := TAMQPConnectionParams.Localhost;
+  LParams.Host := TAppConfig.Get('AMQP_HOST', '');
+  LParams.Port := Word(TAppConfig.GetInt('AMQP_PORT', 5672));
+  LParams.User := TAppConfig.Get('AMQP_USER', 'guest');
+  LParams.Password := TAppConfig.Get('AMQP_PASSWORD', 'guest');
+  LParams.VirtualHost := TAppConfig.Get('AMQP_VHOST', '/');
+  LParams.AutoReconnect := True;
+  LParams.ConnectionName := APP_NAME;
+  Result := TAMQPConnection.Create(LParams);
+  Result.OnDisconnect := GHooks.AmqpDisconnected;
+  Result.OnReconnect := GHooks.AmqpReconnected;
+  Result.OnReconnectError := GHooks.AmqpReconnectError;
+end;
+
+// Opens AConnection, trying again every SCHEMA_WAIT_MS while the broker
+// can't be reached (it may start after the worker); False when stopped first.
+function WaitForBroker(AConnection: TAMQPConnection): Boolean;
+var
+  LSaid, LLine: string;
+begin
+  LSaid := '';
+  while not StopRequested do
+  begin
+    try
+      AConnection.Open;
+      Exit(True);
+    except
+      on E: Exception do
+        LLine := Format('waiting for the broker: %s: %s', [E.ClassName, E.Message]);
+    end;
+    if LLine <> LSaid then
+      SafeWriteln(LLine);
+    LSaid := LLine;
+    StopSleep(SCHEMA_WAIT_MS);
+  end;
+  Result := False;
+end;
+
 function MailFrom: string;
 begin
   Result := TAppConfig.Get('MAIL_FROM', '');
@@ -228,19 +324,25 @@ var
   GRedis: TRedisClient;
   GRedisLock: TRedisLock;
   GLease: ISchedulerLease;
-  GSink: IOutboxLocalSink;
+  GLocal: IOutboxLocalSink;
+  GSink: IOutboxSink;
   GMailer: TAppointmentMailer;
+  GHandler: IOutboxHandler;
+  GAmqp: TAMQPConnection;
+  GPublish, GConsume: TAMQPChannel;
+  GConsumer: TOutboxAmqpConsumer;
+  GQueue: TOutboxAmqpQueue;
   GRelay: TOutboxRelay;
   GReminders: TReminderScheduler;
   GOptions: TOutboxOptions;
-  GOwner, GMailDescription, GWarning: string;
+  GOwner, GMailDescription, GWarning, GExchange: string;
   GDrain, GHasLease: Boolean;
-  GPollMs, GReminderSeconds, GKeepDays, GRounds: Integer;
-  GNextReminders, GNextPurge, GNow: Int64;
+  GPollMs, GReminderSeconds, GKeepDays, GQuiet: Integer;
+  GNextReminders, GNextPurge, GNow, GDrainUntil: Int64;
   GWork: Integer;
 
-// One round: the relay, the sink, and the scheduler when due. Returns the
-// work done (events, deliveries, reminders queued).
+// One round: the relay, the local sink, and the scheduler when due. Returns
+// the work done (events, deliveries, reminders queued).
 function RunRound(ANow: Int64): Integer;
 begin
   Result := 0;
@@ -250,12 +352,13 @@ begin
     on E: Exception do
       GHooks.Error(Format('relay pass: %s: %s', [E.ClassName, E.Message]));
   end;
-  try
-    Inc(Result, GSink.RunOnce(ANow));
-  except
-    on E: Exception do
-      GHooks.Error(Format('handlers pass: %s: %s', [E.ClassName, E.Message]));
-  end;
+  if GLocal <> nil then
+    try
+      Inc(Result, GLocal.RunOnce(ANow));
+    except
+      on E: Exception do
+        GHooks.Error(Format('handlers pass: %s: %s', [E.ClassName, E.Message]));
+    end;
   if (ANow < GNextReminders) and not GDrain then
     Exit;
   GNextReminders := ANow + GReminderSeconds;
@@ -270,11 +373,29 @@ begin
       begin
         GNextPurge := ANow + PURGE_EVERY_SECONDS;
         TOutbox.Purge(GDatabase.Factory, ANow - Int64(GKeepDays) * 86400);
+        OutboxAmqpPurgeProcessed(GDatabase.Factory, ANow - Int64(GKeepDays) * 86400);
       end;
     end;
   except
     on E: Exception do
       GHooks.Error(Format('reminders pass: %s: %s', [E.ClassName, E.Message]));
+  end;
+end;
+
+// --drain with the broker: nothing ready in the queues, no handler running.
+function BrokerQuiet: Boolean;
+begin
+  Result := True;
+  if GConsumer = nil then
+    Exit;
+  try
+    Result := (GConsumer.InFlight = 0) and (OutboxAmqpPending(GPublish, GQueue) = 0);
+  except
+    on E: Exception do
+    begin
+      GHooks.Error(Format('queue count: %s: %s', [E.ClassName, E.Message]));
+      Result := False;
+    end;
   end;
 end;
 
@@ -290,7 +411,7 @@ begin
     ExitCode := 2;
     Exit;
   end;
-  GFailed := False;
+  GFailed := 0;
   GHooks := TWorkerHooks.Create;
   GDatabase := nil;
   GLinks := nil;
@@ -299,6 +420,10 @@ begin
   GRelay := nil;
   GReminders := nil;
   GMailer := nil;
+  GAmqp := nil;
+  GPublish := nil;
+  GConsume := nil;
+  GConsumer := nil;
   StopSignalInstall;
   try
     try
@@ -315,12 +440,41 @@ begin
       GReminderSeconds := TAppConfig.GetInt('REMINDER_INTERVAL_SECONDS', 60);
       GKeepDays := TAppConfig.GetInt('OUTBOX_KEEP_DAYS', 7);
 
-      GSink := TOutboxLocalSink.Create(GDatabase.Factory, GOwner, GOptions);
-      GSink.SetOnError(GHooks.OutboxError);
       GMailer := TAppointmentMailer.Create(GDatabase.Factory, OpenMail(GMailDescription),
         GLinks, MailFrom, ConfiguredPublicBaseUrl);
       GMailer.OnSkip := GHooks.Skipped;
-      GSink.AddHandler(GMailer);
+      GHandler := GMailer;
+
+      if TAppConfig.Get('AMQP_HOST', '') = '' then
+      begin
+        GLocal := TOutboxLocalSink.Create(GDatabase.Factory, GOwner, GOptions);
+        GLocal.SetOnError(GHooks.OutboxError);
+        GLocal.AddHandler(GHandler);
+        GSink := GLocal;
+        SafeWriteln('events: the local sink');
+      end
+      else
+      begin
+        GExchange := TAppConfig.Get('AMQP_EXCHANGE', 'agenda.events');
+        GQueue := TOutboxAmqpQueue.Create(EMAIL_QUEUE, GExchange, EMAIL_BINDING);
+        GQueue.RetryDelayMs := TAppConfig.GetInt('AMQP_RETRY_MS', GQueue.RetryDelayMs);
+        GQueue.Prefetch := TAppConfig.GetInt('AMQP_PREFETCH', GQueue.Prefetch);
+        GQueue.MaxAttempts := GOptions.MaxAttempts;
+        GAmqp := OpenAmqp;
+        if not WaitForBroker(GAmqp) then
+          Exit;
+        GPublish := GAmqp.CreateChannel;
+        OutboxAmqpDeclareExchange(GPublish, GExchange);
+        OutboxAmqpDeclareQueues(GPublish, GQueue);
+        GSink := TOutboxAmqpSink.Create(GPublish, GExchange);
+        GConsume := GAmqp.CreateChannel;
+        GConsumer := TOutboxAmqpConsumer.Create(GDatabase.Factory, GConsume, GQueue,
+          EMAIL_QUEUE, GHandler);
+        GConsumer.OnError := GHooks.OutboxError;
+        GConsumer.Start;
+        SafeWriteln('events: amqp %s:%d, exchange %s, queue %s', [TAppConfig.Get('AMQP_HOST', ''),
+          TAppConfig.GetInt('AMQP_PORT', 5672), GExchange, EMAIL_QUEUE]);
+      end;
       GRelay := TOutboxRelay.Create(GDatabase.Factory, GSink, GOwner, GOptions);
       GRelay.OnError := GHooks.OutboxError;
       GReminders := TReminderScheduler.Create(GDatabase.Factory);
@@ -352,15 +506,29 @@ begin
         SafeWriteln('%s %s running as %s', [APP_NAME, APP_VERSION, GOwner]);
       GNextReminders := 0;
       GNextPurge := 0;
-      GRounds := 0;
+      GQuiet := 0;
+      GDrainUntil := TJwt.UnixNow + DRAIN_MAX_SECONDS;
       while not StopRequested do
       begin
         GNow := TJwt.UnixNow;
         GWork := RunRound(GNow);
-        Inc(GRounds);
-        if GDrain and ((GWork = 0) or (GRounds >= DRAIN_MAX_ROUNDS)) then
-          Break;
-        if GWork = 0 then
+        if GDrain then
+        begin
+          if GNow >= GDrainUntil then
+          begin
+            GHooks.Error(Format('--drain: still busy after %d seconds', [DRAIN_MAX_SECONDS]));
+            Break;
+          end;
+          if (GWork = 0) and BrokerQuiet then
+            Inc(GQuiet)
+          else
+            GQuiet := 0;
+          if (GQuiet > 0) and ((GConsumer = nil) or (GQuiet >= DRAIN_QUIET_ROUNDS)) then
+            Break;
+          if GWork = 0 then
+            StopSleep(DRAIN_QUIET_MS);
+        end
+        else if GWork = 0 then
           StopSleep(GPollMs);
       end;
       if GHasLease then
@@ -379,18 +547,33 @@ begin
       end;
     end;
   finally
-    // The loop has stopped, so nothing runs on these any more: free them in
-    // the reverse order of creation.
+    // The loop has stopped. The consumer first: its channel's Free waits
+    // for the callbacks already dispatched (pascal-amqp-faa), which use the
+    // handler and the database; then the rest in the reverse order of
+    // creation.
+    if GConsumer <> nil then
+      try
+        GConsumer.Stop;
+      except
+        on E: Exception do
+          GHooks.Error(Format('consumer stop: %s: %s', [E.ClassName, E.Message]));
+      end;
+    GConsume.Free;
+    GConsumer.Free;
     GReminders.Free;
     GRelay.Free;
     GSink := nil;
+    GPublish.Free;
+    GAmqp.Free;
+    GLocal := nil;
+    GHandler := nil;
     GMailer := nil;
     GLease := nil;
     GRedisLock.Free;
     GRedis.Free;
     GLinks.Free;
     GDatabase.Free;
-    if GFailed and GDrain then
+    if (PcAtomicGet(GFailed) <> 0) and GDrain then
       ExitCode := 1;
     GHooks.Free;
     StopSignalDone;

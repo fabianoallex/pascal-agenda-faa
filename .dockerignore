@@ -1,0 +1,21 @@
+# The image is built from sources only (docker/Dockerfile).
+.git
+**/.git
+**/lib
+**/Win32
+**/Win64
+**/__history
+**/__recovery
+**/*.exe
+**/*.dcu
+**/*.o
+**/*.ppu
+**/*.sqlite
+**/*.log
+**/*.dll
+**/mail
+.deps
+tests
+external/*/tests
+external/*/samples
+external/*/docs

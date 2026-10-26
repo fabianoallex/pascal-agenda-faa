@@ -16,9 +16,10 @@
 # builds one.
 #
 # DB_ENGINE=postgresql runs the same steps on PostgreSQL: a postgres:17
-# container (PG_IMAGE) on a private network, removed at the end, and a
+# container (PG_IMAGE) on a private network, removed at the end, a
 # redis:7.2-alpine container there for the slot lock (tools/redis_cmd.py
-# talks to it; the image has no redis-cli).
+# talks to it; the image has no redis-cli), and a rabbitmq:3 one the worker's
+# scenarios go through (the SQLite run: the local sink).
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IMAGE="${FPC_IMAGE:-agenda-fpc322}"
@@ -34,18 +35,25 @@ ENGINE="${DB_ENGINE:-sqlite}"
 NET=agenda-it-net
 PG=agenda-it-pg
 REDIS=agenda-it-redis
+RABBIT=agenda-it-rabbit
 NETOPT=""
 REDIS_HOST=""
 REDIS_CMD=""
+AMQP_HOST=""
 if [ "$ENGINE" = postgresql ]; then
   cleanup() {
-    docker rm -f "$PG" "$REDIS" >/dev/null 2>&1 || true
+    docker rm -f "$PG" "$REDIS" "$RABBIT" >/dev/null 2>&1 || true
     docker network rm "$NET" >/dev/null 2>&1 || true
   }
   trap cleanup EXIT
   cleanup
   docker network create "$NET" >/dev/null
   docker run -d --name "$REDIS" --network "$NET" redis:7.2-alpine >/dev/null
+  # Waited for by its log, never by "docker exec rabbitmq-diagnostics" (as
+  # root, before the server is up, it creates the Erlang cookie the server
+  # then can't read).
+  docker run -d --name "$RABBIT" --network "$NET" rabbitmq:3 >/dev/null
+  AMQP_HOST="$RABBIT"
   REDIS_HOST="$REDIS"
   REDIS_CMD="python3 /t/tools/redis_cmd.py $REDIS 6379"
   docker run -d --name "$PG" --network "$NET" -e POSTGRES_PASSWORD=postgres \
@@ -58,6 +66,9 @@ if [ "$ENGINE" = postgresql ]; then
     sleep 1
   done
   [ -n "$READY" ] || { echo "PostgreSQL didn't start"; docker logs "$PG" | tail -20; exit 1; }
+  for I in $(seq 1 90); do
+    docker logs "$RABBIT" 2>&1 | grep -q "Server startup complete" && break; sleep 1
+  done
   NETOPT="--network $NET"
 fi
 echo "== engine: $ENGINE"
@@ -68,6 +79,7 @@ MSYS_NO_PATHCONV=1 docker run --rm $NETOPT -v "$MOUNT:/src:ro" \
   -e DB_ENGINE="$ENGINE" -e DB_HOST="$PG" -e DB_NAME=agenda_scenarios \
   -e DB_USER=postgres -e DB_PASSWORD=postgres \
   -e REDIS_HOST="$REDIS_HOST" -e REDIS_CMD="$REDIS_CMD" \
+  -e AMQP_HOST="$AMQP_HOST" -e AMQP_RETRY_MS=2000 \
   -e DB_FILE=/t/run/agenda.sqlite "$IMAGE" sh -c '
   set -e
   mkdir -p /t/units /t/wunits /t/run && cp -r /src/src /src/api /src/worker /src/tools /src/external /t/
@@ -84,7 +96,7 @@ MSYS_NO_PATHCONV=1 docker run --rm $NETOPT -v "$MOUNT:/src:ro" \
   fpc -v0 -Mdelphi -dUseCThreads $P -FU/t/units -o/t/AgendaApi AgendaApi.dpr > /t/build.log 2>&1 \
     || { grep -iE "error|fatal" /t/build.log | head -30; exit 1; }
   cd /t/worker
-  W="-Fu$E/synapse -Fi$E/synapse"
+  W="-Fu$E/synapse -Fi$E/synapse -Fu$E/pascal-amqp-faa/src -Fi$E/pascal-amqp-faa/src"
   fpc -v0 -Mdelphi -dUseCThreads $P $W -gh -gl -FU/t/wunits -o/t/AgendaWorker AgendaWorker.dpr \
     > /t/wbuild.log 2>&1 || { grep -iE "error|fatal" /t/wbuild.log | head -30; exit 1; }
   cd /t/run

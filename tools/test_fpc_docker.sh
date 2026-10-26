@@ -4,6 +4,9 @@
 #
 # heaptrc on Linux writes its summary only to a log file (HEAPTRC=log=...):
 # a check that only reads the console passes on a leak.
+#
+# DOCKER_CPUS=1 runs it on one CPU: the consumer tests (Agenda.OutboxAmqpTests)
+# wait on the library's threads, and one CPU is where a race shows.
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IMAGE="${FPC_IMAGE:-agenda-fpc322}"
@@ -13,7 +16,10 @@ command -v cygpath >/dev/null 2>&1 && MOUNT="$(cygpath -w "$ROOT")"
 cd "$ROOT"
 python3 tools/gen_fpc_mirror.py --check 2>/dev/null || python tools/gen_fpc_mirror.py --check
 
-MSYS_NO_PATHCONV=1 docker run --rm -v "$MOUNT:/src:ro" "$IMAGE" sh -c '
+CPUS=""
+[ -n "${DOCKER_CPUS:-}" ] && CPUS="--cpus=$DOCKER_CPUS"
+# $CPUS unquoted on purpose: empty, or one argument.
+MSYS_NO_PATHCONV=1 docker run --rm $CPUS -v "$MOUNT:/src:ro" "$IMAGE" sh -c '
   set -e
   mkdir -p /t/u && cp -r /src/src /src/tests /src/external /t/
   E=/t/external
@@ -23,6 +29,7 @@ MSYS_NO_PATHCONV=1 docker run --rm -v "$MOUNT:/src:ro" "$IMAGE" sh -c '
   P="$P -Fu$E/pascal-jsonmapper-faa/src -Fi$E/pascal-jsonmapper-faa/src"
   P="$P -Fu$E/pascal-db-faa/src -Fi$E/pascal-db-faa/src -Fu$E/pascal-db-faa/adapters/sqldb"
   P="$P -Fu$E/pascal-redis-faa/src -Fi$E/pascal-redis-faa/src -Fu$E/synapse -Fi$E/synapse"
+  P="$P -Fu$E/pascal-amqp-faa/src -Fi$E/pascal-amqp-faa/src -Fu$E/pascal-amqp-faa/src/server"
   cd /t/tests/Unit/fpc
   fpc -v0 -Mdelphi $P -FU/t/u -gh -gl -o/t/runner AgendaUnitTestsFpc.lpr > /t/build.log 2>&1 \
     || { grep -iE "error|fatal" /t/build.log | head -30; exit 1; }

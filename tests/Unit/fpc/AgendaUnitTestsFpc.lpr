@@ -31,7 +31,8 @@ uses
   Agenda.PublicTenancyTests,
   Agenda.OutboxTests,
   Agenda.MailTests,
-  Agenda.WorkerTests;
+  Agenda.WorkerTests,
+  Agenda.OutboxAmqpTests;
 
 var
   ConsoleApp: TTestRunner;

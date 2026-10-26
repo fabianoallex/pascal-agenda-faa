@@ -145,7 +145,8 @@ two libraries would share goes to pascal-common-faa.
 
 - Transactional outbox + relay (the dual write problem). Shape discussed with the user on
   2026-10-23, built here in M4 as `src/Agenda.Outbox` (the core and the local sink, 11 unit
-  tests; 2026-10-26, see "M4: the outbox core"); the broker sink comes with the worker:
+  tests; 2026-10-26, see "M4: the outbox core"), and its broker sink as
+  `src/Agenda.Outbox.Amqp` (2026-10-26, see "M4: the broker, the compose file, the trace"):
   - **Core**, on pascal-db-faa only: `Enqueue` writes one row per event (type, payload, trace
     context) in the caller's transaction; a polling relay reads a batch and hands each event to
     an `IOutboxSink`, then marks it delivered. Delivery is at-least-once: consumers deduplicate
@@ -1346,3 +1347,72 @@ JWT keys rotate on a request).
   build; the tests now use `TPath.GetTempPath` on Delphi.
   Rebuilt: 108 of 108, 0 leaked, Win32 and Win64. Step 4 meets the acceptance on both
   compilers.
+
+### M4: the broker, the compose file, the trace (2026-10-26)
+
+- `src/Agenda.Outbox.Amqp` (the outbox candidate's broker sink): `TOutboxAmqpSink` publishes
+  each event (the payload as the body, `application/json`, persistent; `MessageId` the event
+  id, `type` the kind, `timestamp` its creation, a `tenant-id` header; routing key the kind,
+  on the topic exchange `agenda.events`) on a confirm channel and waits for the ack: no ack,
+  or the broker down, raises and the relay retries. `TOutboxAmqpConsumer` runs one handler on
+  a queue of its own, with three queues per consumer (`agenda.email` bound to
+  `appointment.#`; `.retry`, no consumer, a TTL, dead-lettering back; `.dead`): a failure is a
+  `Nack` without requeue, so the work queue's dead-letter takes it to the retry queue and back
+  after `AMQP_RETRY_MS`; the tries are the work queue's `rejected` entries in `x-death`, and
+  at `MaxAttempts` the consumer parks the message in `.dead` and acks it (pascal-amqp-faa's
+  `RetryDlqVcl` sample's pattern). Decision 6: handle, record in `PROCESSED_EVENTS`
+  (`PROCESSED.*` statements), ack; a redelivered event already recorded is acked unrun.
+- The worker: `AMQP_HOST` set, the relay's sink is the broker's and the consumer runs the
+  email handler; unset, the local sink as before. The connection reconnects by itself (the
+  topology and the consumer come back), and at the start the worker waits for the broker as
+  for the database. `--drain` with the broker ends when a round found nothing, both queues are
+  empty and no callback runs, three times 250 ms apart. The hourly purge also deletes old
+  `PROCESSED_EVENTS` rows.
+- The trace crosses the processes as designed: the api's request span is the outbox row's
+  `traceparent`; the relay continues it (`outbox appointment.booked`), pascal-amqp-faa's
+  publish span puts it in the message, the consumer's `process agenda.email` is its child,
+  and the handler's `email send` (new, a client span) times the mail server. Measured in the
+  collector: the booking's `X-Request-Id` names one trace with the api's request, its SQL and
+  Redis spans, the worker's relay, publish, process and send.
+- `docker-compose.yml` (project `agenda`): PostgreSQL 17, Redis, RabbitMQ 3 (management on
+  15672), Mailpit (SMTP 1025, UI and API on 8025), the OpenTelemetry Collector (contrib; OTLP
+  over HTTP in, a JSON file in the `otel-data` volume and its log out), and the api and the
+  worker from `docker/Dockerfile` (built with plain `fpc` on the CI image, run on
+  `debian:bookworm-slim` with libsqlite3, libpq, OpenSSL 3 and curl). `DEV_MODE`: a
+  development stack. `tools/test_compose.sh` builds and starts it (`--wait` on the health
+  checks), seeds it through `tools/compose_api.sh` (the api's commands in the container),
+  runs `tools/http_scenarios_mail.sh` (the booking's email in Mailpit, read by
+  `tools/mailpit_summary.py`: recipient, subject decoded, the link opening the appointment;
+  the cancel through the email's link and its email; the trace in the collector's file, by
+  `tools/otel_spans.py`), stops the worker with SIGTERM (a clean stop, exit code 0, no
+  `ERROR` in its log) and removes everything. Host ports of its own (19400, 18025, 25672), so
+  a stack on the defaults doesn't collide. `tools/ci-test.sh` runs it after the rest.
+- `tools/test_http.sh` (PostgreSQL) and `tools/test_http_docker.sh` (PostgreSQL) now start a
+  `rabbitmq:3` container, and the worker's scenarios run through it; on SQLite, the local
+  sink. Both ways pass the same checks, two workers at once included (two consumers of one
+  queue: each event once). `tools/test_fpc_docker.sh` takes `DOCKER_CPUS=1`.
+- Found while building, for pascal-amqp-faa: `TAMQPChannel.Close` sends `Channel.Close` and
+  only then waits for the callbacks in flight (`DrainInFlight`), so a callback's `Ack` sent
+  after the `Close-Ok` reaches a closed channel and the broker closes the whole connection
+  (`504 ... channel 2, which is not open`; measured with the embedded broker, the consumer
+  test that stopped right after its handler ran). The library could drop an `Ack`/`Nack` on a
+  channel it closed (as it already does after a connection drop), or cancel the consumers and
+  drain before the `Close`. Here: `TOutboxAmqpConsumer.Stop` cancels, waits for the
+  callbacks, and a callback that starts after it neither handles nor acks (the close requeues
+  the message; `PROCESSED_EVENTS` covers the rest).
+- Found while building: probing RabbitMQ with `docker exec rabbitmq-diagnostics` before the
+  server is up creates the Erlang cookie as root, and the server then fails to start
+  (`.erlang.cookie: eacces`); the scripts wait for its "Server startup complete" log line and
+  the compose health check opens the port. Git Bash turns `/app/...` into a Windows path in
+  `docker compose exec` (`MSYS_NO_PATHCONV=1`, which then also stops a `-f /c/...` path from
+  converting: the wrapper runs from the project's directory).
+- Tests: `Agenda.OutboxAmqpTests` (7, pascal-amqp-faa's embedded broker `TAMQPServer` on an
+  ephemeral port, no RabbitMQ; the unit suite now requires `pascal_amqp_faa_server`): the
+  published message and its fields, handled once and recorded, a redelivered event not run
+  again, a failure retried from the retry queue, one parked after the tries, another kind
+  acked unrun, the purge. Waits are polls with a deadline.
+- Result: 115 unit tests (from 108), 0 errors, 0 failures, 0 leaks on FPC Windows and Linux
+  (Linux also three times at one CPU). HTTP, FPC Windows: SQLite 608 + 74 for the worker
+  (local sink), PostgreSQL with Redis and RabbitMQ 619 + 74; FPC Linux (Docker): 608 + 79 and
+  619 + 79 (SIGTERM included, through the broker on PostgreSQL). Compose: 22 checks, a clean
+  stop. Delphi: not built yet (the IDE).

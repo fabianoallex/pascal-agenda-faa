@@ -1,0 +1,127 @@
+# The whole application for development (docs/design.md, M4): PostgreSQL,
+# Redis, RabbitMQ, Mailpit (a fake SMTP server with a web UI and an API),
+# an OpenTelemetry Collector, and the api and the worker built from source
+# (docker/Dockerfile, on the CI image agenda-fpc322: sh tools/ci-test.sh
+# builds it, or set FPC_IMAGE).
+#
+#   docker compose up -d --build --wait
+#   docker compose exec api /app/AgendaApi --create-tenant demo "Demo" America/Sao_Paulo
+#   docker compose exec -e AGENDA_PASSWORD=... api /app/AgendaApi --create-user demo owner@demo.test owner
+#
+# Then: the api on http://localhost:9400 (AGENDA_PORT), the emails on
+# http://localhost:8025 (MAILPIT_PORT), RabbitMQ's management on
+# http://localhost:15672 (guest/guest), the spans in the otel-data volume.
+# DEV_MODE: development keys for the JWT seal and the links; never like this
+# in production. tools/test_compose.sh runs it end to end.
+name: agenda
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: agenda
+    healthcheck:
+      # Over TCP: during its first start the server listens on the socket
+      # only, and restarts once the database is created.
+      test: ["CMD", "pg_isready", "-q", "-h", "127.0.0.1", "-U", "postgres", "-d", "agenda"]
+      interval: 2s
+      retries: 60
+
+  redis:
+    image: redis:7.2-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 30
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "${RABBITMQ_UI_PORT:-15672}:15672"
+    healthcheck:
+      # The port, not rabbitmq-diagnostics: run before the server is up, that
+      # creates the Erlang cookie as root and the server can't read it.
+      test: ["CMD", "bash", "-c", "</dev/tcp/127.0.0.1/5672"]
+      interval: 2s
+      retries: 90
+
+  mailpit:
+    image: axllent/mailpit:v1.20
+    ports:
+      - "${MAILPIT_PORT:-8025}:8025"
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.111.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    # The file exporter writes to a named volume, created by root.
+    user: "0"
+    volumes:
+      - ./docker/otel-collector.yaml:/etc/otelcol/config.yaml:ro
+      - otel-data:/data
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        FPC_IMAGE: ${FPC_IMAGE:-agenda-fpc322}
+    image: agenda-app
+    command: ["/app/AgendaApi", "9400"]
+    ports:
+      - "${AGENDA_PORT:-9400}:9400"
+    environment: &app-env
+      DEV_MODE: "true"
+      DB_ENGINE: postgresql
+      DB_HOST: postgres
+      DB_NAME: agenda
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      REDIS_HOST: redis
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      PUBLIC_BASE_URL: http://localhost:${AGENDA_PORT:-9400}
+      PASSWORD_ITERATIONS: ${PASSWORD_ITERATIONS:-210000}
+      AUTH_RATE_LIMIT: ${AUTH_RATE_LIMIT:-10}
+      PUBLIC_RATE_LIMIT: ${PUBLIC_RATE_LIMIT:-60}
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://127.0.0.1:9400/health/ready"]
+      interval: 2s
+      retries: 60
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+
+  worker:
+    # The api's image (one build, both programs in it).
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        FPC_IMAGE: ${FPC_IMAGE:-agenda-fpc322}
+    image: agenda-app
+    command: ["/app/AgendaWorker"]
+    environment:
+      <<: *app-env
+      AMQP_HOST: rabbitmq
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      MAIL_FROM: Agenda Demo <agenda@demo.test>
+      OUTBOX_POLL_MS: "500"
+      AMQP_RETRY_MS: ${AMQP_RETRY_MS:-30000}
+    # SIGTERM on "docker compose stop": the worker stops cleanly.
+    stop_grace_period: 30s
+    depends_on:
+      # The api migrates the database; the worker waits for it anyway.
+      api:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+
+volumes:
+  otel-data:

@@ -68,7 +68,7 @@
         <DCC_DcuOutput>.\$(Platform)\$(Config)</DCC_DcuOutput>
         <DCC_ExeOutput>.\$(Platform)\$(Config)</DCC_ExeOutput>
         <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;$(DCC_Namespace)</DCC_Namespace>
-        <DCC_UnitSearchPath>$(DUnitX);..\..\src;..\..\external\pascal-api-infra-faa\src;..\..\external\pascal-common-faa\src;..\..\external\pascal-common-faa\bridges\jsonmapper;..\..\external\pascal-jsonmapper-faa\src;..\..\external\pascal-db-faa\src;..\..\external\pascal-db-faa\adapters\firedac;..\..\external\pascal-redis-faa\src;..\..\external\synapse;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+        <DCC_UnitSearchPath>$(DUnitX);..\..\src;..\..\external\pascal-api-infra-faa\src;..\..\external\pascal-common-faa\src;..\..\external\pascal-common-faa\bridges\jsonmapper;..\..\external\pascal-jsonmapper-faa\src;..\..\external\pascal-db-faa\src;..\..\external\pascal-db-faa\adapters\firedac;..\..\external\pascal-redis-faa\src;..\..\external\pascal-amqp-faa\src;..\..\external\pascal-amqp-faa\src\server;..\..\external\synapse;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
         <SanitizedProjectName>Agenda_UnitTests</SanitizedProjectName>
         <UsingDelphiRTL>true</UsingDelphiRTL>
     </PropertyGroup>
@@ -146,6 +146,8 @@
         <DCCReference Include="Agenda.OutboxTests.pas"/>
         <DCCReference Include="Agenda.MailTests.pas"/>
         <DCCReference Include="Agenda.WorkerTests.pas"/>
+        <DCCReference Include="..\..\src\Agenda.Outbox.Amqp.pas"/>
+        <DCCReference Include="Agenda.OutboxAmqpTests.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>

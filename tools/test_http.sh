@@ -23,7 +23,10 @@
 # (PG_CLIENT to choose another). PostgreSQL has no 32-bit client: a Delphi
 # build for it is Win64. That run also starts a redis:7.2-alpine container
 # on port 56379 (REDIS_TEST_PORT) for the slot lock, so the SQLite run checks
-# the booking without it and the PostgreSQL run with it (and with it down).
+# the booking without it and the PostgreSQL run with it (and with it down),
+# and a rabbitmq:3 container on port 55672 (AMQP_TEST_PORT): the worker's
+# scenarios run through the broker there and through the local sink on
+# SQLite.
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LAZBUILD="${LAZBUILD:-lazbuild}"
@@ -72,9 +75,14 @@ if [ "${DB_ENGINE:-sqlite}" = postgresql ]; then
   REDIS_CONTAINER=agenda-test-redis
   export REDIS_HOST=127.0.0.1 REDIS_PORT="${REDIS_TEST_PORT:-56379}"
   export REDIS_CMD="python tools/redis_cmd.py $REDIS_HOST $REDIS_PORT"
-  trap 'docker rm -f "$PG_CONTAINER" "$REDIS_CONTAINER" >/dev/null 2>&1 || true' EXIT
-  docker rm -f "$REDIS_CONTAINER" >/dev/null 2>&1 || true
+  RABBIT_CONTAINER=agenda-test-rabbit
+  trap 'docker rm -f "$PG_CONTAINER" "$REDIS_CONTAINER" "$RABBIT_CONTAINER" >/dev/null 2>&1 || true' EXIT
+  docker rm -f "$REDIS_CONTAINER" "$RABBIT_CONTAINER" >/dev/null 2>&1 || true
   docker run -d --name "$REDIS_CONTAINER" -p "$REDIS_PORT:6379" redis:7.2-alpine >/dev/null
+  # Started now, waited for before the worker: it takes some seconds. Never
+  # probe it with "docker exec rabbitmq-diagnostics" before it is up: run as
+  # root, that creates the Erlang cookie the server then can't read.
+  docker run -d --name "$RABBIT_CONTAINER" -p "${AMQP_TEST_PORT:-55672}:5672" rabbitmq:3 >/dev/null
   for I in $(seq 1 30); do
     docker exec "$REDIS_CONTAINER" redis-cli ping >/dev/null 2>&1 && break; sleep 1
   done
@@ -142,6 +150,12 @@ if [ -n "$REDIS_CONTAINER" ]; then
   for I in $(seq 1 30); do
     docker exec "$REDIS_CONTAINER" redis-cli ping >/dev/null 2>&1 && break; sleep 1
   done
+fi
+if [ -n "$RABBIT_CONTAINER" ]; then
+  for I in $(seq 1 90); do
+    docker logs "$RABBIT_CONTAINER" 2>&1 | grep -q "Server startup complete" && break; sleep 1
+  done
+  export AMQP_HOST=127.0.0.1 AMQP_PORT="${AMQP_TEST_PORT:-55672}" AMQP_RETRY_MS=2000
 fi
 WRC=0
 sh tools/http_scenarios_worker.sh "$PORT" "$ROOT/$WORKER_EXE" "$EXE" || WRC=$?

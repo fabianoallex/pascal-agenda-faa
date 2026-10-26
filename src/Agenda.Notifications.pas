@@ -22,7 +22,9 @@ unit Agenda.Notifications;
   - The time: the tenant's zone (pascal-common-faa's PcTimeZones), with the
     zone's name, in English as the rest of the text.
   - A failure to send raises: the local sink retries the delivery
-    (Agenda.Outbox), a broker consumer won't record it as processed.
+    (Agenda.Outbox), a broker consumer won't record it as processed. The
+    send has a span of its own ("email send", a client span), the child of
+    the handler's.
 
   AppointmentMail composes the message alone (no database, no clock), for
   the unit tests. *)
@@ -308,7 +310,23 @@ begin
     LUrl := LPath + '?' + LQuery;
     LCancelUrl := LPath + '/cancel?' + LQuery;
   end;
-  FMail.Send(AppointmentMail(AEvent.Kind, LNotice, FFrom, AEvent.Id, LUrl, LCancelUrl));
+  // A span of its own: the mail server's time shows apart from the
+  // database's, in the event's trace.
+  LSpan := TPcTracing.StartSpan('email send', skClient);
+  try
+    LSpan.SetAttribute('email.kind', AEvent.Kind);
+    try
+      FMail.Send(AppointmentMail(AEvent.Kind, LNotice, FFrom, AEvent.Id, LUrl, LCancelUrl));
+    except
+      on E: Exception do
+      begin
+        LSpan.SetStatus(ssError, E.ClassName + ': ' + E.Message);
+        raise;
+      end;
+    end;
+  finally
+    LSpan.Finish;
+  end;
 end;
 
 end.

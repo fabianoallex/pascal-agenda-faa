@@ -1,0 +1,21 @@
+# The OpenTelemetry Collector of docker-compose.yml: OTLP over HTTP in (the
+# api's and the worker's PascalApi.Otlp exporter), the spans out as JSON lines
+# in /data/traces.json (tools/http_scenarios_mail.sh reads them) and a short
+# line each in the collector's log.
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+exporters:
+  file:
+    path: /data/traces.json
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [file, debug]
