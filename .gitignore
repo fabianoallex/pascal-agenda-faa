@@ -21,6 +21,7 @@ build.log
 *.log
 .env
 api/sqlite3.dll
+tests/Unit/fpc/sqlite3.dll
 
 # Local dependencies (sqlite.org's sqlite3.dll for FPC on Windows)
 .deps/

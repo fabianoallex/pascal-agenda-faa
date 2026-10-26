@@ -12,6 +12,11 @@ command -v "$LAZBUILD" >/dev/null 2>&1 || LAZBUILD=/c/lazarus4.0/lazbuild.exe
 
 cd "$ROOT"
 python tools/gen_fpc_mirror.py
+# Agenda.OutboxTests opens SQLite: SQLdb loads sqlite3.dll next to the runner,
+# and it must be sqlite.org's build (pascal-db-faa gotcha 23).
+DLL="${SQLITE_DLL:-.deps/sqlite3.dll}"
+[ -f "$DLL" ] || { echo "no sqlite.org sqlite3.dll: set SQLITE_DLL or put one in .deps/sqlite3.dll"; exit 1; }
+cp "$DLL" tests/Unit/fpc/sqlite3.dll
 cd tests/Unit/fpc
 # Never pipe lazbuild into head: it hangs when the pipe closes.
 if ! "$LAZBUILD" -B AgendaUnitTestsFpc.lpi > build.log 2>&1; then

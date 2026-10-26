@@ -28,7 +28,8 @@ uses
   Agenda.TimesTests,
   Agenda.SlotsTests,
   Agenda.SignedLinksTests,
-  Agenda.PublicTenancyTests;
+  Agenda.PublicTenancyTests,
+  Agenda.OutboxTests;
 
 var
   ConsoleApp: TTestRunner;

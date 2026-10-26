@@ -144,7 +144,8 @@ two libraries would share goes to pascal-common-faa.
 **Probable** (a second case should confirm the shape):
 
 - Transactional outbox + relay (the dual write problem). Shape discussed with the user on
-  2026-10-23, to be built here in M4:
+  2026-10-23, built here in M4 as `src/Agenda.Outbox` (the core and the local sink, 11 unit
+  tests; 2026-10-26, see "M4: the outbox core"); the broker sink comes with the worker:
   - **Core**, on pascal-db-faa only: `Enqueue` writes one row per event (type, payload, trace
     context) in the caller's transaction; a polling relay reads a batch and hands each event to
     an `IOutboxSink`, then marks it delivered. Delivery is at-least-once: consumers deduplicate
@@ -1223,3 +1224,34 @@ JWT keys rotate on a request).
 - Result: 78 unit tests, 0 leaks (FPC Windows); HTTP 608 checks on SQLite and 619 on
   PostgreSQL 17 with Redis (6 skipped, above), FPC Windows, migration 14 applied and a second
   start applying none.
+
+### M4: the outbox core (2026-10-26)
+
+- `src/Agenda.Outbox` (the candidate; pascal-db-faa and pascal-common-faa only):
+  `TOutbox.Enqueue` (in the caller's transaction, the current span's traceparent),
+  `TOutbox.Purge`, `TOutboxRelay.RunOnce` (a lease-claimed batch, each event handed to an
+  `IOutboxSink` and marked delivered in one transaction with what the sink wrote; a failure
+  counts attempts, waits `TOutboxRetry`'s doubling delay, and the batch goes on),
+  `TOutboxLocalSink` (`IOutboxLocalSink`: a delivery per accepting handler, written in the
+  relay's transaction; its `RunOnce` runs them outside any transaction, in a span continuing
+  the event's trace, each retried apart and dead after `MaxAttempts`). No thread, no sleep:
+  the worker calls the passes. Its SQL is `Agenda.Schema`'s (`OUTBOX.*`, `OUTBOX_DELIVERY.*`),
+  common to both engines except the two claims, whose PostgreSQL versions skip locked rows.
+- `src/Agenda.Events`: the kinds and the thin payload (`{"appointmentId","version"}`, through
+  the mapper). `TAppointmentRepository` writes `appointment.booked` (version 1), `.moved` (a
+  PATCH with `startsAt`; it also clears `REMINDER_QUEUED_AT`) and `.cancelled` (staff and
+  link: `WriteCancel`, only when its UPDATE matched) in the change's transaction; a status
+  PATCH writes none. The public booking goes through `Book`, so it has its event too.
+- `TAgendaDatabase.CreateSQLite(file)` for tests. The unit suite now opens SQLite
+  (`Agenda.OutboxTests`, a file in the temporary directory, every migration): the FPC
+  project requires `pascal_db_faa_sqldb`, `tools/test_fpc.sh` copies `.deps/sqlite3.dll` next
+  to the runner, the Docker script adds the SQLdb adapter's path, and the Delphi project
+  the FireDAC adapter's (`adaptersiredac`).
+- Found while writing it: FPC warns that a method named `Dispatch` hides `TObject.Dispatch`
+  (the local sink's pass is `RunOnce`, as the relay's). pascal-db-faa doesn't say whether a
+  write outside `StartTransaction` commits; every write here starts one.
+- Result: 89 unit tests (from 78), 0 errors, 0 failures, 0 leaks on FPC Windows and Linux
+  (Docker). HTTP 608 checks on SQLite and 619 on PostgreSQL with Redis (6 skipped, as in
+  "migration 14"); after the SQLite run its database had one `booked` event per appointment
+  (14), 3 `cancelled`, 2 `moved`, each with the request's traceparent. Not run yet: the
+  PostgreSQL claims (only the worker runs them; step 4's scenarios will), Delphi (the IDE).

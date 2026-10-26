@@ -46,6 +46,10 @@ unit Agenda.Appointments;
     don't get it (rlBusy) are a 409 without reaching the database. Released
     after the commit; without it (no REDIS_HOST, or rlUnavailable: Redis
     down) the transaction alone decides, the same way.
+  - Every change customers hear about writes its event in its own
+    transaction (Agenda.Outbox, Agenda.Events, M4): a booking, a move, a
+    cancel (by staff or by link). A status change through PATCH writes
+    none; a move forgets the reminder queued for the old start.
   - Every query goes through TTenantFilter.Prepare (the ${TENANT} tag); the
     foreign keys keep a professional, service or customer with appointments
     from being deleted (409).
@@ -257,7 +261,9 @@ uses
   Agenda.Times,
   Agenda.Tokens,
   Agenda.Slots,
-  Agenda.Availability;
+  Agenda.Availability,
+  Agenda.Outbox,
+  Agenda.Events;
 
 const
   STATUSES: array[0..4] of string = ('booked', 'confirmed', 'cancelled', 'done', 'no_show');
@@ -634,6 +640,8 @@ begin
       LQuery.Params.Strings['STATUS'] := STATUS_BOOKED;
       LQuery.Params.Int64s['CREATED_AT'] := ANow;
       LQuery.ExecSql;
+      TOutbox.Enqueue(FScope.Factory, LQuery, FScope.Discriminator, EVENT_APPOINTMENT_BOOKED,
+        AppointmentEventPayload(LId, 1), ANow);
       LTx.Commit;
     except
       LTx.Rollback;
@@ -742,6 +750,9 @@ begin
       LQuery.Params.OptStrings['STATUS'] := APatch.Status;
       if LQuery.ExecSql = 0 then
         RaisePreconditionFailed;
+      if LMove.HasValue then
+        TOutbox.Enqueue(FScope.Factory, LQuery, FScope.Discriminator, EVENT_APPOINTMENT_MOVED,
+          AppointmentEventPayload(AId, LRow.Version + 1), ANow);
       LTx.Commit;
     except
       LTx.Rollback;
@@ -790,6 +801,9 @@ begin
     LQuery.Params.Int64s['UPDATED_AT'] := ANow;
     LQuery.Params.Strings['STATUS'] := STATUS_CANCELLED;
     Result := LQuery.ExecSql > 0;
+    if Result then
+      TOutbox.Enqueue(FScope.Factory, LQuery, FScope.Discriminator, EVENT_APPOINTMENT_CANCELLED,
+        AppointmentEventPayload(AId, AVersion + 1), ANow);
     LTx.Commit;
   except
     LTx.Rollback;

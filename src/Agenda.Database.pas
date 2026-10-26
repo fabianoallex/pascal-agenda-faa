@@ -35,10 +35,14 @@ type
     FVersion: Integer;
     FEngine: TAgendaEngine;
     FDescription: string;
+    procedure Open(AEngine: TAgendaEngine; const ASQLiteFile: string);
   public
     /// Opens the database the settings name (SQLite: creates the file).
     /// Nothing is migrated yet.
     constructor Create;
+    /// A SQLite database in AFile, whatever the settings say (tests). On FPC
+    /// the library is still SQLITE_CLIENT's.
+    constructor CreateSQLite(const AFile: string);
     /// DB_ENGINE: sqlite (default) or postgresql; anything else raises.
     class function ConfiguredEngine: TAgendaEngine; static;
     /// DB_FILE, expanded: the SQLite database.
@@ -130,12 +134,23 @@ begin
 end;
 
 constructor TAgendaDatabase.Create;
+begin
+  inherited Create;
+  Open(ConfiguredEngine, SQLiteFile);
+end;
+
+constructor TAgendaDatabase.CreateSQLite(const AFile: string);
+begin
+  inherited Create;
+  Open(aeSQLite, ExpandFileName(AFile));
+end;
+
+procedure TAgendaDatabase.Open(AEngine: TAgendaEngine; const ASQLiteFile: string);
 var
   LConfig: IDatabaseConfig; // an interface variable, never a class one (pascal-db-faa's rule)
   LHost, LPort, LName: string;
 begin
-  inherited Create;
-  FEngine := ConfiguredEngine;
+  FEngine := AEngine;
   LConfig := TDatabaseConfig.Create;
   case FEngine of
     aePostgreSQL:
@@ -149,10 +164,10 @@ begin
         FDescription := Format('postgresql %s:%s/%s', [LHost, LPort, LName]);
       end;
   else
-    SetSQLiteParams(LConfig.ConnectionParams, SQLiteFile);
+    SetSQLiteParams(LConfig.ConnectionParams, ASQLiteFile);
     LConfig.SQLDialect := 'SQLite';
     LConfig.SQLDirectory := SQLITE_SQL_DIR;
-    FDescription := 'sqlite ' + SQLiteFile;
+    FDescription := 'sqlite ' + ASQLiteFile;
   end;
   LConfig.SqlSource := AgendaSqlSource;
   LConfig.PoolName := 'agenda';
