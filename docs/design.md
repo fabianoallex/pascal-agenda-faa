@@ -1344,3 +1344,5 @@ JWT keys rotate on a request).
   same wrong code page). The rule the older tests follow, now these too: a test unit with a
   non-ASCII literal starts with a BOM. Before that, `GetTempDir` (FPC's RTL only) stopped the
   build; the tests now use `TPath.GetTempPath` on Delphi.
+  Rebuilt: 108 of 108, 0 leaked, Win32 and Win64. Step 4 meets the acceptance on both
+  compilers.
