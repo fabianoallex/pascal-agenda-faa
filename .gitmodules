@@ -16,3 +16,9 @@
 [submodule "external/pascal-redis-faa"]
 	path = external/pascal-redis-faa
 	url = https://github.com/fabianoallex/pascal-redis-faa.git
+[submodule "external/pascal-amqp-faa"]
+	path = external/pascal-amqp-faa
+	url = https://github.com/fabianoallex/pascal-amqp-faa.git
+[submodule "external/synapse"]
+	path = external/synapse
+	url = https://github.com/geby/synapse.git

@@ -1191,3 +1191,15 @@ JWT keys rotate on a request).
 - **A reminder for an appointment changed after it was queued** is read again by the consumer
   (question 2's thin event), so it carries the current start; one already sent is not recalled.
 - **The outbox grows**: delivered rows are deleted after `OUTBOX_KEEP_DAYS` by the scheduler.
+
+### M4: the new submodules (2026-10-26)
+
+- `external/pascal-amqp-faa` at **v0.4.1** (needs pascal-common-faa 1.8.0; here 1.24.0).
+- `external/synapse` (https://github.com/geby/synapse, the author's repository; no tags, so a
+  commit: `eb5a511`, 2026-10-19). A probe outside the repository (`smtpsend`, `mimemess`,
+  `mimepart`, `ssl_openssl3`; a multipart message with a UTF-8 subject and body, encoded, not
+  sent) builds and runs with 0 unfreed blocks on FPC 3.2.2 Windows (Win64) and Linux (the CI
+  image), the same text on both: the subject goes out as `ISO-8859-1` Q-encoding (Synapse picks
+  the smallest charset that holds it; valid), the body as UTF-8 quoted-printable. Three
+  deprecation warnings in `synautil` (`TimeSeparator`, `ShortMonthNames`). Delphi 12 is checked
+  when the worker has its `.dproj` (this Delphi edition builds in the IDE only).
