@@ -1,4 +1,4 @@
-unit Agenda.MailTests;
+﻿unit Agenda.MailTests;
 
 { Tests for Agenda.Mail: the encoded words, the MIME text both senders share,
   and the .eml writer (a directory under the temporary one). No SMTP server:

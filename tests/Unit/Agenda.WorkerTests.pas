@@ -1,4 +1,4 @@
-unit Agenda.WorkerTests;
+﻿unit Agenda.WorkerTests;
 
 { Tests for what the worker runs on the database: the scheduler's lease
   (Agenda.Leases, the database's store), the reminders' pass

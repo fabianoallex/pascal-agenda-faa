@@ -1336,5 +1336,11 @@ JWT keys rotate on a request).
 - Result: 108 unit tests (from 89), 0 errors, 0 failures, 0 leaks on FPC Windows and Linux
   (Docker). HTTP, FPC Windows: 608 checks and 73 for the worker on SQLite, 619 and 73 on
   PostgreSQL 17 with Redis; FPC Linux (Docker): 608 and 78, 619 and 78 (SIGTERM included).
-  Delphi: `worker/AgendaWorker.dproj` and the test project are written but not built yet (the
-  IDE).
+  Delphi 12 (built in the IDE): HTTP 608 checks and 67 for the worker on SQLite, Win32 and
+  Win64, 619 and 67 on PostgreSQL (Win64); the worker's leaks are the unit tests' to report, as
+  the api's (no heaptrc). Its first unit run: 106 of 108, both failures the accents of
+  `Agenda.MailTests`; it and `Agenda.WorkerTests` had no BOM, so Delphi read their UTF-8
+  literals as ANSI (the WorkerTests passed by luck: "João" was written and compared in the
+  same wrong code page). The rule the older tests follow, now these too: a test unit with a
+  non-ASCII literal starts with a BOM. Before that, `GetTempDir` (FPC's RTL only) stopped the
+  build; the tests now use `TPath.GetTempPath` on Delphi.
