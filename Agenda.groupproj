@@ -9,6 +9,9 @@
         <Projects Include="api\AgendaApi.dproj">
             <Dependencies/>
         </Projects>
+        <Projects Include="worker\AgendaWorker.dproj">
+            <Dependencies/>
+        </Projects>
     </ItemGroup>
     <ProjectExtensions>
         <Borland.Personality>Default.Personality.12</Borland.Personality>
@@ -35,14 +38,23 @@
     <Target Name="AgendaApi:Make">
         <MSBuild Projects="api\AgendaApi.dproj" Targets="Make"/>
     </Target>
+    <Target Name="AgendaWorker">
+        <MSBuild Projects="worker\AgendaWorker.dproj"/>
+    </Target>
+    <Target Name="AgendaWorker:Clean">
+        <MSBuild Projects="worker\AgendaWorker.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="AgendaWorker:Make">
+        <MSBuild Projects="worker\AgendaWorker.dproj" Targets="Make"/>
+    </Target>
     <Target Name="Build">
-        <CallTarget Targets="Agenda_UnitTests;AgendaApi"/>
+        <CallTarget Targets="Agenda_UnitTests;AgendaApi;AgendaWorker"/>
     </Target>
     <Target Name="Clean">
-        <CallTarget Targets="Agenda_UnitTests:Clean;AgendaApi:Clean"/>
+        <CallTarget Targets="Agenda_UnitTests:Clean;AgendaApi:Clean;AgendaWorker:Clean"/>
     </Target>
     <Target Name="Make">
-        <CallTarget Targets="Agenda_UnitTests:Make;AgendaApi:Make"/>
+        <CallTarget Targets="Agenda_UnitTests:Make;AgendaApi:Make;AgendaWorker:Make"/>
     </Target>
     <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
 </Project>

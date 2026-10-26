@@ -322,6 +322,8 @@ begin
     // How long before a start an appointment can still be cancelled.
     .Add(COMMON_SQL_DIR, 'TENANT.CANCEL_NOTICE', 'SELECT CANCEL_NOTICE_HOURS FROM TENANTS WHERE ID = :ID')
     .Add(COMMON_SQL_DIR, 'TENANT.SET_SUSPENDED', 'UPDATE TENANTS SET SUSPENDED = :SUSPENDED WHERE ID = :ID')
+    .Add(COMMON_SQL_DIR, 'TENANT.SET_REMINDER_HOURS',
+      'UPDATE TENANTS SET REMINDER_HOURS = :HOURS WHERE ID = :ID')
 
     // --- JWT signing keys (TDbJwtKeyStore)
     .Add(COMMON_SQL_DIR, 'JWT_KEY.BY_TENANT',
@@ -674,7 +676,49 @@ begin
       'UPDATE OUTBOX_DELIVERIES SET STATUS = :STATUS, ATTEMPTS = :ATTEMPTS, ' +
       'AVAILABLE_AT = :AVAILABLE_AT, LAST_ERROR = :LAST_ERROR, LEASE_OWNER = NULL, ' +
       'LEASE_UNTIL = NULL, UPDATED_AT = :NOW WHERE TENANT_ID = :TENANT_ID ' +
-      'AND EVENT_ID = :EVENT_ID AND HANDLER = :HANDLER AND LEASE_OWNER = :OWNER');
+      'AND EVENT_ID = :EVENT_ID AND HANDLER = :HANDLER AND LEASE_OWNER = :OWNER')
+
+    // --- the scheduler's leases (Agenda.Leases; a library candidate). TAKE:
+    // the owner's own or one that ran out; INSERT: a job with no row yet
+    // (ON CONFLICT, as the idempotency keys': 0 rows when another took it).
+    .Add(COMMON_SQL_DIR, 'LEASE.TAKE',
+      'UPDATE SCHEDULER_LEASES SET OWNER = :OWNER, LEASE_UNTIL = :LEASE_UNTIL ' +
+      'WHERE JOB = :JOB AND (OWNER = :OWNER OR LEASE_UNTIL <= :NOW)')
+    .Add(COMMON_SQL_DIR, 'LEASE.INSERT',
+      'INSERT INTO SCHEDULER_LEASES (JOB, OWNER, LEASE_UNTIL) ' +
+      'VALUES (:JOB, :OWNER, :LEASE_UNTIL) ON CONFLICT (JOB) DO NOTHING')
+    .Add(COMMON_SQL_DIR, 'LEASE.RELEASE',
+      'DELETE FROM SCHEDULER_LEASES WHERE JOB = :JOB AND OWNER = :OWNER')
+
+    // --- reminders (Agenda.Reminders). Across tenants, as the outbox: the
+    // tenant is bound as TENANT_ID. DUE: the range on START_UTC is the
+    // index's, the tenant's hours the exact bound. CLAIM: once, and only
+    // for the version read; the version isn't moved.
+    .Add(COMMON_SQL_DIR, 'REMINDER.DUE',
+      'SELECT A.TENANT_ID, A.ID, A.VERSION FROM APPOINTMENTS A ' +
+      'JOIN TENANTS T ON T.ID = A.TENANT_ID ' +
+      'WHERE A.START_UTC > :NOW AND A.START_UTC <= :HORIZON ' +
+      'AND A.REMINDER_QUEUED_AT IS NULL AND A.STATUS IN (:BOOKED, :CONFIRMED) ' +
+      'AND T.SUSPENDED = 0 AND T.REMINDER_HOURS > 0 ' +
+      'AND A.START_UTC <= :NOW + T.REMINDER_HOURS * 3600 ' +
+      'ORDER BY A.START_UTC, A.TENANT_ID, A.ID ${PAGE}')
+    .Add(COMMON_SQL_DIR, 'REMINDER.CLAIM',
+      'UPDATE APPOINTMENTS SET REMINDER_QUEUED_AT = :NOW ' +
+      'WHERE TENANT_ID = :TENANT_ID AND ID = :ID AND VERSION = :VERSION ' +
+      'AND REMINDER_QUEUED_AT IS NULL AND STATUS IN (:BOOKED, :CONFIRMED)')
+
+    // --- the customer's email (Agenda.Notifications): the appointment with
+    // what the email names, on one tenant (a tag per joined table).
+    .Add(COMMON_SQL_DIR, 'NOTIFY.APPOINTMENT',
+      'SELECT A.ID, A.START_UTC, A.END_UTC, A.STATUS, A.VERSION, ' +
+      'C.NAME AS CUSTOMER_NAME, C.EMAIL AS CUSTOMER_EMAIL, S.NAME AS SERVICE_NAME, ' +
+      'P.NAME AS PROFESSIONAL_NAME, T.NAME AS TENANT_NAME, T.TIME_ZONE ' +
+      'FROM APPOINTMENTS A ' +
+      'JOIN CUSTOMERS C ON C.ID = A.CUSTOMER_ID AND ${TENANT.C} ' +
+      'JOIN SERVICES S ON S.ID = A.SERVICE_ID AND ${TENANT.S} ' +
+      'JOIN PROFESSIONALS P ON P.ID = A.PROFESSIONAL_ID AND ${TENANT.P} ' +
+      'JOIN TENANTS T ON T.ID = A.TENANT_ID ' +
+      'WHERE A.ID = :ID AND ${TENANT.A}');
 end;
 
 function AgendaMigrations: TArray<TMigrationItem>;

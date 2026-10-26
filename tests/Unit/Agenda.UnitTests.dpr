@@ -1,7 +1,8 @@
 program Agenda.UnitTests;
 
 { DUnitX runner for the unit tests (Delphi). No network, no database server
-  (Agenda.OutboxTests uses a SQLite file in the temporary directory).
+  (Agenda.OutboxTests and Agenda.WorkerTests use a SQLite file in the
+  temporary directory).
 
   The sibling FPCUnit suite lives in tests/Unit/fpc, with identical test
   bodies: the files there are GENERATED from these by tools/gen_fpc_mirror.py
@@ -29,6 +30,12 @@ uses
   Agenda.PublicTenancy in '..\..\src\Agenda.PublicTenancy.pas',
   Agenda.Database in '..\..\src\Agenda.Database.pas',
   Agenda.Outbox in '..\..\src\Agenda.Outbox.pas',
+  Agenda.Settings in '..\..\src\Agenda.Settings.pas',
+  Agenda.Events in '..\..\src\Agenda.Events.pas',
+  Agenda.Mail in '..\..\src\Agenda.Mail.pas',
+  Agenda.Notifications in '..\..\src\Agenda.Notifications.pas',
+  Agenda.Leases in '..\..\src\Agenda.Leases.pas',
+  Agenda.Reminders in '..\..\src\Agenda.Reminders.pas',
   Agenda.DUnitXCompat in 'Agenda.DUnitXCompat.pas',
   Agenda.PasswordsTests in 'Agenda.PasswordsTests.pas',
   Agenda.TokensTests in 'Agenda.TokensTests.pas',
@@ -40,7 +47,9 @@ uses
   Agenda.SlotsTests in 'Agenda.SlotsTests.pas',
   Agenda.SignedLinksTests in 'Agenda.SignedLinksTests.pas',
   Agenda.PublicTenancyTests in 'Agenda.PublicTenancyTests.pas',
-  Agenda.OutboxTests in 'Agenda.OutboxTests.pas';
+  Agenda.OutboxTests in 'Agenda.OutboxTests.pas',
+  Agenda.MailTests in 'Agenda.MailTests.pas',
+  Agenda.WorkerTests in 'Agenda.WorkerTests.pas';
 
 var
   runner: ITestRunner;

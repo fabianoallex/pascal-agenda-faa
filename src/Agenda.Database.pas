@@ -49,6 +49,12 @@ type
     class function SQLiteFile: string; static;
     /// Runs the pending migrations; AOnEvent sees each one.
     procedure Migrate(const AOnEvent: TMigrationEventProc);
+    /// The schema version the database is at, without migrating (0 for a
+    /// database never migrated): a process that doesn't migrate (the worker)
+    /// waits for LatestVersion.
+    function SchemaVersion: Integer;
+    /// The version the last of Agenda.Schema's migrations brings.
+    class function LatestVersion: Integer; static;
     /// A pooled connection answers a query. Raises when the database can't
     /// be reached (the readiness endpoint counts that as a failure).
     function Ready: Boolean;
@@ -193,6 +199,26 @@ begin
   finally
     LEngine.Free;
   end;
+end;
+
+function TAgendaDatabase.SchemaVersion: Integer;
+var
+  LEngine: TDBMigrationEngine;
+begin
+  LEngine := TDBMigrationEngine.Create(FFactory, nil);
+  try
+    Result := LEngine.CurrentVersion;
+  finally
+    LEngine.Free;
+  end;
+end;
+
+class function TAgendaDatabase.LatestVersion: Integer;
+var
+  LItems: TArray<TMigrationItem>;
+begin
+  LItems := AgendaMigrations;
+  Result := LItems[High(LItems)].Version;
 end;
 
 function TAgendaDatabase.Ready: Boolean;

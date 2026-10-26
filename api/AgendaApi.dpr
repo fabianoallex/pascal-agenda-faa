@@ -8,6 +8,7 @@ program AgendaApi;
     AgendaApi --create-user <tenant> <email> <owner|staff>   (password: AGENDA_PASSWORD)
     AgendaApi --suspend-tenant <id>
     AgendaApi --resume-tenant <id>
+    AgendaApi --reminder-hours <id> <hours>   (0 to 720; 0: no reminder)
 
   The commands open the same database, run its migrations, do one thing and
   exit (0, or 1 with the reason). The password comes from the environment,
@@ -161,7 +162,9 @@ uses
   Agenda.Appointments in '..\src\Agenda.Appointments.pas',
   Agenda.SignedLinks in '..\src\Agenda.SignedLinks.pas',
   Agenda.PublicTenancy in '..\src\Agenda.PublicTenancy.pas',
-  Agenda.Public in '..\src\Agenda.Public.pas';
+  Agenda.Public in '..\src\Agenda.Public.pas',
+  Agenda.Settings in '..\src\Agenda.Settings.pas',
+  Agenda.Reminders in '..\src\Agenda.Reminders.pas';
 
 const
   APP_NAME = 'agenda-api';
@@ -169,8 +172,6 @@ const
   DEFAULT_PORT = 9400;
   // The 32 bytes "development-master-key-change-me": DEV_MODE only.
   DEV_MASTER_KEY = 'dev:ZGV2ZWxvcG1lbnQtbWFzdGVyLWtleS1jaGFuZ2UtbWU=';
-  // The 32 bytes "development-link-signing-key-123": DEV_MODE only.
-  DEV_LINK_KEY = 'dev:ZGV2ZWxvcG1lbnQtbGluay1zaWduaW5nLWtleS0xMjM=';
   // /public: the end customer's routes, with no token; the tenant is the
   // path's (PublicTenant, below).
   OPEN_PATHS: array[0..7] of string = ('/health', '/metrics', '/swagger', '/auth/login',
@@ -1082,22 +1083,15 @@ end;
 
 { Setup }
 
-// The public links' keys (LINK_SIGNING_KEYS), as OpenKeys reads the JWT
-// master key: required, unless DEV_MODE gives a development one.
+// The public links' keys (LINK_SIGNING_KEYS, Agenda.Settings: the worker
+// reads them the same way), as OpenKeys reads the JWT master key.
 function OpenLinks: TSignedLinks;
 var
-  LKeys: string;
+  LWarning: string;
 begin
-  LKeys := TAppConfig.Get('LINK_SIGNING_KEYS', '');
-  if LKeys = '' then
-  begin
-    if not TAppConfig.GetBool('DEV_MODE', False) then
-      raise Exception.Create('LINK_SIGNING_KEYS is required (or DEV_MODE=true for ' +
-        'development). Generate one with: openssl rand -base64 32, and set "l1:<that>".');
-    SafeWriteln('WARNING DEV_MODE: the public links are signed with a development key');
-    LKeys := DEV_LINK_KEY;
-  end;
-  Result := TSignedLinks.Create(LKeys);
+  Result := ConfiguredLinks(LWarning);
+  if LWarning <> '' then
+    SafeWriteln(LWarning);
 end;
 
 function OpenKeys: IJwtKeyRing;
@@ -1173,6 +1167,33 @@ begin
   end;
 end;
 
+// TENANTS.REMINDER_HOURS (M4): how long before an appointment the worker
+// queues its reminder; 0 for none. Agenda.Reminders scans at most
+// REMINDER_MAX_HOURS ahead, so more is refused.
+procedure SetReminderHours(const AId, AHours: string);
+var
+  LQuery: IQuery;
+  LTx: IScopeTransaction;
+  LHours: Integer;
+begin
+  if not TryStrToInt(AHours, LHours) or (LHours < 0) or (LHours > REMINDER_MAX_HOURS) then
+    raise EArgumentException.CreateFmt('The hours must be 0 to %d, not "%s".',
+      [REMINDER_MAX_HOURS, AHours]);
+  LTx := GDatabase.Factory.GetPool.AcquireQuery(LQuery);
+  LTx.StartTransaction;
+  try
+    LQuery.Sql := GDatabase.Factory.SqlLoader['TENANT.SET_REMINDER_HOURS'].SQL;
+    LQuery.Params.Integers['HOURS'] := LHours;
+    LQuery.Params.Strings['ID'] := AId;
+    if LQuery.ExecSql <> 1 then
+      raise EArgumentException.CreateFmt('No tenant "%s".', [AId]);
+    LTx.Commit;
+  except
+    LTx.Rollback;
+    raise;
+  end;
+end;
+
 // A command instead of the server: ExitCode 0 or 1.
 procedure RunCommand(const ACommand: string);
 
@@ -1199,6 +1220,12 @@ begin
       raise EArgumentException.Create('Set the password in AGENDA_PASSWORD.');
     SafeWriteln('user %s created', [CreateUser(GCatalog, GResolver, ParamStr(2),
       ParamStr(3), ParamStr(4), LPassword, AuthOptions.PasswordIterations)]);
+  end
+  else if ACommand = '--reminder-hours' then
+  begin
+    Need(2, '<id> <hours>');
+    SetReminderHours(ParamStr(2), ParamStr(3));
+    SafeWriteln('tenant %s: reminders %s hours ahead', [ParamStr(2), ParamStr(3)]);
   end
   else if (ACommand = '--suspend-tenant') or (ACommand = '--resume-tenant') then
   begin
@@ -1279,10 +1306,7 @@ begin
     GSlotLock := OpenSlotLock;
     GLinks := OpenLinks;
     GPublicLimit := TAppConfig.GetInt('PUBLIC_RATE_LIMIT', 60);
-    GPublicBaseUrl := TAppConfig.Get('PUBLIC_BASE_URL', '');
-    // A trailing "/" would double the one every link's path starts with.
-    while (GPublicBaseUrl <> '') and (GPublicBaseUrl[Length(GPublicBaseUrl)] = '/') do
-      Delete(GPublicBaseUrl, Length(GPublicBaseUrl), 1);
+    GPublicBaseUrl := ConfiguredPublicBaseUrl;
     TClientAddress.ProxyHops := TAppConfig.GetInt('TRUSTED_PROXY_HOPS', 0);
     GIdempotency := TIdempotency.Create(TDbIdempotencyStore.Create(GDatabase.Factory),
       Int64(TAppConfig.GetInt('IDEMPOTENCY_TTL_HOURS', 24)) * 3600);

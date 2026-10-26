@@ -53,6 +53,10 @@
         <DefaultFilename Value="..\..\..\external\pascal-api-infra-faa\packages\pascal_api_infra_faa.lpk" Prefer="True"/>
       </Item>
       <Item>
+        <PackageName Value="pascal_redis_faa"/>
+        <DefaultFilename Value="..\..\..\external\pascal-redis-faa\packages\pascal_redis_faa.lpk" Prefer="True"/>
+      </Item>
+      <Item>
         <PackageName Value="FPCUnitTestRunner"/>
       </Item>
       <Item>
@@ -76,8 +80,8 @@
       <Filename Value="AgendaUnitTestsFpc"/>
     </Target>
     <SearchPaths>
-      <IncludeFiles Value="..\..\..\src"/>
-      <OtherUnitFiles Value="..\..\..\src"/>
+      <IncludeFiles Value="..\..\..\src;..\..\..\external\synapse"/>
+      <OtherUnitFiles Value="..\..\..\src;..\..\..\external\synapse"/>
       <UnitOutputDirectory Value="lib\$(TargetCPU)-$(TargetOS)"/>
     </SearchPaths>
     <Parsing>

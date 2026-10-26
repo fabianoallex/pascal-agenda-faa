@@ -9,8 +9,13 @@
 # (pascal-db-faa gotcha 23). The script copies SQLITE_DLL, or
 # .deps/sqlite3.dll (git-ignored), next to the executable.
 #
-# For a Delphi build: AGENDA_EXE=api/Win32/Debug/AgendaApi.exe skips the
-# build and runs the same steps on that executable.
+# For a Delphi build: AGENDA_EXE=api/Win32/Debug/AgendaApi.exe and
+# WORKER_EXE=worker/Win32/Debug/AgendaWorker.exe skip the build and run the
+# same steps on those executables.
+#
+# The worker (M4): on the second start, tools/http_scenarios_worker.sh runs
+# it with --drain on the same database (the api restarted, so the public
+# rate limit's window is empty again).
 #
 # DB_ENGINE=postgresql runs them on PostgreSQL: a fresh postgres:17 container
 # (PG_IMAGE) on port 55433 (PG_PORT), removed at the end, and the 64-bit
@@ -42,12 +47,20 @@ if [ -z "$AGENDA_EXE" ]; then
   cp "$DLL" api/sqlite3.dll
   AGENDA_EXE=api/AgendaApi.exe
 fi
+if [ -z "$WORKER_EXE" ]; then
+  if ! (cd worker && "$LAZBUILD" -B AgendaWorker.lpi > build.log 2>&1); then
+    grep -E "Error|Fatal" worker/build.log | head -30
+    exit 1
+  fi
+  cp "${SQLITE_DLL:-.deps/sqlite3.dll}" worker/sqlite3.dll
+  WORKER_EXE=worker/AgendaWorker.exe
+fi
 EXE="$ROOT/$AGENDA_EXE"
 DIR="$(dirname "$EXE")"
 LOG="$DIR/server.log"
 export DB_FILE="$DIR/agenda-scenarios.sqlite"
 
-PG_CONTAINER=agenda-test-pg
+export PG_CONTAINER=agenda-test-pg
 if [ "${DB_ENGINE:-sqlite}" = postgresql ]; then
   if [ -z "$PG_CLIENT" ]; then
     PG_CLIENT="$(ls -d "/c/Program Files/PostgreSQL/"*/bin/libpq.dll 2>/dev/null | sort -V | tail -1)"
@@ -121,7 +134,19 @@ echo "== second start on the same database"
 start
 STATUS="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" \
   "http://127.0.0.1:$PORT/me")"
+echo "== the worker"
+# The appointments' scenarios end by shutting Redis down (the slot lock's
+# fallback): up again for the worker's lease.
+if [ -n "$REDIS_CONTAINER" ]; then
+  docker start "$REDIS_CONTAINER" >/dev/null
+  for I in $(seq 1 30); do
+    docker exec "$REDIS_CONTAINER" redis-cli ping >/dev/null 2>&1 && break; sleep 1
+  done
+fi
+WRC=0
+sh tools/http_scenarios_worker.sh "$PORT" "$ROOT/$WORKER_EXE" "$EXE" || WRC=$?
 stop
+[ $WRC -eq 0 ] || exit $WRC
 if grep -q "^migration " "$LOG"; then
   echo "FAIL: a second start applied migrations again"; cat "$LOG"; exit 1
 fi

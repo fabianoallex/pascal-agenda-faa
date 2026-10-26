@@ -4,7 +4,11 @@
 # tools/http_scenarios.sh; validates the OpenAPI document
 # (openapi-spec-validator) and /metrics (promtool, through
 # pascal-api-infra-faa's tools/promtool_check.sh); starts it again: no
-# migration may run, and a token issued before the restart must verify.
+# migration may run, and a token issued before the restart must verify;
+# then the worker (built with heaptrc) through tools/http_scenarios_worker.sh,
+# SIGTERM included. Its lease is the database's here: the appointments'
+# scenarios shut Redis down, and from inside the container it can't be
+# started again (tools/test_http.sh checks the Redis lease on Windows).
 #
 # Plain fpc, not lazbuild: every path is given by hand (-Fu/-Fi), the same
 # copies the .lpi names. The image needs FPC 3.2.2, curl, libsqlite3-0,
@@ -66,7 +70,7 @@ MSYS_NO_PATHCONV=1 docker run --rm $NETOPT -v "$MOUNT:/src:ro" \
   -e REDIS_HOST="$REDIS_HOST" -e REDIS_CMD="$REDIS_CMD" \
   -e DB_FILE=/t/run/agenda.sqlite "$IMAGE" sh -c '
   set -e
-  mkdir -p /t/units /t/run && cp -r /src/src /src/api /src/tools /src/external /t/
+  mkdir -p /t/units /t/wunits /t/run && cp -r /src/src /src/api /src/worker /src/tools /src/external /t/
   E=/t/external
   P="-Fu/t/src -Fi/t/src"
   P="$P -Fu$E/pascal-api-infra-faa/src -Fi$E/pascal-api-infra-faa/src -Fu$E/pascal-api-infra-faa/src/horse"
@@ -79,6 +83,10 @@ MSYS_NO_PATHCONV=1 docker run --rm $NETOPT -v "$MOUNT:/src:ro" \
   cd /t/api
   fpc -v0 -Mdelphi -dUseCThreads $P -FU/t/units -o/t/AgendaApi AgendaApi.dpr > /t/build.log 2>&1 \
     || { grep -iE "error|fatal" /t/build.log | head -30; exit 1; }
+  cd /t/worker
+  W="-Fu$E/synapse -Fi$E/synapse"
+  fpc -v0 -Mdelphi -dUseCThreads $P $W -gh -gl -FU/t/wunits -o/t/AgendaWorker AgendaWorker.dpr \
+    > /t/wbuild.log 2>&1 || { grep -iE "error|fatal" /t/wbuild.log | head -30; exit 1; }
   cd /t/run
   start() {
     /t/AgendaApi 9400 > /t/server.log 2>&1 &
@@ -114,7 +122,11 @@ MSYS_NO_PATHCONV=1 docker run --rm $NETOPT -v "$MOUNT:/src:ro" \
   echo "== second start on the same database"
   start
   STATUS="$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $TOKEN" http://127.0.0.1:9400/me)"
+  echo "== the worker"
+  WRC=0
+  REDIS_HOST= sh /t/tools/http_scenarios_worker.sh 9400 /t/AgendaWorker /t/AgendaApi || WRC=$?
   stop
+  [ $WRC -eq 0 ] || exit $WRC
   if grep -q "^migration " /t/server.log; then
     echo "FAIL: a second start applied migrations again"; cat /t/server.log; exit 1
   fi

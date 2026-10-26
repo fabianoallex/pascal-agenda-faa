@@ -88,6 +88,8 @@
         <DCCReference Include="..\src\Agenda.SignedLinks.pas"/>
         <DCCReference Include="..\src\Agenda.PublicTenancy.pas"/>
         <DCCReference Include="..\src\Agenda.Public.pas"/>
+        <DCCReference Include="..\src\Agenda.Settings.pas"/>
+        <DCCReference Include="..\src\Agenda.Reminders.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>

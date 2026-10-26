@@ -164,8 +164,8 @@ two libraries would share goes to pascal-common-faa.
     transport (a sink sees every event; SMTP can't deduplicate; a slow server would stall the
     relay). Out of scope: CDC (reading the database log, as Debezium does); polling is enough.
 - Scheduler with a lease (Redis `SetNx` or a database row): the core in pascal-common-faa.
-  To be built here in M4 as `src/Agenda.Leases`, one interface with a database store (the
-  default) and a Redis one (see "M4: design").
+  **Built here 2026-10-26** as `src/Agenda.Leases`, one interface with a database store (the
+  default) and a Redis one (`TRedisLock`); see "M4: the worker".
 - RFC 9457 errors (`application/problem+json`) as an option of `TErrorHandlerMiddleware`.
 - Typed HTTP client for Delphi/Lazarus with refresh, retry and trace propagation (M6).
 
@@ -174,6 +174,11 @@ two libraries would share goes to pascal-common-faa.
 - Filling a Find DTO from the query string, and the paged query (count + page through the same
   filters): both repeated in every list route (see "Progress", M1, customers and users).
 - Phone normalization, next to the accent-insensitive search key (pascal-common-faa).
+- A console program's stop request: Ctrl+C, Ctrl+Break and the console closing on Windows,
+  SIGINT and SIGTERM on Unix, as a flag the main loop reads, and a sleep that wakes on it
+  (pascal-common-faa). No library has it: the amqp, redis and pipes samples stop on Enter or
+  are killed. **Built here 2026-10-26** as `src/Agenda.StopSignal` (the worker; SIGTERM checked
+  on Linux by the HTTP scenarios).
 - An instant type for the mapper: zone required on input, `Z` on output (pascal-jsonmapper-faa).
 - A Boolean parameter into an `INTEGER` column fails on PostgreSQL ("column ... is of type
   integer but expression is of type boolean"); SQLite takes it, and pascal-db-faa's contract suite
@@ -1246,7 +1251,7 @@ JWT keys rotate on a request).
   (`Agenda.OutboxTests`, a file in the temporary directory, every migration): the FPC
   project requires `pascal_db_faa_sqldb`, `tools/test_fpc.sh` copies `.deps/sqlite3.dll` next
   to the runner, the Docker script adds the SQLdb adapter's path, and the Delphi project
-  the FireDAC adapter's (`adaptersiredac`).
+  the FireDAC adapter's (`adapters\firedac`).
 - Found while writing it: FPC warns that a method named `Dispatch` hides `TObject.Dispatch`
   (the local sink's pass is `RunOnce`, as the relay's). pascal-db-faa doesn't say whether a
   write outside `StartTransaction` commits; every write here starts one.
@@ -1255,3 +1260,81 @@ JWT keys rotate on a request).
   "migration 14"); after the SQLite run its database had one `booked` event per appointment
   (14), 3 `cancelled`, 2 `moved`, each with the request's traceparent. Not run yet: the
   PostgreSQL claims (only the worker runs them; step 4's scenarios will), Delphi (the IDE).
+
+### M4: the worker (2026-10-26)
+
+- `worker/AgendaWorker` (`.dpr`, `.lpi`, `.dproj`; in `Agenda.groupproj`): one console process,
+  one loop. Every `OUTBOX_POLL_MS` (at once again while a pass found work): the relay hands
+  pending events to the local sink, the sink runs its deliveries (one handler today, the
+  customer's email); every `REMINDER_INTERVAL_SECONDS`, holding the `reminders` lease, the
+  reminders' pass and, once an hour, the outbox's purge (`OUTBOX_KEEP_DAYS`). A pass that
+  raises is logged and the loop goes on. `--drain` runs passes until one finds nothing, then
+  exits (0, or 1 when a pass failed): what the scripts use. It doesn't migrate: it waits for the
+  api to bring the database to its schema (`TAgendaDatabase.SchemaVersion`/`LatestVersion`),
+  so one process migrates. Ctrl+C, the console closing and SIGTERM end the pass in progress,
+  release the lease and free everything in reverse order. `AMQP_HOST` is not read yet (step 5):
+  the local sink always.
+- `src/Agenda.Notifications`: the handler (`TAppointmentMailer`, "email"). It reads the
+  appointment as it is now (one query, a `${TENANT.x}` tag per joined table, the event's
+  tenant) and decides by the row, not the event: a booking or a move read after a cancel sends
+  nothing, a reminder for one no longer active or already started neither; a customer with no
+  email is skipped and logged (decision 7). The links are M3's (`Agenda.SignedLinks`, expiry
+  the start), so the worker reads the api's `LINK_SIGNING_KEYS` and `PUBLIC_BASE_URL`, now in
+  `src/Agenda.Settings`, which both programs use. The time is in the tenant's zone, with the
+  zone's name; the text in English.
+- `src/Agenda.Mail`: `IMailSender`, `TSmtpMailSender` (Synapse's `TSMTPSend`; plain, STARTTLS
+  or TLS) and `TEmlMailSender` (`.eml` files, `MAIL_DIR`; the worker's choice when `SMTP_HOST`
+  is unset). The message is written by `MailToMime`, not by Synapse's MIME classes, which were
+  the first try: on Delphi their text goes through the ANSI code page; they encode again any
+  header with `=`, `?`, `:` or `,` (an encoded word included, and an ASCII subject came out as
+  ISO-8859-1 Q-encoding); they always write an empty `From:` of their own; their
+  quoted-printable wrote lines of 79 (RFC 2045: 76). Here: RFC 2047 words (UTF-8, Base64, 39
+  bytes each so `Subject: ` and one word fit in 76), quoted-printable of the UTF-8 bytes, headers
+  folded at a space. Synapse stays for SMTP and its RFC 822 date. Not library material.
+- `src/Agenda.Reminders` (decision 3): across tenants, booked or confirmed, start within the
+  tenant's `REMINDER_HOURS` and at most `REMINDER_MAX_HOURS` (720) ahead, no reminder queued,
+  the tenant not suspended; per appointment one transaction, the conditional `UPDATE` (the
+  version read) and the outbox event. The version isn't moved (an `If-Match` the client holds
+  stays good); each queued reminder starts a trace of its own. The api has a command for the
+  tenant's hours, `--reminder-hours <tenant> <0..720>` (no route sets them yet).
+- `src/Agenda.Leases` (the "Scheduler with a lease" candidate): `ISchedulerLease`,
+  `TDbSchedulerLease` (`SCHEDULER_LEASES`: an `UPDATE` for the owner's own or one that ran out,
+  else `INSERT ... ON CONFLICT DO NOTHING`, one transaction) and `TRedisSchedulerLease`
+  (`TRedisLock`, renewed with `Extend`; Redis down: not held, the pass waits, logged). With
+  `REDIS_HOST` the worker uses Redis. The worker keeps it between passes (renewed every one).
+- `src/Agenda.StopSignal`: a console program's stop request (Windows `SetConsoleCtrlHandler`,
+  Unix `fpSignal` for SIGINT and SIGTERM; the handler only sets a flag) and a sleep that wakes
+  on it. A library candidate (below).
+- Tests: `Agenda.MailTests` (8: encoded words, the message, folding, the `.eml` writer) and
+  `Agenda.WorkerTests` (11, SQLite: the lease taken, refused, renewed, taken over, released;
+  the reminder queued once with its event, only the due ones, the claim needing the version
+  read, a move clearing it; the email with links that verify, no email, after a cancel, a
+  reminder for one started; the time in the zone). `tools/http_scenarios_worker.sh`, run by
+  `tools/test_http.sh` and `tools/test_http_docker.sh` on the api's second start, with the
+  worker in `--drain` between steps and its mail read back by `tools/eml_summary.py`: the
+  backlog the other scenarios left (each event once, customers without email skipped), a
+  booking's email (recipient, subject decoded, a link that opens the appointment on the api),
+  nothing sent twice, the reminder once, again after a move together with the move's email,
+  the cancel through the email's own link (its email has no link), two workers draining at
+  once (each event once: the claims' `SKIP LOCKED` on PostgreSQL, the leases on SQLite), the
+  lease in Redis with `REDIS_HOST`, and every run's heaptrc report. On Linux, the worker
+  running (not `--drain`) sends a booking and stops on SIGTERM with exit code 0 and 0 unfreed
+  blocks.
+- Found while building: two workers starting at once both create the mail directory, and
+  `ForceDirectories` fails for the one that lost the race on FPC/Linux, though the directory
+  is there (now checked after). On Linux, heaptrc writes its report only with
+  `HEAPTRC=log=<file>`. The appointments' scenarios end with Redis shut down (the slot lock's
+  fallback); `tools/test_http.sh` starts it again for the worker, and the Docker script, which
+  can't from inside the container, runs the worker with the database lease. Accented request
+  bodies go through a file with UTF-8 bytes (curl.exe gets its arguments in the ANSI code page,
+  as the catalog's scenarios knew).
+- Known limits: one loop, so a slow SMTP server delays the relay's next pass (the email's
+  timeout, `SMTP_TIMEOUT_MS`, bounds it); an appointment booked inside its reminder window gets
+  the reminder right after its confirmation; with Redis down there is no reminders' pass until
+  it is back; Ctrl+C on Windows is checked by hand only (Git Bash can't send a console's
+  Ctrl+C to a Windows program).
+- Result: 108 unit tests (from 89), 0 errors, 0 failures, 0 leaks on FPC Windows and Linux
+  (Docker). HTTP, FPC Windows: 608 checks and 73 for the worker on SQLite, 619 and 73 on
+  PostgreSQL 17 with Redis; FPC Linux (Docker): 608 and 78, 619 and 78 (SIGTERM included).
+  Delphi: `worker/AgendaWorker.dproj` and the test project are written but not built yet (the
+  IDE).

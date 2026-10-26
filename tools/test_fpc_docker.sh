@@ -22,6 +22,7 @@ MSYS_NO_PATHCONV=1 docker run --rm -v "$MOUNT:/src:ro" "$IMAGE" sh -c '
   P="$P -Fu$E/pascal-common-faa/src -Fi$E/pascal-common-faa/src -Fu$E/pascal-common-faa/bridges/jsonmapper"
   P="$P -Fu$E/pascal-jsonmapper-faa/src -Fi$E/pascal-jsonmapper-faa/src"
   P="$P -Fu$E/pascal-db-faa/src -Fi$E/pascal-db-faa/src -Fu$E/pascal-db-faa/adapters/sqldb"
+  P="$P -Fu$E/pascal-redis-faa/src -Fi$E/pascal-redis-faa/src -Fu$E/synapse -Fi$E/synapse"
   cd /t/tests/Unit/fpc
   fpc -v0 -Mdelphi $P -FU/t/u -gh -gl -o/t/runner AgendaUnitTestsFpc.lpr > /t/build.log 2>&1 \
     || { grep -iE "error|fatal" /t/build.log | head -30; exit 1; }

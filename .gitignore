@@ -15,12 +15,15 @@ __history/
 __recovery/
 build.log
 /api/AgendaApi
+/worker/AgendaWorker
 
 # Runtime
 *.sqlite
 *.log
 .env
 api/sqlite3.dll
+worker/sqlite3.dll
+worker/mail/
 tests/Unit/fpc/sqlite3.dll
 
 # Local dependencies (sqlite.org's sqlite3.dll for FPC on Windows)
