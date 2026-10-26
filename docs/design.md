@@ -1203,3 +1203,23 @@ JWT keys rotate on a request).
   the smallest charset that holds it; valid), the body as UTF-8 quoted-printable. Three
   deprecation warnings in `synautil` (`TimeSeparator`, `ShortMonthNames`). Delphi 12 is checked
   when the worker has its `.dproj` (this Delphi edition builds in the IDE only).
+
+### M4: migration 14 (2026-10-26)
+
+- `TENANTS.REMINDER_HOURS` (default 24) was already there, since migration 2: decision 3's
+  column needs no migration, only its reading (0 = no reminder).
+- Migration 14 (`Agenda.Schema`, comments there): `OUTBOX` (one row per event; a lease for the
+  claim, attempts and the next try, `DELIVERED_AT`), `OUTBOX_DELIVERIES` (the local sink, one
+  row per event and handler, `pending`/`done`/`dead`), `PROCESSED_EVENTS` (a broker consumer's
+  record, by consumer and event), `SCHEDULER_LEASES` (a job, its owner, until when; no tenant),
+  `APPOINTMENTS.REMINDER_QUEUED_AT` and `IX_APPOINTMENTS_REMINDER` (`START_UTC`, the scan across
+  tenants). All of it in `COMMON`: the claim is a lease, portable; PostgreSQL's `SKIP LOCKED`
+  goes in a `PG` override of the claim's statement, not in the table.
+- Found running the scenarios: for a few days after the last Sunday of March and of October,
+  the next one is more than 366 days ahead (from 2026-10-26, 2027-10-31 is 370) and the
+  availability route answers `date_out_of_range`; the one just gone has no free slot left.
+  `tools/http_scenarios_availability.sh` now skips that Sunday's checks then, with a `SKIP`
+  line (6 for October, 5 for March). Not a bug of the route: a time bomb in the script.
+- Result: 78 unit tests, 0 leaks (FPC Windows); HTTP 608 checks on SQLite and 619 on
+  PostgreSQL 17 with Redis (6 skipped, above), FPC Windows, migration 14 applied and a second
+  start applying none.

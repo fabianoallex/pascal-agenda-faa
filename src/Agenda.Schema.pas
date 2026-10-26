@@ -246,6 +246,67 @@ begin
     // booking has no phone (CUSTOMER.MATCH_EMAIL; the phone has its index).
     .Add(COMMON_SQL_DIR, 'MIG.0013',
       'CREATE INDEX IX_CUSTOMERS_EMAIL ON CUSTOMERS (TENANT_ID, EMAIL);')
+    // M4 (docs/design.md, "M4: design"). OUTBOX: one row per event, written
+    // in the transaction that changed the appointment (Agenda.Outbox); the
+    // relay claims pending rows across tenants with a lease (LEASE_OWNER,
+    // LEASE_UNTIL), hands them to a sink and sets DELIVERED_AT; a failure
+    // counts ATTEMPTS and moves AVAILABLE_AT. PAYLOAD is JSON text (a thin
+    // event: ids and the version written), TRACE_PARENT the request's W3C
+    // traceparent (55 characters).
+    // OUTBOX_DELIVERIES: the local sink, one row per event and handler, each
+    // retried apart; STATUS pending, done or dead.
+    // PROCESSED_EVENTS: a consumer of the broker remembers an event it handled
+    // (redeliveries are at-least-once).
+    // SCHEDULER_LEASES: one worker runs a job's pass at a time (no tenant: a
+    // job spans them, as TENANTS and SCHEMA_MIGRATIONS do).
+    // REMINDER_QUEUED_AT: the reminder's claim (Unix seconds), cleared when
+    // the appointment moves; IX_APPOINTMENTS_REMINDER serves the scan across
+    // tenants (IX_APPOINTMENTS_START starts with TENANT_ID).
+    .Add(COMMON_SQL_DIR, 'MIG.0014',
+      'CREATE TABLE OUTBOX (' +
+      'TENANT_ID VARCHAR(40) NOT NULL, ' +
+      'ID VARCHAR(32) NOT NULL, ' +
+      'KIND VARCHAR(40) NOT NULL, ' +
+      'PAYLOAD TEXT NOT NULL, ' +
+      'TRACE_PARENT VARCHAR(55), ' +
+      'CREATED_AT BIGINT NOT NULL, ' +
+      'AVAILABLE_AT BIGINT NOT NULL, ' +
+      'ATTEMPTS INTEGER DEFAULT 0 NOT NULL, ' +
+      'LEASE_OWNER VARCHAR(64), ' +
+      'LEASE_UNTIL BIGINT, ' +
+      'DELIVERED_AT BIGINT, ' +
+      'LAST_ERROR VARCHAR(500), ' +
+      'CONSTRAINT PK_OUTBOX PRIMARY KEY (TENANT_ID, ID), ' +
+      'CONSTRAINT FK_OUTBOX_TENANT FOREIGN KEY (TENANT_ID) REFERENCES TENANTS (ID));' +
+      'CREATE INDEX IX_OUTBOX_PENDING ON OUTBOX (DELIVERED_AT, AVAILABLE_AT);' +
+      'CREATE TABLE OUTBOX_DELIVERIES (' +
+      'TENANT_ID VARCHAR(40) NOT NULL, ' +
+      'EVENT_ID VARCHAR(32) NOT NULL, ' +
+      'HANDLER VARCHAR(60) NOT NULL, ' +
+      'STATUS VARCHAR(10) NOT NULL, ' +
+      'AVAILABLE_AT BIGINT NOT NULL, ' +
+      'ATTEMPTS INTEGER DEFAULT 0 NOT NULL, ' +
+      'LEASE_OWNER VARCHAR(64), ' +
+      'LEASE_UNTIL BIGINT, ' +
+      'LAST_ERROR VARCHAR(500), ' +
+      'UPDATED_AT BIGINT NOT NULL, ' +
+      'CONSTRAINT PK_OUTBOX_DELIVERIES PRIMARY KEY (TENANT_ID, EVENT_ID, HANDLER), ' +
+      'CONSTRAINT FK_OUTBOX_DELIVERIES_EVENT FOREIGN KEY (TENANT_ID, EVENT_ID) ' +
+      'REFERENCES OUTBOX (TENANT_ID, ID));' +
+      'CREATE INDEX IX_OUTBOX_DELIVERIES_PENDING ON OUTBOX_DELIVERIES (STATUS, AVAILABLE_AT);' +
+      'CREATE TABLE PROCESSED_EVENTS (' +
+      'CONSUMER VARCHAR(60) NOT NULL, ' +
+      'TENANT_ID VARCHAR(40) NOT NULL, ' +
+      'EVENT_ID VARCHAR(32) NOT NULL, ' +
+      'PROCESSED_AT BIGINT NOT NULL, ' +
+      'CONSTRAINT PK_PROCESSED_EVENTS PRIMARY KEY (CONSUMER, TENANT_ID, EVENT_ID));' +
+      'CREATE INDEX IX_PROCESSED_EVENTS_AT ON PROCESSED_EVENTS (PROCESSED_AT);' +
+      'CREATE TABLE SCHEDULER_LEASES (' +
+      'JOB VARCHAR(60) NOT NULL PRIMARY KEY, ' +
+      'OWNER VARCHAR(64) NOT NULL, ' +
+      'LEASE_UNTIL BIGINT NOT NULL);' +
+      'ALTER TABLE APPOINTMENTS ADD COLUMN REMINDER_QUEUED_AT BIGINT;' +
+      'CREATE INDEX IX_APPOINTMENTS_REMINDER ON APPOINTMENTS (START_UTC);')
 
     // --- operations
     .Add(COMMON_SQL_DIR, 'HEALTH.PING', 'SELECT 1 AS ONE')
@@ -538,7 +599,7 @@ function AgendaMigrations: TArray<TMigrationItem>;
 
 begin
   Result := nil;
-  SetLength(Result, 13);
+  SetLength(Result, 14);
   Result[0] := Item(1, 'MIG.0001');
   Result[1] := Item(2, 'MIG.0002');
   Result[2] := Item(3, 'MIG.0003');
@@ -552,6 +613,7 @@ begin
   Result[10] := Item(11, 'MIG.0011');
   Result[11] := Item(12, 'MIG.0012');
   Result[12] := Item(13, 'MIG.0013');
+  Result[13] := Item(14, 'MIG.0014');
 end;
 
 end.

@@ -7,7 +7,10 @@
 # image), so the checks don't expire: a Monday a week or more ahead for
 # tenant demo (America/Sao_Paulo, -03:00 all year), and for tenant other
 # (Europe/Lisbon) the next last Sunday of March (clocks 01:00 -> 02:00) and
-# of October (02:00 -> 01:00).
+# of October (02:00 -> 01:00). For a few days after each of those Sundays the
+# next one is more than 366 days ahead, past what the route answers
+# (date_out_of_range), and the one just gone has no free slot left: that
+# Sunday's checks are skipped then, with a SKIP line (found 2026-10-26).
 
 # The next last Sunday of month $1 (03 or 10) after today, YYYY-MM-DD.
 next_last_sunday() {
@@ -17,6 +20,10 @@ next_last_sunday() {
     D="$(date -u -d "$LAST - $(( $(date -u -d "$LAST" +%u) % 7 )) days" +%F)"
     if [ "$D" \> "$(date -u -d tomorrow +%F)" ]; then echo "$D"; return; fi
   done
+}
+# True when $1 (YYYY-MM-DD) is at most 366 days after today.
+within_reach() {
+  [ $(( ($(date -u -d "$1" +%s) - $(date -u +%s)) / 86400 )) -le 365 ]
 }
 slots_count() { grep -o '"local":' "$T/body" | wc -l | tr -d ' '; }
 count_is() { [ "$(slots_count)" = "$1" ] && ok || fail "$2: $(slots_count) slots, expected $1 (body: $(cat "$T/body"))"; }
@@ -118,19 +125,27 @@ LAV="/professionals/$LPRO/availability?service=$LSVC"
 
 # Clocks go 01:00 -> 02:00: two real hours, the starts 00:00 to 00:45, then
 # 02:00 (01:00Z).
-req GET "$LAV&date=$SPRING" "" -H "$OTHER"
-status_is 200 "dst: the spring Sunday ($SPRING)"
-body_has '"timeZone":"Europe/Lisbon"' "dst: the tenant's zone"
-count_is 5 "dst: three hours on the clock, two real ones"
-body_has "\"local\":\"${SPRING}T00:45:00+00:00\"},{\"startsAt\":\"${SPRING}T01:00:00Z\",\"endsAt\":\"${SPRING}T02:00:00Z\",\"local\":\"${SPRING}T02:00:00+01:00\"}]" \
-  "dst: 00:45 WET, then 02:00 WEST"
+if within_reach "$SPRING"; then
+  req GET "$LAV&date=$SPRING" "" -H "$OTHER"
+  status_is 200 "dst: the spring Sunday ($SPRING)"
+  body_has '"timeZone":"Europe/Lisbon"' "dst: the tenant's zone"
+  count_is 5 "dst: three hours on the clock, two real ones"
+  body_has "\"local\":\"${SPRING}T00:45:00+00:00\"},{\"startsAt\":\"${SPRING}T01:00:00Z\",\"endsAt\":\"${SPRING}T02:00:00Z\",\"local\":\"${SPRING}T02:00:00+01:00\"}]" \
+    "dst: 00:45 WET, then 02:00 WEST"
+else
+  echo "SKIP: dst: the spring Sunday $SPRING is more than 366 days ahead"
+fi
 
 # Clocks go 02:00 -> 01:00: four real hours from 23:00Z the day before.
-req GET "$LAV&date=$FALL" "" -H "$OTHER"
-status_is 200 "dst: the autumn Sunday ($FALL)"
-count_is 13 "dst: three hours on the clock, four real ones"
-body_has "\"slots\":[{\"startsAt\":\"${SAT_BEFORE_FALL}T23:00:00Z\",\"endsAt\":\"${FALL}T00:00:00Z\",\"local\":\"${FALL}T00:00:00+01:00\"}" \
-  "dst: the Sunday starts on Saturday in UTC"
-body_has "\"local\":\"${FALL}T01:00:00+01:00\"" "dst: 01:00 WEST"
-body_has "\"local\":\"${FALL}T01:00:00+00:00\"" "dst: 01:00 WET, an hour later"
-body_has "\"local\":\"${FALL}T02:00:00+00:00\"}]" "dst: the last at 02:00 WET"
+if within_reach "$FALL"; then
+  req GET "$LAV&date=$FALL" "" -H "$OTHER"
+  status_is 200 "dst: the autumn Sunday ($FALL)"
+  count_is 13 "dst: three hours on the clock, four real ones"
+  body_has "\"slots\":[{\"startsAt\":\"${SAT_BEFORE_FALL}T23:00:00Z\",\"endsAt\":\"${FALL}T00:00:00Z\",\"local\":\"${FALL}T00:00:00+01:00\"}" \
+    "dst: the Sunday starts on Saturday in UTC"
+  body_has "\"local\":\"${FALL}T01:00:00+01:00\"" "dst: 01:00 WEST"
+  body_has "\"local\":\"${FALL}T01:00:00+00:00\"" "dst: 01:00 WET, an hour later"
+  body_has "\"local\":\"${FALL}T02:00:00+00:00\"}]" "dst: the last at 02:00 WET"
+else
+  echo "SKIP: dst: the autumn Sunday $FALL is more than 366 days ahead"
+fi
