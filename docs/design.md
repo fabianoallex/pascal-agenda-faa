@@ -163,6 +163,8 @@ two libraries would share goes to pascal-common-faa.
     transport (a sink sees every event; SMTP can't deduplicate; a slow server would stall the
     relay). Out of scope: CDC (reading the database log, as Debezium does); polling is enough.
 - Scheduler with a lease (Redis `SetNx` or a database row): the core in pascal-common-faa.
+  To be built here in M4 as `src/Agenda.Leases`, one interface with a database store (the
+  default) and a Redis one (see "M4: design").
 - RFC 9457 errors (`application/problem+json`) as an option of `TErrorHandlerMiddleware`.
 - Typed HTTP client for Delphi/Lazarus with refresh, retry and trace propagation (M6).
 
@@ -1110,3 +1112,82 @@ Both tagged (v1.24.0, v0.24.0) after their Delphi 12 runs, Win32 and Win64: pasc
 397 tests, pascal-api-infra-faa 425 tests (0 leaks) and its samples' 253/151/160 checks
 (SQLite), 152/160 on PostgreSQL (Win64). This application on them: 78 tests, 614 checks on
 SQLite (Win32, Win64) and 625 on PostgreSQL with Redis (Win64), as on FPC Windows and Linux.
+
+## M4: design (2026-10-26)
+
+Events out of the database without a dual write: the outbox, a relay, a sink (AMQP or local),
+a worker process that sends the confirmation (with M3's signed link) and the reminders, and a
+trace from the request to the email. Seven decisions taken with the user (2026-10-26), the
+rest follows from rules already set. Nothing built yet.
+
+What exists today: no worker, no `docker compose` file (the scenario scripts start PostgreSQL
+and Redis with `docker run`), pascal-amqp-faa not yet a submodule (its 0.4.x has publisher
+confirms, manual ack, reconnect with topology recovery, `AMQP.Tracing`, and an embeddable
+broker, `TAMQPServer`). No `*-faa` library sends email. The api runs no background thread (the
+JWT keys rotate on a request).
+
+### Decisions (user, 2026-10-26)
+
+1. **The relay runs in the worker.** The api stays a request server with nothing to stop at
+   shutdown but Horse; the worker already needs the database (reminders) and a pool. Several
+   workers are allowed: the batch claim per dialect is the candidate's.
+2. **A thin event**: tenant, appointment id, kind, the version written, the trace context. The
+   consumer reads the rest from the database and signs the link itself (`Agenda.SignedLinks`,
+   so the worker needs `LINK_SIGNING_KEYS`). No personal data in the outbox and the broker; an
+   event handled late reads the appointment as it is now (a moved one gets the new start and
+   link, a cancelled one no confirmation); the version tells a stale event from the current one.
+3. **The reminder**: when, a tenant column `REMINDER_HOURS` (default 24, 0 = none), as
+   `CANCEL_NOTICE_HOURS`. Once: a scheduler pass every minute picks the appointments due and,
+   per appointment, a conditional `UPDATE ... SET REMINDER_QUEUED_AT WHERE REMINDER_QUEUED_AT
+   IS NULL AND VERSION = :VERSION` plus an outbox event in one transaction: the row is the
+   claim, so two passes at once still queue one reminder. A moved appointment clears
+   `REMINDER_QUEUED_AT`. The lease (the "Scheduler with a lease" candidate) only keeps two
+   workers from scanning together: one interface, two stores, a database row
+   (`SCHEDULER_LEASES`: job, owner, until) by default (works on SQLite without Redis) and
+   Redis (`TRedisLock`), as the idempotency store has two.
+4. **Email through Synapse (Ararat)**, a submodule like Horse: one code on both compilers,
+   STARTTLS through OpenSSL, behind an application interface (`IMailSender`) with a second
+   implementation that writes `.eml` files (unit tests, a run without Mailpit). Not library
+   material (decided 2026-10-18).
+5. **Without RabbitMQ, the local sink**: `AMQP_HOST` unset runs the handlers in the relay's
+   process (`OUTBOX_DELIVERIES` per event and handler); set, the AMQP sink. The candidate's own
+   promise (start local, move to a broker without touching the code that writes events); the
+   scenarios run both ways, as SQLite and PostgreSQL today. pascal-amqp-faa's embedded broker
+   is not needed here.
+6. **At-least-once email**: send, then record the event as handled (`PROCESSED_EVENTS`:
+   consumer, event id); a crash between them sends it twice, never loses it. The record still
+   stops the broker's redeliveries.
+7. **Who gets an email**: a customer with an email; one with a phone only is skipped and logged
+   (SMS out of scope). Staff-made bookings and changes email the customer too, as public ones.
+   Events: `appointment.booked`, `appointment.moved`, `appointment.cancelled` (by staff or by
+   link), `appointment.reminder`; a status change to `confirmed`/`done`/`no_show` emits none
+   in M4.
+
+### What follows from rules already set
+
+- **The outbox row is written in the appointment's transaction** (`Book`, `Update`, `Cancel`,
+  `CancelByLink`, the reminder's claim), with the tenant (`${TENANT}` like every table), an
+  event id from `PcRandomBytes`, the kind, a JSON payload and the request's `traceparent`. An
+  idempotent replay writes nothing: the stored answer is replayed, the booking isn't run again.
+- **The trace crosses processes**: the relay continues the stored `traceparent` when it
+  publishes (`AMQP.Tracing`), the consumer continues the message's; the access log's trace id,
+  the publish and the email's span share one trace in the collector.
+- **The candidate's code lives in its own units** under the libraries' rules
+  (`src/Agenda.Outbox` core on pascal-db-faa only, `src/Agenda.Outbox.Amqp` the broker sink,
+  the local dispatcher in the core; `src/Agenda.Leases`), unit-tested on both compilers with
+  pascal-db-faa's mock and SQLite, and listed in "Library candidates".
+- **The worker is a console program** (`worker/AgendaWorker.dpr`/`.lpi`), the same `.env`,
+  stopped by Ctrl+C/SIGTERM with a clean shutdown (relay, consumers, pool: the
+  `using-faa-libraries` order); a Windows service or systemd unit is out of M4.
+- **`docker compose`** arrives with M4: PostgreSQL, Redis, RabbitMQ, Mailpit, OpenTelemetry
+  Collector; the HTTP scenarios check the email through Mailpit's API (subject, recipient, a
+  link that opens the appointment) and the trace id in the collector's output.
+- **Acceptance** as in every milestone: FPC Windows and Linux, Delphi Win32 and Win64, 0 leaks.
+
+### Known limits, expected
+
+- **Polling delay**: an event waits up to the relay's interval (`OUTBOX_POLL_MS`, 1000) before it
+  leaves; no `LISTEN/NOTIFY` (PostgreSQL only).
+- **A reminder for an appointment changed after it was queued** is read again by the consumer
+  (question 2's thin event), so it carries the current start; one already sent is not recalled.
+- **The outbox grows**: delivered rows are deleted after `OUTBOX_KEEP_DAYS` by the scheduler.
