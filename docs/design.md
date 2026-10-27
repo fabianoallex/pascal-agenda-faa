@@ -1605,4 +1605,7 @@ Two gaps found while designing:
 - Result: FPC Windows 116 unit tests, 0 leaks; HTTP on SQLite 669 + 74, on PostgreSQL with
   Redis and RabbitMQ 680 + 74, the official MCP client on both; FPC Linux (CI): 116, 0 leaks;
   669 + 79 and 680 + 79, the official client on both, promtool on the api's /metrics; compose:
-  22 mail checks, the dashboards 0 failed, a clean stop. Delphi: not built yet (the IDE).
+  22 mail checks, the dashboards 0 failed, a clean stop. Delphi: 116 of 116, 0 leaks, Win32 and
+  Win64; HTTP on SQLite 669 + 68 on both, on PostgreSQL with Redis and RabbitMQ 680 + 68
+  (Win64), the official client 0 failed on each. Not measured on Delphi: the worker's OTLP
+  metrics export (the compose stack is FPC on Linux; test_http.sh runs no collector).
