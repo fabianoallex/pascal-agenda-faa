@@ -1415,4 +1415,6 @@ JWT keys rotate on a request).
   (Linux also three times at one CPU). HTTP, FPC Windows: SQLite 608 + 74 for the worker
   (local sink), PostgreSQL with Redis and RabbitMQ 619 + 74; FPC Linux (Docker): 608 + 79 and
   619 + 79 (SIGTERM included, through the broker on PostgreSQL). Compose: 22 checks, a clean
-  stop. Delphi: not built yet (the IDE).
+  stop. Delphi (2026-10-27): 115 of 115, 0 leaks, on Win32 and Win64; HTTP on SQLite
+  608 + 68 on both (the worker's 6 fewer checks are heaptrc's reports, FPC only), and on
+  Win64 with PostgreSQL, Redis and RabbitMQ 619 + 68. M4 holds on both compilers.
