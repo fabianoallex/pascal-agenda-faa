@@ -31,10 +31,21 @@ suite also uses pascal-amqp-faa's embedded broker (`pascal_amqp_faa_server`).
 | Where | How |
 |---|---|
 | FPC on Windows | `sh tools/test_fpc.sh`: the unit tests. `sh tools/test_http.sh`: lazbuild `api/AgendaApi.lpi` and `worker/AgendaWorker.lpi`, start, `tools/http_scenarios.sh`, then the worker's (`tools/http_scenarios_worker.sh`); with `MCP_PYTHON` naming a Python that has `mcp==2.0.0`, also the official MCP client (`tools/mcp_client_check.py`; skipped, and said so, without it). Needs sqlite.org's `sqlite3.dll` in `.deps/` (or `SQLITE_DLL`). `DB_ENGINE=postgresql sh tools/test_http.sh`: the same on a throwaway `postgres:17` container (Docker) and a local 64-bit `libpq.dll` |
-| FPC on Linux (Docker) | `sh tools/ci-test.sh`: what CI runs; plain `fpc`, then the scenarios on SQLite and on PostgreSQL 17 (the worker through RabbitMQ there), the official MCP client, the OpenAPI validator and promtool, and `tools/test_compose.sh` |
+| FPC on Linux (Docker) | `sh tools/ci-test.sh`: what CI runs; plain `fpc`, then the scenarios on SQLite and on PostgreSQL 17 (the worker through RabbitMQ there), the official MCP client, the OpenAPI validator and promtool, `tools/test_compose.sh` (its own compose project, `agenda-test`: never the development stack) and a short load run |
 | Delphi 12 | open `Agenda.groupproj`, build the tests, the api and the worker, Win32 and Win64; `AGENDA_EXE=api/Win32/Debug/AgendaApi.exe WORKER_EXE=worker/Win32/Debug/AgendaWorker.exe sh tools/test_http.sh` (and Win64); PostgreSQL on Win64 only (no 32-bit libpq): `DB_ENGINE=postgresql AGENDA_EXE=api/Win64/Debug/AgendaApi.exe sh tools/test_http.sh` |
 
 Settings: environment or `.env` next to the executable (`.env.example`).
+
+## Under load (k6)
+
+`sh tools/load_test.sh <target>` runs `load/agenda.js` (reads, bookings, several clients on one
+slot, the public routes) twice and checks each pass: no 5xx, no double booking, the api's
+`/metrics` agreeing with k6's counts, the memory not growing. Targets: `fpc-linux` (the
+`agenda-app` image), `fpc-win` (`lazbuild --bm=Release`), `delphi-win64` and `delphi-win32`
+(the IDE's Release builds; Win32 on SQLite), each on a fresh PostgreSQL 17 and Redis; and
+`compose`, the running stack, whose dashboards then show the run. k6 runs next to the api: in
+Docker for the container targets, a k6 installed on Windows (`K6_EXE`) for the others.
+Results in `load/out/`.
 
 ## The whole stack (Docker)
 

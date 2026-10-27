@@ -39,6 +39,7 @@ program AgendaApi;
                          "id:<base64 of 32 bytes>", comma separated, the
                          first signs; required unless DEV_MODE=true
     PUBLIC_RATE_LIMIT    a minute per client address on /public/ (60)
+    LISTEN_QUEUE         connections waiting to be accepted (128)
     PUBLIC_BASE_URL      what goes before /public/... in a link ('': a path)
     TRUSTED_PROXY_HOPS   proxies in front of the API that append to
                          X-Forwarded-For (0: only a loopback peer's counts)
@@ -105,6 +106,18 @@ program AgendaApi;
   sealed in the database (TDbJwtKeyStore + TSealedJwtKeyStore). No legacy
   secret: a token without kid is refused.
 
+  Stopping (M5): Ctrl+C, Ctrl+Break or closing the console on Windows,
+  SIGINT or SIGTERM on Unix (Agenda.StopSignal) stop the server and the
+  program frees what it made, so a build with heaptrc reports at the stop.
+  Horse's FPC provider has no StopListen: TStopWatcher calls fphttpapp's
+  Application.Terminate (the server inactive, and a fake connection that
+  wakes the accept); on Delphi, THorse.StopListenGraceful (the requests in
+  flight finish, at most STOP_GRACE_MS). On Unix the main thread blocks
+  SIGINT and SIGTERM, so they reach the watcher's thread: one delivered to
+  the main thread interrupts the accept (EINTR), which FPC's web
+  application takes for an error and starts listening again (measured: the
+  process went on, in accept, after the stop).
+
   tools/http_scenarios.sh checks all of this over HTTP. *)
 
 {$IFDEF FPC}{$MODE DELPHI}{$H+}{$ENDIF}
@@ -116,6 +129,7 @@ uses
   cwstring,
   {$ENDIF}
   SysUtils,
+  Classes,
   Horse,
   PascalCommon.Optionals,
   PascalJsonMapper.Json,
@@ -143,6 +157,12 @@ uses
   PascalApi.Idempotency,
   PascalApi.Horse.Idempotency,
   PascalApi.Horse.Mcp,
+  {$IFDEF FPC}
+  fphttpapp,
+  {$ENDIF}
+  {$IFDEF UNIX}
+  BaseUnix,
+  {$ENDIF}
   Redis.Types,
   Redis.Client,
   Redis.Lock,
@@ -167,6 +187,7 @@ uses
   Agenda.Availability in '..\src\Agenda.Availability.pas',
   Agenda.Day in '..\src\Agenda.Day.pas',
   Agenda.Metrics in '..\src\Agenda.Metrics.pas',
+  Agenda.StopSignal in '..\src\Agenda.StopSignal.pas',
   Agenda.Appointments in '..\src\Agenda.Appointments.pas',
   Agenda.SignedLinks in '..\src\Agenda.SignedLinks.pas',
   Agenda.PublicTenancy in '..\src\Agenda.PublicTenancy.pas',
@@ -314,6 +335,19 @@ end;
 // and the repositories work alike), or one 404 for a slug that is unknown,
 // suspended or can't be an id (M3 decision 3). Other paths pass untouched;
 // TTenantMiddleware, before it, already cleared the mark on them.
+{$IFDEF FPC}{$IF FPC_FULLVERSION < 30301}
+// FPC 3.2.2's fphttpserver closes the connection after every response
+// without saying so (no Connection header; Horse's FPC provider says the
+// same), so an HTTP/1.1 client that keeps it for the next request writes to
+// a closed socket: measured with k6 (Go), a PUT answered "EOF" and never
+// reached the api. Saying it lets the client open a new one (M5).
+procedure ConnectionClose(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+begin
+  ARes.AddHeader('Connection', 'close');
+  ANext();
+end;
+{$IFEND}{$ENDIF}
+
 procedure PublicTenant(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
 var
   LInfo: TTenantInfo;
@@ -331,6 +365,49 @@ end;
 
 var
   GHooks: TAgendaHooks;
+
+type
+  /// Waits for a stop request (Agenda.StopSignal), then stops the server, so
+  /// THorse.Listen returns and the program frees what it made.
+  TStopWatcher = class(TThread)
+  protected
+    procedure Execute; override;
+  end;
+
+{$IFDEF UNIX}
+procedure BlockStopSignals;
+var
+  LSet: TSigSet;
+begin
+  fpSigEmptySet(LSet);
+  fpSigAddSet(LSet, SIGINT);
+  fpSigAddSet(LSet, SIGTERM);
+  fpSigProcMask(SIG_BLOCK, @LSet, nil);
+end;
+{$ENDIF}
+
+const
+  /// Delphi: how long the requests in flight get to finish at a stop.
+  STOP_GRACE_MS = 5000;
+
+procedure TStopWatcher.Execute;
+begin
+  while not Terminated and not StopRequested do
+    StopSleep(200);
+  if Terminated then
+    Exit;
+  SafeWriteln('%s stopping', [APP_NAME]);
+  try
+    {$IFDEF FPC}
+    fphttpapp.Application.Terminate;
+    {$ELSE}
+    THorse.StopListenGraceful(STOP_GRACE_MS);
+    {$ENDIF}
+  except
+    on E: Exception do
+      SafeWriteln('ERROR stop: %s: %s', [E.ClassName, E.Message]);
+  end;
+end;
 
 { Handlers }
 
@@ -1270,6 +1347,7 @@ end;
 
 var
   GRateLimit: TRateLimitOptions;
+  GWatcher: TStopWatcher;
   GPort, I: Integer;
   GReset: Boolean;
   GCommand: string;
@@ -1352,6 +1430,9 @@ begin
         TOtlpHttpExporter.FromEnvironment, GHooks.Error);
     TErrorHandlerMiddleware.Register(GHooks.Error);
     TLoggerMiddleware.AddField('tenant.id', TenantIdOf);
+    {$IFDEF FPC}{$IF FPC_FULLVERSION < 30301}
+    THorse.Use(@ConnectionClose);
+    {$IFEND}{$ENDIF}
     // The logger first: it also answers a middleware's exception on FPC.
     THorse.Use(TLoggerMiddleware.New(nil, alfJson));
     THorse.Use(TMetricsMiddleware.New);
@@ -1786,9 +1867,29 @@ begin
     THealthEndpoint.Register('/health', GHooks.Error);
     TRouteDoc.Serve('/swagger', 'Agenda API', APP_VERSION);
 
+    // Connections waiting to be accepted (Horse's default, 15, overflowed
+    // under load: FPC's server opens one per request, M5).
+    THorse.ListenQueue := TAppConfig.GetInt('LISTEN_QUEUE', 128);
+    StopSignalInstall;
+    GWatcher := TStopWatcher.Create(False);
+    {$IFDEF UNIX}
+    // SIGINT and SIGTERM to the watcher, not to this thread: one here
+    // interrupts the server's accept (EINTR), and FPC's web application
+    // takes that for an error and listens again.
+    BlockStopSignals;
+    {$ENDIF}
     SafeWriteln('%s %s listening on port %d', [APP_NAME, APP_VERSION, GPort]);
     THorse.Listen(GPort);
+    SafeWriteln('%s stopped', [APP_NAME]);
   finally
+    if GWatcher <> nil then
+    begin
+      GWatcher.Terminate;
+      GWatcher.WaitFor;
+      GWatcher.Free;
+      StopSignalDone;
+      StopSignalUninstall;
+    end;
     GIdempotency.Free;
     GLinks.Free;
     GSlotLock.Free;

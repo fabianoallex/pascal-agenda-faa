@@ -195,7 +195,13 @@ candidate (promote, keep in the application, drop) with these criteria:
   SIGINT and SIGTERM on Unix, as a flag the main loop reads, and a sleep that wakes on it
   (pascal-common-faa). No library has it: the amqp, redis and pipes samples stop on Enter or
   are killed. **Built here 2026-10-26** as `src/Agenda.StopSignal` (the worker; SIGTERM checked
-  on Linux by the HTTP scenarios).
+  on Linux by the HTTP scenarios); the api uses it too since M5 (a second case, with an FPC
+  gotcha: block the signals on the thread that accepts, "M5: under load").
+- `Connection: close` on FPC 3.2.2 (its server closes every connection without saying so),
+  pascal-api-infra-faa or Horse: found 2026-10-27 under load, "M5: under load".
+- An `Idempotency-Key` completed after the caller's commit can fail on its own (no pool
+  connection): the client gets a 5xx for a change that was made. pascal-api-infra-faa's
+  `THorseIdempotentRequest`; found 2026-10-27 under load, "M5: under load".
 - An instant type for the mapper: zone required on input, `Z` on output (pascal-jsonmapper-faa).
 - A Boolean parameter into an `INTEGER` column fails on PostgreSQL ("column ... is of type
   integer but expression is of type boolean"); SQLite takes it, and pascal-db-faa's contract suite
@@ -1609,3 +1615,83 @@ Two gaps found while designing:
   Win64; HTTP on SQLite 669 + 68 on both, on PostgreSQL with Redis and RabbitMQ 680 + 68
   (Win64), the official client 0 failed on each. Not measured on Delphi: the worker's OTLP
   metrics export (the compose stack is FPC on Linux; test_http.sh runs no collector).
+
+### M5: under load (2026-10-27)
+
+- `load/agenda.js` (k6 0.54.0): four scenarios at once for `DURATION` (60 s): reads (the free
+  slots, the day, the appointments, the services, a customer search), bookings (a staff user
+  books a slot it just read, 409 when another took it, confirms one in ten with `If-Match`),
+  a race (4 bookings of one slot arriving together, on a professional of their own) and the
+  public routes. Thresholds: no 5xx or network error (`http_req_failed`; a 4xx is an answer),
+  every check, no double booking (teardown reads every booked day through `/agenda/day`).
+- `tools/load_test.sh <target>`: a fresh PostgreSQL 17 and Redis per target (or SQLite), the
+  tenant `load` seeded through the api's commands, two passes; `tools/load_check.py` checks
+  each against the api's `/metrics` (its request count but `/metrics` and `/health/*`, the
+  staff bookings booked and slot_unavailable: equal to k6's) and the memory between passes
+  (at most 1.25 times the first plus 16 MB). Targets: `fpc-linux` (the `agenda-app` image),
+  `fpc-win` (a new `Release` build mode in `api/AgendaApi.lpi`: -O2, no heaptrc),
+  `delphi-win64`, `delphi-win32` (SQLite: no 32-bit libpq), and `compose` (the running stack,
+  its api recreated with the limits raised; the dashboards show the run).
+- Found while building, in this order:
+  - **The api had no clean stop**: `THorse.Listen` returned only when the process died, so no
+    leak report at the stop. Now `Agenda.StopSignal` (Ctrl+C, SIGINT, SIGTERM) and a watcher
+    thread: on FPC `fphttpapp`'s `Application.Terminate` (Horse's FPC provider has no
+    `StopListen`), on Delphi `THorse.StopListenGraceful` (5 s). Measured on FPC Linux: a
+    SIGTERM reaching the main thread interrupts its `accept` (EINTR), FPC's web application
+    takes that for an error and listens again (the process went on, in `accept`, with the
+    accepted connections in CLOSE_WAIT); the main thread now blocks SIGINT and SIGTERM, so
+    they reach the watcher. `tools/test_http_docker.sh` builds the api with heaptrc and
+    stops it with SIGTERM at each of its two starts.
+  - **One block of 64 bytes at the stop**, FPC Linux, with no call trace: none when the api
+    served no request, the same one after two requests or the whole scenarios (thousands); a
+    500 ms wait before the cleanup changed nothing. Not found yet; the check accepts exactly
+    this and fails on anything else. To look at with a minimal Horse program on FPC (is it
+    fphttpserver's, Horse's or ours).
+  - **On PostgreSQL the database pool isn't freed at the stop**, FPC Linux, every run (320
+    blocks, the same each time; with Redis or without, with its outage scenario or without):
+    after "agenda-api stopped", `EThreadError: Thread error` escapes `FPool.Clear` in
+    `TConnectionPool.Destroy` (pascal-db-faa 0.17.0, line 1443), so the pool, its
+    connections (the first ones, the migration's, the requests') and the database object stay
+    allocated. FPC's cthreads raises that error when a mutex fails to lock, unlock or be
+    destroyed (one destroyed while locked); not seen on SQLite. Suspected, not shown: a lock
+    inside SQLdb's `TPQConnection` left held. For pascal-db-faa, with a reproduction; the
+    check reports this exact case as known and fails any other.
+  - **FPC 3.2.2's server closes the connection after every response without saying so** (no
+    `Connection` header; Horse's FPC provider notes it, keep-alive only from FPC 3.3.1). A
+    client that keeps the connection for its next request writes to a closed socket: k6 (Go)
+    got "EOF" on a `PUT`, which never reached the api (curl reconnects silently). The api
+    now answers `Connection: close` on FPC before 3.3.1 (`ConnectionClose`, a middleware).
+    Candidate for pascal-api-infra-faa or Horse.
+  - **Horse's listen queue is 15**; with a connection per request, dials timed out under
+    load. `LISTEN_QUEUE` (128) sets `THorse.ListenQueue`.
+  - **The database pool (10) answered 503 under load**: a booking holds its connection while
+    it waits for the professional's row lock, so 20 clients booking one professional left the
+    reads without one (pascal-db-faa's `EPoolTimeoutException` after 5 s). And a booking
+    already committed answered 503 when completing its `Idempotency-Key` found no connection:
+    the client gets an error for an appointment that exists (a retry with the key meets the
+    key still in flight). For pascal-api-infra-faa's idempotency (complete inside the
+    caller's transaction?) or the application. The load runs use `DB_POOL_MAX=40`
+    (`LOAD_POOL`); `docker-compose.yml` passes `DB_POOL_MAX` and `RATE_LIMIT` now.
+  - **Docker Desktop's port forwarding drops dials** at a connection per request ("dial: i/o
+    timeout" on both the Windows and the Linux api through `host.docker.internal`; none with
+    k6 on the api's own network: 0 errors, 277 req/s against 38). k6 runs next to the api:
+    in a container on its network, or installed on Windows for the Windows targets.
+  - `tools/test_compose.sh` ran `docker compose down -v` on the project `agenda`, the
+    development stack's name: running it with a development stack up would remove that
+    stack and its data. Caught before it ran; it has a project of its own now
+    (`COMPOSE_PROJECT_NAME=agenda-test`).
+- Results (20 virtual users for reads, 10 booking, 4 public, 20 race bookings a second; the
+  rate counts setup and teardown too):
+
+  | Target | Pass | Requests | Rate | p50 | p95 | p99 | Booked | Race | Memory |
+  |---|---|---|---|---|---|---|---|---|---|
+  | compose (FPC Linux, -O2) | 1 | 17580 | 283/s | 111 ms | 263 ms | 419 ms | 1164 | 300 of 1200 | 61 MB |
+  | compose | 2 | 15809 | 256/s | 123 ms | 311 ms | 476 ms | 1180 | 300 of 1200 | 68 MB |
+  | fpc-linux | 1 | 16027 | 259/s | 97 ms | 676 ms | 1178 ms | 916 | 298 of 1192 | 23 MB |
+  | fpc-linux | 2 | 17750 | 286/s | 92 ms | 577 ms | 1023 ms | 984 | 299 of 1193 | 25 MB |
+
+  Every pass: 0 failed requests, every check, no double booking, the api's counts equal to
+  k6's. Not measured yet: the Windows targets (they need k6 on Windows: downloading its
+  binary was refused here, an executable from outside) and Delphi's Release builds (the
+  IDE).
+- CI (FPC Linux, tools/ci-test.sh): 116 unit tests, 0 leaks; HTTP 669 + 79 (SQLite) and 680 + 79 (PostgreSQL), the official MCP client on both, the api stopped by SIGTERM at each start (SQLite: the known block of 64 bytes; PostgreSQL: the known pool error); compose 22 + the dashboards; the short load run (20 s, 10 users) 318/s, p95 110 ms, every check. FPC Windows: HTTP 669 + 74 and 680 + 74, the official client on both. Delphi: not built yet (the stop watcher's StopListenGraceful path is Delphi's own).

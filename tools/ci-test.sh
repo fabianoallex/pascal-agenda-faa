@@ -28,3 +28,5 @@ echo "== HTTP scenarios (FPC 3.2.2, Linux, PostgreSQL 17)"
 DB_ENGINE=postgresql sh tools/test_http_docker.sh
 echo "== docker-compose.yml end to end (email in Mailpit, one trace, the dashboards)"
 sh tools/test_compose.sh
+echo "== under load, briefly (k6; the image test_compose.sh built)"
+DURATION=20s PASSES=1 VUS=10 sh tools/load_test.sh fpc-linux

@@ -117,7 +117,7 @@ count_is "$(kind_count appointment.booked)" 1 "booked: one email, not two"
 SPANS=""
 for I in $(seq 1 60); do
   # MSYS_NO_PATHCONV: Git Bash would turn /data into a Windows path.
-  MSYS_NO_PATHCONV=1 docker run --rm -v agenda_otel-data:/data busybox cat /data/traces.json     > "$T/traces.json" 2>/dev/null
+  MSYS_NO_PATHCONV=1 docker run --rm -v "${COMPOSE_PROJECT_NAME:-agenda}_otel-data:/data" busybox cat /data/traces.json     > "$T/traces.json" 2>/dev/null
   "$PY" "$ROOT/tools/otel_spans.py" "$T/traces.json" "$TRACE" > "$T/spans.txt" 2>/dev/null
   # Both processes' batches: each exports on its own schedule (OTEL_BSP_SCHEDULE_DELAY).
   grep -q "^agenda-worker	email send" "$T/spans.txt" && grep -q "^agenda-api	" "$T/spans.txt" && break

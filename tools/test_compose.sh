@@ -15,6 +15,10 @@
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+# A project of its own: never the development stack ("agenda", the file's
+# name), which a "down -v" here would remove with its data. compose_api.sh
+# and http_scenarios_mail.sh follow it through this variable.
+export COMPOSE_PROJECT_NAME=agenda-test
 export PASSWORD_ITERATIONS=20000 AUTH_RATE_LIMIT=60 AMQP_RETRY_MS=2000
 export AGENDA_PORT="${AGENDA_PORT:-19400}" MAILPIT_PORT="${MAILPIT_PORT:-18025}"
 export RABBITMQ_UI_PORT="${RABBITMQ_UI_PORT:-25672}"

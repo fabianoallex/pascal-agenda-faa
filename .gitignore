@@ -1,5 +1,8 @@
 # Build output
 lib/
+lib-release/
+api/release/
+load/out/
 *.exe
 *.dcu
 *.o

@@ -117,6 +117,8 @@ services:
       PASSWORD_ITERATIONS: ${PASSWORD_ITERATIONS:-210000}
       AUTH_RATE_LIMIT: ${AUTH_RATE_LIMIT:-10}
       PUBLIC_RATE_LIMIT: ${PUBLIC_RATE_LIMIT:-60}
+      RATE_LIMIT: ${RATE_LIMIT:-600}
+      DB_POOL_MAX: ${DB_POOL_MAX:-10}
     healthcheck:
       test: ["CMD", "curl", "-fs", "http://127.0.0.1:9400/health/ready"]
       interval: 2s

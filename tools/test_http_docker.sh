@@ -93,22 +93,60 @@ MSYS_NO_PATHCONV=1 docker run --rm $NETOPT -v "$MOUNT:/src:ro" \
   P="$P -Fu$E/pascal-db-faa/adapters/sqldb -Fi$E/pascal-db-faa/adapters/sqldb"
   P="$P -Fu$E/pascal-redis-faa/src -Fi$E/pascal-redis-faa/src"
   cd /t/api
-  fpc -v0 -Mdelphi -dUseCThreads $P -FU/t/units -o/t/AgendaApi AgendaApi.dpr > /t/build.log 2>&1 \
+  fpc -v0 -Mdelphi -dUseCThreads $P -gh -gl -FU/t/units -o/t/AgendaApi AgendaApi.dpr > /t/build.log 2>&1 \
     || { grep -iE "error|fatal" /t/build.log | head -30; exit 1; }
   cd /t/worker
   W="-Fu$E/synapse -Fi$E/synapse -Fu$E/pascal-amqp-faa/src -Fi$E/pascal-amqp-faa/src"
   fpc -v0 -Mdelphi -dUseCThreads $P $W -gh -gl -FU/t/wunits -o/t/AgendaWorker AgendaWorker.dpr \
     > /t/wbuild.log 2>&1 || { grep -iE "error|fatal" /t/wbuild.log | head -30; exit 1; }
   cd /t/run
+  # heaptrc (-gh) writes its report at the stop to HEAPTRC_FILE (M5: the api
+  # stops cleanly on SIGTERM).
   start() {
-    /t/AgendaApi 9400 > /t/server.log 2>&1 &
+    # heaptrc appends to its file: one report per run.
+    rm -f /t/api-heap.txt
+    HEAPTRC="log=/t/api-heap.txt" /t/AgendaApi 9400 > /t/server.log 2>&1 &
     PID=$!
     for I in 1 2 3 4 5 6 7 8 9 10; do
       curl -s -o /dev/null http://127.0.0.1:9400/health/live && return 0; sleep 1
     done
     echo "the API did not start"; cat /t/server.log; exit 1
   }
-  stop() { kill $PID; wait $PID 2>/dev/null || true; }
+  stop() {
+    kill -TERM $PID
+    APIRC=0
+    wait $PID 2>/dev/null || APIRC=$?
+    grep -q "agenda-api stopped" /t/server.log \
+      || { echo "FAIL: the api did not stop cleanly (exit $APIRC)"; tail -20 /t/server.log; exit 1; }
+    # Known (M5, docs/design.md): one block of 64 bytes, with no call trace,
+    # once the api served any request, the same after a few or thousands;
+    # none without a request. Anything else fails.
+    UNFREED="$(sed -n "s/^\([0-9]*\) unfreed memory blocks : \([0-9]*\)$/\1 \2/p" /t/api-heap.txt)"
+    # Known too, on PostgreSQL only (M5, docs/design.md, open in
+    # pascal-db-faa): "EThreadError: Thread error" from FPool.Clear in
+    # TConnectionPool.Destroy, after "stopped", so the pool and its
+    # connections stay allocated. Reported, not failed; any other leak fails.
+    LEAKRC=1
+    if [ "$DB_ENGINE" = postgresql ] && grep -q "^EThreadError: Thread error" /t/server.log; then
+      LEAKRC=0
+    fi
+    case "$UNFREED" in
+      "0 0"|"1 64") echo "ok: the api stopped on SIGTERM, unfreed blocks and bytes: $UNFREED" ;;
+      *) if [ $LEAKRC = 0 ]; then
+           echo "KNOWN: the api stopped on SIGTERM, then EThreadError freeing the database pool (pascal-db-faa, open): $UNFREED unfreed"
+           return 0
+         fi
+         echo "FAIL: the api leaked at the stop: ${UNFREED:-no report}"
+         grep -v "^{" /t/server.log | tail -40
+         # Each distinct allocation path once, with its count: the first
+         # eight frames of every call trace.
+         awk "/^Call trace/ { if (k != \"\") n[k]++; k = \"\"; d = 0; next }
+              /^  \\$/ { if (d < 8) { sub(/^  \\$[0-9A-F]+ +/, \"\"); k = k \" < \" \$0; d++ } next }
+              END { if (k != \"\") n[k]++; for (x in n) print n[x] \"x\" x }" /t/api-heap.txt \
+           | sort -rn | head -20
+         exit 1 ;;
+    esac
+  }
 
   echo "== fresh database"
   sh /t/tools/seed_scenarios.sh /t/AgendaApi
