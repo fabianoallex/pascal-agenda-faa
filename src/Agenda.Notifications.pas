@@ -102,12 +102,14 @@ uses
   PascalCommon.TimeZones,
   PascalApi.Tenancy,
   PascalApi.Jwt,
-  Agenda.Events;
+  Agenda.Events,
+  Agenda.Metrics;
 
 const
   STATUS_BOOKED = 'booked';
   STATUS_CONFIRMED = 'confirmed';
   STATUS_CANCELLED = 'cancelled';
+  SKIP_NO_EMAIL = 'the customer has no email';
   NL = #13#10;
   WEEKDAYS: array[1..7] of string = ('Monday', 'Tuesday', 'Wednesday', 'Thursday',
     'Friday', 'Saturday', 'Sunday');
@@ -219,8 +221,19 @@ begin
   LSpan := TPcTracing.Current;
   if LSpan <> nil then
     LSpan.SetAttribute('notify.skipped', AReason);
+  if AReason = SKIP_NO_EMAIL then
+    CountEmail(AEvent.Kind, EMAIL_NO_ADDRESS)
+  else
+    CountEmail(AEvent.Kind, EMAIL_SKIPPED);
   if Assigned(FOnSkip) then
     FOnSkip(AEvent, AReason);
+end;
+
+function SecondsSince(AStart: TDateTime): Double;
+begin
+  Result := (Now - AStart) * 86400;
+  if Result < 0 then
+    Result := 0;
 end;
 
 function TAppointmentMailer.Read(const AEvent: TOutboxEvent; const AId: string;
@@ -261,6 +274,7 @@ var
   LActive: Boolean;
   LPath, LQuery, LUrl, LCancelUrl: string;
   LSpan: IPcSpan;
+  LStarted: TDateTime;
 begin
   LEvent := ReadAppointmentEvent(AEvent.Payload);
   LSpan := TPcTracing.Current;
@@ -276,7 +290,7 @@ begin
   end;
   if LNotice.CustomerEmail = '' then
   begin
-    Skip(AEvent, 'the customer has no email');
+    Skip(AEvent, SKIP_NO_EMAIL);
     Exit;
   end;
   LActive := (LNotice.Status = STATUS_BOOKED) or (LNotice.Status = STATUS_CONFIRMED);
@@ -315,11 +329,16 @@ begin
   LSpan := TPcTracing.StartSpan('email send', skClient);
   try
     LSpan.SetAttribute('email.kind', AEvent.Kind);
+    LStarted := Now;
     try
       FMail.Send(AppointmentMail(AEvent.Kind, LNotice, FFrom, AEvent.Id, LUrl, LCancelUrl));
+      ObserveEmailSend(SecondsSince(LStarted));
+      CountEmail(AEvent.Kind, EMAIL_SENT);
     except
       on E: Exception do
       begin
+        ObserveEmailSend(SecondsSince(LStarted));
+        CountEmail(AEvent.Kind, EMAIL_FAILED);
         LSpan.SetStatus(ssError, E.ClassName + ': ' + E.Message);
         raise;
       end;

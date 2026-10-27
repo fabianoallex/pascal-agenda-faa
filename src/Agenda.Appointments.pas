@@ -263,7 +263,8 @@ uses
   Agenda.Slots,
   Agenda.Availability,
   Agenda.Outbox,
-  Agenda.Events;
+  Agenda.Events,
+  Agenda.Metrics;
 
 const
   STATUSES: array[0..4] of string = ('booked', 'confirmed', 'cancelled', 'done', 'no_show');
@@ -486,9 +487,16 @@ end;
 // Redis down (rlUnavailable, logged by its OnUnavailable), True with AToken
 // '': the transaction decides alone, and Release of '' does nothing.
 function TAppointmentRepository.LockSlot(const AKey: string; out AToken: string): Boolean;
+var
+  LAnswer: TRedisLockResult;
 begin
   AToken := '';
-  Result := (FLock = nil) or (FLock.Acquire(AKey, SLOT_LOCK_TTL_MS, AToken) <> rlBusy);
+  if FLock = nil then
+    Exit(True);
+  LAnswer := FLock.Acquire(AKey, SLOT_LOCK_TTL_MS, AToken);
+  if LAnswer = rlUnavailable then
+    CountSlotLockFallback;
+  Result := LAnswer <> rlBusy;
 end;
 
 function TAppointmentRepository.FindPage(const AFind: IAppointmentFind;

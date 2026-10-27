@@ -33,6 +33,13 @@ program AgendaWorker;
   apart (a message the broker already pushed but the library hasn't handed
   to a callback yet is in neither count); at most DRAIN_MAX_SECONDS.
 
+  Metrics (M5): the outbox's, the consumer's, the emails' and the
+  reminders' (Agenda.Metrics, Agenda.Outbox and its AMQP unit) in PcMetrics; with
+  OTEL_EXPORTER_OTLP_ENDPOINT set, pushed there every
+  OTEL_METRIC_EXPORT_INTERVAL ms (60000) by pascal-api-infra-faa's
+  TOtlpMetricsExporter, and once more at the stop. The pending events'
+  gauges are measured every PENDING_EVERY_SECONDS.
+
   The worker doesn't migrate: it waits for the api to bring the database to
   the schema it was built for, so one process migrates. It waits for the
   broker too, when it can't be reached at the start; later drops are the
@@ -77,6 +84,7 @@ uses
   PascalCommon.SafeLog,
   PascalCommon.Tracing,
   PascalCommon.Threading,
+  PascalCommon.Metrics,
   PascalApi.Config,
   PascalApi.Otlp,
   PascalApi.Jwt,
@@ -95,14 +103,16 @@ uses
   Agenda.Notifications in '..\src\Agenda.Notifications.pas',
   Agenda.Leases in '..\src\Agenda.Leases.pas',
   Agenda.Reminders in '..\src\Agenda.Reminders.pas',
+  Agenda.Metrics in '..\src\Agenda.Metrics.pas',
   Agenda.StopSignal in '..\src\Agenda.StopSignal.pas';
 
 const
   APP_NAME = 'agenda-worker';
-  APP_VERSION = '0.0.2';
+  APP_VERSION = '0.0.3';
   DEV_MAIL_FROM = 'Agenda <no-reply@agenda.localhost>';
   JOB_REMINDERS = 'reminders';
   PURGE_EVERY_SECONDS = 3600;
+  PENDING_EVERY_SECONDS = 15;
   SCHEMA_WAIT_MS = 2000;
   // --drain: at most this long (a handler failing forever ends too).
   DRAIN_MAX_SECONDS = 90;
@@ -338,7 +348,8 @@ var
   GOwner, GMailDescription, GWarning, GExchange: string;
   GDrain, GHasLease: Boolean;
   GPollMs, GReminderSeconds, GKeepDays, GQuiet: Integer;
-  GNextReminders, GNextPurge, GNow, GDrainUntil: Int64;
+  GNextReminders, GNextPurge, GNextPending, GNow, GDrainUntil: Int64;
+  GMetrics: TOtlpMetricsExporter;
   GWork: Integer;
 
 // One round: the relay, the local sink, and the scheduler when due. Returns
@@ -359,6 +370,16 @@ begin
       on E: Exception do
         GHooks.Error(Format('handlers pass: %s: %s', [E.ClassName, E.Message]));
     end;
+  if ANow >= GNextPending then
+  begin
+    GNextPending := ANow + PENDING_EVERY_SECONDS;
+    try
+      TOutbox.MeasurePending(GDatabase.Factory, ANow);
+    except
+      on E: Exception do
+        GHooks.Error(Format('pending events: %s: %s', [E.ClassName, E.Message]));
+    end;
+  end;
   if (ANow < GNextReminders) and not GDrain then
     Exit;
   GNextReminders := ANow + GReminderSeconds;
@@ -496,9 +517,15 @@ begin
       end;
       SafeWriteln('mail: %s', [GMailDescription]);
 
+      AgendaMetricsInit;
       if TAppConfig.Get('OTEL_EXPORTER_OTLP_ENDPOINT', '') <> '' then
+      begin
         TPcTracing.Start(TPcTracingOptions.FromEnvironment(APP_NAME, APP_VERSION,
           ReadAppConfig), TOtlpHttpExporter.FromEnvironment, GHooks.Error);
+        GMetrics := TOtlpMetricsExporter.Create(PcMetrics,
+          TOtlpMetricsOptions.FromEnvironment(APP_NAME, APP_VERSION, ReadAppConfig),
+          GHooks.Error);
+      end;
 
       if GDrain then
         SafeWriteln('%s %s draining as %s', [APP_NAME, APP_VERSION, GOwner])
@@ -506,6 +533,7 @@ begin
         SafeWriteln('%s %s running as %s', [APP_NAME, APP_VERSION, GOwner]);
       GNextReminders := 0;
       GNextPurge := 0;
+      GNextPending := 0;
       GQuiet := 0;
       GDrainUntil := TJwt.UnixNow + DRAIN_MAX_SECONDS;
       while not StopRequested do
@@ -575,6 +603,8 @@ begin
     GDatabase.Free;
     if (PcAtomicGet(GFailed) <> 0) and GDrain then
       ExitCode := 1;
+    // Last: its Free sends one more export, with what the stop counted.
+    GMetrics.Free;
     GHooks.Free;
     StopSignalDone;
     StopSignalUninstall;

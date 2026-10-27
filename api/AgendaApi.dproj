@@ -85,6 +85,7 @@
         <DCCReference Include="..\src\Agenda.Slots.pas"/>
         <DCCReference Include="..\src\Agenda.Availability.pas"/>
         <DCCReference Include="..\src\Agenda.Day.pas"/>
+        <DCCReference Include="..\src\Agenda.Metrics.pas"/>
         <DCCReference Include="..\src\Agenda.Appointments.pas"/>
         <DCCReference Include="..\src\Agenda.SignedLinks.pas"/>
         <DCCReference Include="..\src\Agenda.PublicTenancy.pas"/>

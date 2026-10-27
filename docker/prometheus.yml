@@ -1,0 +1,22 @@
+# Prometheus of docker-compose.yml (docs/design.md, M5 decision 6): the api's
+# /metrics directly; the worker's metrics through the OpenTelemetry
+# Collector's prometheus exporter (the worker pushes them over OTLP), with
+# honor_labels so the job stays the collector's (the service name,
+# agenda-worker) instead of becoming exported_job; RabbitMQ's own plugin, per
+# queue (/metrics/per-object). The dashboards in docker/grafana read these.
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: agenda-api
+    static_configs:
+      - targets: ["api:9400"]
+  - job_name: otel-collector
+    honor_labels: true
+    static_configs:
+      - targets: ["otel-collector:8889"]
+  - job_name: rabbitmq
+    metrics_path: /metrics/per-object
+    static_configs:
+      - targets: ["rabbitmq:15692"]

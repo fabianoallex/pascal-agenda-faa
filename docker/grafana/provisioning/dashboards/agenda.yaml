@@ -1,0 +1,12 @@
+# The dashboards kept in the repository (docker/grafana/dashboards, mounted
+# at /var/lib/grafana/dashboards), loaded at start, read-only in the UI:
+# change the JSON files instead.
+apiVersion: 1
+
+providers:
+  - name: agenda
+    folder: Agenda
+    type: file
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

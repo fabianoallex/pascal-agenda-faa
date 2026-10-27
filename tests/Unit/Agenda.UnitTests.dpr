@@ -33,6 +33,7 @@ uses
   Agenda.Settings in '..\..\src\Agenda.Settings.pas',
   Agenda.Events in '..\..\src\Agenda.Events.pas',
   Agenda.Mail in '..\..\src\Agenda.Mail.pas',
+  Agenda.Metrics in '..\..\src\Agenda.Metrics.pas',
   Agenda.Notifications in '..\..\src\Agenda.Notifications.pas',
   Agenda.Leases in '..\..\src\Agenda.Leases.pas',
   Agenda.Reminders in '..\..\src\Agenda.Reminders.pas',

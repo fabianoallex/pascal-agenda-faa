@@ -46,6 +46,7 @@ type
     [Test] procedure LocalSink_NoHandler_Delivered;
     [Test] procedure Purge_KeepsPendingDeliveries;
     [Test] procedure Retry_Doubles_UpToMax;
+    [Test] procedure Metrics_Relay_Handlers_Pending;
   end;
 
 implementation
@@ -56,6 +57,7 @@ uses
   {$ENDIF}
   PascalCommon.Crypto,
   PascalCommon.Random,
+  PascalCommon.Metrics,
   PascalCommon.Tracing;
 
 // The temporary directory, with its delimiter: GetTempDir is FPC's RTL only
@@ -139,6 +141,35 @@ begin
     raise Exception.Create(FName + ' failed');
   end;
   Inc(Handled);
+end;
+
+// A metric's value now in PcMetrics (M5): a counter's or a gauge's series
+// with these label values, 0 when the series doesn't exist yet. The
+// registry is the process's, so the tests compare before and after.
+function MetricValue(const AName: string; const ALabels: array of string): Double;
+var
+  LMetrics: TPcMetricList;
+  LPoints: TPcMetricPoints;
+  I, J, K: Integer;
+  LSame: Boolean;
+begin
+  Result := 0;
+  LMetrics := PcMetrics.Metrics;
+  for I := 0 to High(LMetrics) do
+    if LMetrics[I].Name = AName then
+    begin
+      LPoints := LMetrics[I].Snapshot;
+      for J := 0 to High(LPoints) do
+      begin
+        LSame := Length(LPoints[J].LabelValues) = Length(ALabels);
+        if LSame then
+          for K := 0 to High(ALabels) do
+            if LPoints[J].LabelValues[K] <> ALabels[K] then
+              LSame := False;
+        if LSame then
+          Exit(LPoints[J].Value);
+      end;
+    end;
 end;
 
 function SmallOptions: TOutboxOptions;
@@ -509,6 +540,63 @@ begin
   TAssert.AssertEquals(Int64(30), LRetry.DelayAfter(4));
   TAssert.AssertEquals(Int64(30), LRetry.DelayAfter(50));
   TAssert.AssertEquals('zero attempts: the base', Int64(5), LRetry.DelayAfter(0));
+end;
+
+procedure TOutboxTests.Metrics_Relay_Handlers_Pending;
+var
+  LRecording: TRecordingSink;
+  LRecordingIntf: IOutboxSink;
+  LLocal: IOutboxLocalSink;
+  LHandler: TTestHandler;
+  LHandlerIntf: IOutboxHandler;
+  LRelay: TOutboxRelay;
+  LDelivered, LFailed, LRuns: Double;
+begin
+  LDelivered := MetricValue('outbox.events.delivered', ['m.ok']);
+  LFailed := MetricValue('outbox.events.failed', ['m.bad']);
+  LRuns := MetricValue('outbox.handler.runs', ['m.handler', 'm.local', 'done']);
+  Enqueue('m.ok', 100);
+  Enqueue('m.bad', 150);
+  TAssert.AssertEquals('pending', 2, TOutbox.MeasurePending(FDb.Factory, 200));
+  TAssert.AssertEquals(2, MetricValue('outbox.events.pending', []), 0);
+  TAssert.AssertEquals('the oldest, written at 100', 100,
+    MetricValue('outbox.events.oldest_age', []), 0);
+
+  LRecording := TRecordingSink.Create;
+  LRecordingIntf := LRecording;
+  LRecording.FailKind := 'm.bad';
+  LRecording.FailsLeft := 1;
+  LRelay := TOutboxRelay.Create(FDb.Factory, LRecordingIntf, 'r1', SmallOptions);
+  try
+    LRelay.RunOnce(200);
+  finally
+    LRelay.Free;
+  end;
+  TAssert.AssertEquals('delivered', LDelivered + 1,
+    MetricValue('outbox.events.delivered', ['m.ok']), 0);
+  TAssert.AssertEquals('failed', LFailed + 1, MetricValue('outbox.events.failed', ['m.bad']), 0);
+  TAssert.AssertEquals('one left', 1, TOutbox.MeasurePending(FDb.Factory, 250));
+  TAssert.AssertEquals(100, MetricValue('outbox.events.oldest_age', []), 0);
+
+  // The local sink: a handler's run, by result.
+  LLocal := TOutboxLocalSink.Create(FDb.Factory, 's1', SmallOptions);
+  LHandler := TTestHandler.Create('m.handler', 'm.local');
+  LHandlerIntf := LHandler;
+  LLocal.AddHandler(LHandlerIntf);
+  Enqueue('m.local', 300);
+  LRelay := TOutboxRelay.Create(FDb.Factory, LLocal, 'r2', SmallOptions);
+  try
+    LRelay.RunOnce(300);
+  finally
+    LRelay.Free;
+  end;
+  TAssert.AssertEquals(1, LLocal.RunOnce(300));
+  TAssert.AssertEquals('a run done', LRuns + 1,
+    MetricValue('outbox.handler.runs', ['m.handler', 'm.local', 'done']), 0);
+
+  Exec('UPDATE OUTBOX SET DELIVERED_AT = 400');
+  TAssert.AssertEquals('none', 0, TOutbox.MeasurePending(FDb.Factory, 400));
+  TAssert.AssertEquals(0, MetricValue('outbox.events.oldest_age', []), 0);
 end;
 
 initialization

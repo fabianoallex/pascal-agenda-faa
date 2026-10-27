@@ -643,6 +643,10 @@ begin
       'UPDATE OUTBOX SET ATTEMPTS = ATTEMPTS + 1, AVAILABLE_AT = :AVAILABLE_AT, ' +
       'LAST_ERROR = :LAST_ERROR, LEASE_OWNER = NULL, LEASE_UNTIL = NULL ' +
       'WHERE TENANT_ID = :TENANT_ID AND ID = :ID AND LEASE_OWNER = :OWNER AND DELIVERED_AT IS NULL')
+    // What is waiting (TOutbox.MeasurePending, the gauges).
+    .Add(COMMON_SQL_DIR, 'OUTBOX.PENDING',
+      'SELECT COUNT(*) AS PENDING, MIN(CREATED_AT) AS OLDEST FROM OUTBOX ' +
+      'WHERE DELIVERED_AT IS NULL')
     // Purge: the deliveries of events delivered before :BEFORE once none is
     // pending, then those events (one with a pending delivery stays).
     .Add(COMMON_SQL_DIR, 'OUTBOX.PURGE_DELIVERIES',

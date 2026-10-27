@@ -161,7 +161,8 @@ candidate (promote, keep in the application, drop) with these criteria:
 - Transactional outbox + relay (the dual write problem). Shape discussed with the user on
   2026-10-23, built here in M4 as `src/Agenda.Outbox` (the core and the local sink, 11 unit
   tests; 2026-10-26, see "M4: the outbox core"), and its broker sink as
-  `src/Agenda.Outbox.Amqp` (2026-10-26, see "M4: the broker, the compose file, the trace"):
+  `src/Agenda.Outbox.Amqp` (2026-10-26, see "M4: the broker, the compose file, the trace"),
+  with metrics of its own since M5 (see "M5: the metrics and the dashboards"):
   - **Core**, on pascal-db-faa only: `Enqueue` writes one row per event (type, payload, trace
     context) in the caller's transaction; a polling relay reads a batch and hands each event to
     an `IOutboxSink`, then marks it delivered. Delivery is at-least-once: consumers deduplicate
@@ -1566,3 +1567,42 @@ Two gaps found while designing:
   its own schedule) came later; `tools/http_scenarios_mail.sh` now waits for both. Delphi (the
   api rebuilt): HTTP on SQLite 665 + 68, Win32 and Win64, on PostgreSQL with Redis and RabbitMQ
   676 + 68 (Win64), the official client 0 failed on each.
+
+### M5: the metrics and the dashboards (2026-10-27)
+
+- `src/Agenda.Metrics`: the application's metrics in `PcMetrics`, OpenTelemetry names, every
+  label one of a few fixed words. The api: `agenda.bookings` (by `agenda.channel`, staff or
+  public, and `agenda.booking.result`: booked, slot_unavailable, refused, failed; counted
+  where the booking runs, so an idempotent replay doesn't count again) and
+  `agenda.slot_lock.fallbacks` (Redis configured but down). The worker: `agenda.emails` (by
+  kind and result: sent, failed, no_address, skipped), `agenda.email.send.duration` (s) and
+  `agenda.reminders.queued`. `AgendaMetricsInit` registers them at start.
+- The outbox candidate records its own (the units' headers): `outbox.events.delivered` and
+  `outbox.events.failed` by kind (the relay), `outbox.handler.runs` by handler, kind and
+  result (the local sink), `outbox.consumer.messages` by consumer, kind and result (done,
+  duplicate, ignored, retried, parked; the kind is "other" for one the handler doesn't take,
+  so a stranger publishing to the exchange can't grow the series), and the gauges
+  `outbox.events.pending` and `outbox.events.oldest_age` (s), which `TOutbox.MeasurePending`
+  sets from one query (`OUTBOX.PENDING`), every 15 s in the worker.
+- The worker pushes its registry with pascal-api-infra-faa 0.26.0's `TOtlpMetricsExporter`
+  (with `OTEL_EXPORTER_OTLP_ENDPOINT`; `OTEL_METRIC_EXPORT_INTERVAL`, and one more export at
+  the stop); the worker is 0.0.3. The collector's `prometheus` exporter serves them on :8889.
+- `docker-compose.yml`: Prometheus 2.53.0 (`docker/prometheus.yml`: the api's `/metrics`, the
+  collector with `honor_labels`, so the job stays `agenda-worker`, and RabbitMQ's plugin per
+  queue, `/metrics/per-object`) and Grafana 11.2.0, provisioned from `docker/grafana` (the data
+  source by uid, three dashboards in the folder Agenda: `agenda-api`, `agenda-worker`,
+  `agenda-broker`; anonymous viewers).
+- `tools/dashboards_check.py`, run by `tools/test_compose.sh` after the mail scenarios: the
+  three targets up, nine series the scenarios must have made, every panel's query accepted by
+  Prometheus (one without data yet is listed, not failed: a rate needs two samples), each
+  dashboard loaded in Grafana, its data source healthy. Found on the first run: the worker's
+  consumer is named after its queue (`agenda.email`), not `email` as in the unit tests.
+- Tests: `Metrics_Relay_Handlers_Pending` (Agenda.OutboxTests: delivered, failed, a handler's
+  run, the gauges as events come and go) and the consumer's results in the five consumer tests
+  of Agenda.OutboxAmqpTests (done, duplicate, retried, parked, ignored as "other"); the
+  values are read from `PcMetrics` before and after, since the registry is the process's. The
+  HTTP scenarios check the api's bookings by channel and result on `/metrics`.
+- Result: FPC Windows 116 unit tests, 0 leaks; HTTP on SQLite 669 + 74, on PostgreSQL with
+  Redis and RabbitMQ 680 + 74, the official MCP client on both; FPC Linux (CI): 116, 0 leaks;
+  669 + 79 and 680 + 79, the official client on both, promtool on the api's /metrics; compose:
+  22 mail checks, the dashboards 0 failed, a clean stop. Delphi: not built yet (the IDE).

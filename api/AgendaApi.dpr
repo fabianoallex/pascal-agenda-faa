@@ -166,6 +166,7 @@ uses
   Agenda.Slots in '..\src\Agenda.Slots.pas',
   Agenda.Availability in '..\src\Agenda.Availability.pas',
   Agenda.Day in '..\src\Agenda.Day.pas',
+  Agenda.Metrics in '..\src\Agenda.Metrics.pas',
   Agenda.Appointments in '..\src\Agenda.Appointments.pas',
   Agenda.SignedLinks in '..\src\Agenda.SignedLinks.pas',
   Agenda.PublicTenancy in '..\src\Agenda.PublicTenancy.pas',
@@ -936,12 +937,14 @@ begin
   try
     try
       LAppointment := LRepo.Book(THorseBody.Read<IAppointmentInsert>(AReq), TJwt.UnixNow);
+      CountBooking(BOOKING_CHANNEL_STAFF, nil);
       LBody := TJsonMapper.Shared.ToJson<IAppointment>(LAppointment);
       LHeaders := HeaderLines([HttpHeader('ETag', VersionETag(LAppointment.Version))]);
       LIdem.Complete(201, LBody, LHeaders);
     except
       on E: Exception do
       begin
+        CountBooking(BOOKING_CHANNEL_STAFF, E);
         LIdem.Fail(E);
         raise;
       end;
@@ -1063,10 +1066,12 @@ begin
     try
       LBody := TJsonMapper.Shared.ToJson<IPublicAppointment>(
         LAgenda.Book(THorseBody.Read<IPublicBookingInsert>(AReq), TJwt.UnixNow));
+      CountBooking(BOOKING_CHANNEL_PUBLIC, nil);
       LIdem.Complete(201, LBody, NoStoreHeaders);
     except
       on E: Exception do
       begin
+        CountBooking(BOOKING_CHANNEL_PUBLIC, E);
         LIdem.Fail(E);
         raise;
       end;
@@ -1775,6 +1780,7 @@ begin
     // TMcpEndpoint; after every route, which it reads once).
     TMcpEndpoint.Register('/mcp', 'http://127.0.0.1:' + IntToStr(GPort), APP_NAME, APP_VERSION);
 
+    AgendaMetricsInit;
     TMetricsEndpoint.Register;
     THealthEndpoint.AddCheck('database', GHooks.DatabaseReady);
     THealthEndpoint.Register('/health', GHooks.Error);

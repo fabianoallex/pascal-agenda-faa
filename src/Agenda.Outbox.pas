@@ -39,6 +39,12 @@ unit Agenda.Outbox;
   - The passes don't sleep or loop: the caller's thread calls the relay's
     and the local sink's RunOnce on its schedule (the worker). Times are
     Unix seconds, passed in, so tests choose them.
+  - Metrics (M5), in pascal-common-faa's PcMetrics, OpenTelemetry names:
+    outbox.events.delivered and outbox.events.failed (by
+    outbox.event.kind), the relay's; outbox.handler.runs (by outbox.handler,
+    outbox.event.kind and outbox.result: done, retried, dead), the local
+    sink's; outbox.events.pending and outbox.events.oldest_age (s), gauges
+    TOutbox.MeasurePending sets when the caller asks (a query per call).
 
   The SQL each name runs, its parameters and the columns it returns are in
   Agenda.Schema's comments. *)
@@ -57,6 +63,7 @@ const
   OUTBOX_SQL_FAILED = 'OUTBOX.FAILED';
   OUTBOX_SQL_PURGE_DELIVERIES = 'OUTBOX.PURGE_DELIVERIES';
   OUTBOX_SQL_PURGE = 'OUTBOX.PURGE';
+  OUTBOX_SQL_PENDING = 'OUTBOX.PENDING';
   OUTBOX_SQL_DELIVERY_INSERT = 'OUTBOX_DELIVERY.INSERT';
   OUTBOX_SQL_DELIVERY_CLAIM = 'OUTBOX_DELIVERY.CLAIM';
   OUTBOX_SQL_DELIVERY_CLAIMED = 'OUTBOX_DELIVERY.CLAIMED';
@@ -147,6 +154,10 @@ type
     /// Deletes events delivered before ABefore whose deliveries are all
     /// done or dead, with those deliveries. Returns the events deleted.
     class function Purge(const AFactory: IDBFactory; ABefore: Int64): Integer; static;
+    /// Sets the gauges outbox.events.pending (events not delivered yet) and
+    /// outbox.events.oldest_age (seconds since the oldest of them was
+    /// written, 0 when none) and returns the first.
+    class function MeasurePending(const AFactory: IDBFactory; ANow: Int64): Integer; static;
   end;
 
   TOutboxRelay = class
@@ -208,7 +219,32 @@ uses
   PascalDb.Paging,
   PascalCommon.Crypto,
   PascalCommon.Random,
+  PascalCommon.Metrics,
   PascalCommon.Tracing;
+
+const
+  RESULT_DONE = 'done';
+  RESULT_RETRIED = 'retried';
+  RESULT_DEAD = 'dead';
+
+function DeliveredCounter: TPcCounter;
+begin
+  Result := PcMetrics.Counter('outbox.events.delivered', '{event}',
+    'Outbox events handed to the sink and marked delivered', ['outbox.event.kind']);
+end;
+
+function FailedCounter: TPcCounter;
+begin
+  Result := PcMetrics.Counter('outbox.events.failed', '{event}',
+    'Outbox events the sink refused (each is tried again later)', ['outbox.event.kind']);
+end;
+
+function HandlerRuns: TPcCounter;
+begin
+  Result := PcMetrics.Counter('outbox.handler.runs', '{run}',
+    'Local sink: handler runs by result (done, retried, dead)',
+    ['outbox.handler', 'outbox.event.kind', 'outbox.result']);
+end;
 
 function OutboxNewOwner(const APrefix: string): string;
 begin
@@ -299,6 +335,31 @@ begin
     LTx.Rollback;
     raise;
   end;
+end;
+
+class function TOutbox.MeasurePending(const AFactory: IDBFactory; ANow: Int64): Integer;
+var
+  LQuery: IQuery;
+  LTx: IScopeTransaction;
+  LResult: IQueryResult;
+  LAge: Int64;
+begin
+  LTx := AFactory.GetPool.AcquireQuery(LQuery);
+  LQuery.Sql := AFactory.SqlLoader[OUTBOX_SQL_PENDING].SQL;
+  LResult := LQuery.Open;
+  // COUNT is a bigint on PostgreSQL.
+  Result := Integer(LResult.Int64s['PENDING']);
+  LAge := 0;
+  // MIN is NULL only when no row counted.
+  if Result > 0 then
+    LAge := ANow - LResult.Int64s['OLDEST'];
+  if LAge < 0 then
+    LAge := 0;
+  PcMetrics.Gauge('outbox.events.pending', '{event}',
+    'Outbox events not delivered yet', []).SetValue(Result);
+  PcMetrics.Gauge('outbox.events.oldest_age', 's',
+    'Seconds since the oldest event not delivered yet was written (0 when none)', [])
+    .SetValue(LAge);
 end;
 
 { TOutboxRelay }
@@ -425,8 +486,11 @@ begin
     end;
     LQuery := nil;
     LTx := nil;
+    if Result then
+      DeliveredCounter.Labels([AEvent.Kind]).Inc;
     if LError <> '' then
     begin
+      FailedCounter.Labels([AEvent.Kind]).Inc;
       LSpan.SetStatus(ssError, LError);
       Failed(AEvent, LError, ANow);
       if Assigned(FOnError) then
@@ -580,6 +644,12 @@ begin
     LTx.Rollback;
     raise;
   end;
+  if AStatus = OUTBOX_DELIVERY_DONE then
+    HandlerRuns.Labels([AHandler, AEvent.Kind, RESULT_DONE]).Inc
+  else if AStatus = OUTBOX_DELIVERY_DEAD then
+    HandlerRuns.Labels([AHandler, AEvent.Kind, RESULT_DEAD]).Inc
+  else
+    HandlerRuns.Labels([AHandler, AEvent.Kind, RESULT_RETRIED]).Inc;
 end;
 
 function TOutboxLocalSink.RunOnce(ANow: Int64): Integer;

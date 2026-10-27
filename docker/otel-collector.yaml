@@ -1,7 +1,10 @@
 # The OpenTelemetry Collector of docker-compose.yml: OTLP over HTTP in (the
-# api's and the worker's PascalApi.Otlp exporter), the spans out as JSON lines
+# api's and the worker's PascalApi.Otlp exporters). Spans: out as JSON lines
 # in /data/traces.json (tools/http_scenarios_mail.sh reads them) and a short
-# line each in the collector's log.
+# line each in the collector's log. Metrics (M5): the worker pushes its
+# registry (TOtlpMetricsExporter, the worker has no HTTP); the prometheus
+# exporter serves them on :8889, which docker/prometheus.yml scrapes. It
+# derives the job label from service.name (agenda-worker).
 receivers:
   otlp:
     protocols:
@@ -13,9 +16,14 @@ exporters:
     path: /data/traces.json
   debug:
     verbosity: basic
+  prometheus:
+    endpoint: 0.0.0.0:8889
 
 service:
   pipelines:
     traces:
       receivers: [otlp]
       exporters: [file, debug]
+    metrics:
+      receivers: [otlp]
+      exporters: [prometheus]

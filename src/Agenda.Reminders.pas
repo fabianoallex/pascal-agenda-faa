@@ -61,7 +61,8 @@ uses
   PascalDb.Paging,
   PascalCommon.Tracing,
   Agenda.Outbox,
-  Agenda.Events;
+  Agenda.Events,
+  Agenda.Metrics;
 
 const
   STATUS_BOOKED = 'booked';
@@ -169,6 +170,7 @@ begin
       if Claim(LDue[I].TenantId, LDue[I].Id, LDue[I].Version, ANow) then
         Inc(LQueued);
     Inc(Result, LQueued);
+    CountRemindersQueued(LQueued);
     // A short batch was the last; a full one where nothing was claimed
     // (changed meanwhile, or another pass took them) would read the same
     // rows again.

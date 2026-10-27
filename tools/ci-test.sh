@@ -26,5 +26,5 @@ echo "== HTTP scenarios (FPC 3.2.2, Linux, SQLite)"
 sh tools/test_http_docker.sh
 echo "== HTTP scenarios (FPC 3.2.2, Linux, PostgreSQL 17)"
 DB_ENGINE=postgresql sh tools/test_http_docker.sh
-echo "== docker-compose.yml end to end (email in Mailpit, one trace)"
+echo "== docker-compose.yml end to end (email in Mailpit, one trace, the dashboards)"
 sh tools/test_compose.sh

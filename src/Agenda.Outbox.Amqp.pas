@@ -37,6 +37,9 @@ unit Agenda.Outbox.Amqp;
   - The consumer's callbacks run in parallel on the process's pool
     (pascal-amqp-faa); the handler must allow that. InFlight counts the
     callbacks running, for a caller that waits for quiet.
+  - Metrics (M5), in pascal-common-faa's PcMetrics: outbox.consumer.messages
+    by outbox.consumer, outbox.event.kind and outbox.result (done, duplicate,
+    ignored, retried, parked), counted after the ack, nack or park.
 
   A library candidate, the outbox's broker sink (docs/design.md): its SQL is
   Agenda.Schema's PROCESSED.* statements, named by the constants below. *)
@@ -148,11 +151,26 @@ implementation
 uses
   Rtti,
   PascalCommon.Threading,
+  PascalCommon.Metrics,
   PascalApi.Jwt,
   AMQP.Wire,
   AMQP.Basic.Methods,
   AMQP.Exchange.Methods,
   AMQP.Queue.Methods;
+
+// outbox.consumer.messages (M5): one per message by result (done,
+// duplicate: already handled; ignored: a kind the handler doesn't take;
+// retried; parked). The kind label is "other" for a kind the handler
+// doesn't take, so a stranger publishing to the exchange can't grow the
+// series.
+procedure CountMessage(const AConsumer, AKind, AResult: string);
+begin
+  PcMetrics.Counter('outbox.consumer.messages', '{message}',
+    'Outbox events consumed from the broker, by consumer, kind and result (done, ' +
+    'duplicate, ignored, retried, parked)',
+    ['outbox.consumer', 'outbox.event.kind', 'outbox.result']).Labels([AConsumer, AKind,
+    AResult]).Inc;
+end;
 
 { TOutboxAmqpQueue }
 
@@ -438,7 +456,7 @@ procedure TOutboxAmqpConsumer.OnDelivery(AChannel: TAMQPChannel;
 var
   LEvent: TOutboxEvent;
   LProps: TAMQPBasicProperties;
-  LError: string;
+  LError, LKind, LResult: string;
 begin
   PcAtomicInc(FInFlight);
   try
@@ -447,16 +465,24 @@ begin
       Exit;
     LEvent := OutboxAmqpEvent(ADelivery, FQueue.Name);
     LError := '';
+    LKind := 'other';
+    LResult := 'ignored';
     try
       if LEvent.Id = '' then
         raise EOutboxAmqpError.CreateFmt('Not an outbox event (message id "%s").',
           [ADelivery.Properties.MessageId]);
       // Another kind on the same binding, or one already handled (the
       // broker's redelivery): acked, nothing run.
-      if FHandler.Accepts(LEvent.Kind) and not Processed(LEvent) then
+      if FHandler.Accepts(LEvent.Kind) then
       begin
-        FHandler.Handle(LEvent);
-        MarkProcessed(LEvent);
+        LKind := LEvent.Kind;
+        LResult := 'duplicate';
+        if not Processed(LEvent) then
+        begin
+          FHandler.Handle(LEvent);
+          MarkProcessed(LEvent);
+          LResult := 'done';
+        end;
       end;
     except
       on E: Exception do
@@ -465,14 +491,19 @@ begin
     if LError = '' then
     begin
       AChannel.Ack(ADelivery.DeliveryTag);
+      CountMessage(FConsumerName, LKind, LResult);
       Exit;
     end;
     Report(LEvent, LError);
     if (LEvent.Id <> '') and (LEvent.Attempts + 1 < FQueue.MaxAttempts) then
+    begin
       // Through the work queue's dead-letter to the retry queue.
-      AChannel.Nack(ADelivery.DeliveryTag, False)
+      AChannel.Nack(ADelivery.DeliveryTag, False);
+      CountMessage(FConsumerName, LKind, 'retried');
+    end
     else
     begin
+      CountMessage(FConsumerName, LKind, 'parked');
       // Out of tries (or not an event at all): parked in the dead queue, as
       // it came (the headers are the delivery's, alive during the callback).
       LProps := ADelivery.Properties;

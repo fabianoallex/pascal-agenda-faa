@@ -39,8 +39,11 @@ Settings: environment or `.env` next to the executable (`.env.example`).
 ## The whole stack (Docker)
 
 `docker compose up -d --build --wait` starts PostgreSQL, Redis, RabbitMQ, Mailpit, an
-OpenTelemetry Collector, the api (http://localhost:9400) and the worker, built with FPC on
-Linux from `docker/Dockerfile` (on the CI image: `sh tools/ci-test.sh` builds `agenda-fpc322`).
-The emails show in Mailpit (http://localhost:8025). Create a tenant and its owner with the
-api's commands in the container (the header of `docker-compose.yml`). `sh tools/test_compose.sh`
-checks it end to end (the email, one trace from the request to the email, a clean stop).
+OpenTelemetry Collector, Prometheus, Grafana, the api (http://localhost:9400) and the worker,
+built with FPC on Linux from `docker/Dockerfile` (on the CI image: `sh tools/ci-test.sh` builds
+`agenda-fpc322`). The emails show in Mailpit (http://localhost:8025), the dashboards of the
+api, the worker and the broker in Grafana (http://localhost:3000, folder Agenda; the JSON in
+`docker/grafana/dashboards`). Create a tenant and its owner with the api's commands in the
+container (the header of `docker-compose.yml`). `sh tools/test_compose.sh` checks it end to
+end (the email, one trace from the request to the email, the dashboards' queries, a clean
+stop).

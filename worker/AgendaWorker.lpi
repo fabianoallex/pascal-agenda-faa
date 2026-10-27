@@ -111,6 +111,10 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
+        <Filename Value="..\src\Agenda.Metrics.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
         <Filename Value="..\src\Agenda.StopSignal.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>

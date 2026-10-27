@@ -61,12 +61,42 @@ uses
   PascalCommon.Crypto,
   PascalCommon.Random,
   PascalCommon.Threading,
+  PascalCommon.Metrics,
   AMQP.Queue.Methods;
 
 const
   TENANT = 'demo';
   EXCHANGE = 'agenda.test';
   WAIT_MS = 10000;
+
+// A metric's value now in PcMetrics (M5): a counter's or a gauge's series
+// with these label values, 0 when the series doesn't exist yet. The
+// registry is the process's, so the tests compare before and after.
+function MetricValue(const AName: string; const ALabels: array of string): Double;
+var
+  LMetrics: TPcMetricList;
+  LPoints: TPcMetricPoints;
+  I, J, K: Integer;
+  LSame: Boolean;
+begin
+  Result := 0;
+  LMetrics := PcMetrics.Metrics;
+  for I := 0 to High(LMetrics) do
+    if LMetrics[I].Name = AName then
+    begin
+      LPoints := LMetrics[I].Snapshot;
+      for J := 0 to High(LPoints) do
+      begin
+        LSame := Length(LPoints[J].LabelValues) = Length(ALabels);
+        if LSame then
+          for K := 0 to High(ALabels) do
+            if LPoints[J].LabelValues[K] <> ALabels[K] then
+              LSame := False;
+        if LSame then
+          Exit(LPoints[J].Value);
+      end;
+    end;
+end;
 
 type
   /// Accepts one kind; fails FailsLeft times (-1: always). Its counters are
@@ -264,7 +294,9 @@ var
   LKeep: IOutboxHandler;
   LConsume: TAMQPChannel;
   LConsumer: TOutboxAmqpConsumer;
+  LDone: Double;
 begin
+  LDone := MetricValue('outbox.consumer.messages', ['email', 'appointment.booked', 'done']);
   LSink := TOutboxAmqpSink.Create(FChannel, EXCHANGE);
   LHandler := TTestHandler.Create('appointment.booked');
   LKeep := LHandler;
@@ -284,6 +316,8 @@ begin
   TAssert.AssertEquals('ran once each', 2, PcAtomicGet(LHandler.Tries));
   TAssert.AssertEquals('recorded', 2, Count('PROCESSED_EVENTS WHERE CONSUMER = ''email'' ' +
     'AND TENANT_ID = ''demo'''));
+  TAssert.AssertEquals('counted done', LDone + 2,
+    MetricValue('outbox.consumer.messages', ['email', 'appointment.booked', 'done']), 0);
 end;
 
 procedure TOutboxAmqpTests.Consumer_Redelivered_NotRunAgain;
@@ -293,6 +327,7 @@ var
   LKeep: IOutboxHandler;
   LConsume: TAMQPChannel;
   LConsumer: TOutboxAmqpConsumer;
+  LDuplicate: Double;
 begin
   LSink := TOutboxAmqpSink.Create(FChannel, EXCHANGE);
   LHandler := TTestHandler.Create('appointment.booked');
@@ -303,6 +338,7 @@ begin
     LConsumer.Start;
     LSink.Deliver(nil, Event('e1', 'appointment.booked'), 1700000001);
     TAssert.AssertTrue(WaitFor(LHandler.Handled, 1));
+    LDuplicate := MetricValue('outbox.consumer.messages', ['email', 'appointment.booked', 'duplicate']);
     // The same event again (the relay's lease ran out after the publish, a
     // broker's redelivery): acked, not run.
     LSink.Deliver(nil, Event('e1', 'appointment.booked'), 1700000002);
@@ -314,6 +350,8 @@ begin
   end;
   TAssert.AssertEquals('handled once', 1, PcAtomicGet(LHandler.Tries));
   TAssert.AssertEquals(1, Count('PROCESSED_EVENTS'));
+  TAssert.AssertEquals('counted duplicate', LDuplicate + 1,
+    MetricValue('outbox.consumer.messages', ['email', 'appointment.booked', 'duplicate']), 0);
 end;
 
 procedure TOutboxAmqpTests.Consumer_FailsOnce_RetriedFromTheRetryQueue;
@@ -323,8 +361,10 @@ var
   LKeep: IOutboxHandler;
   LConsume: TAMQPChannel;
   LConsumer: TOutboxAmqpConsumer;
+  LRetried: Double;
 begin
   LSink := TOutboxAmqpSink.Create(FChannel, EXCHANGE);
+  LRetried := MetricValue('outbox.consumer.messages', ['email', 'appointment.booked', 'retried']);
   LHandler := TTestHandler.Create('appointment.booked', 1);
   LKeep := LHandler;
   LConsume := FConnection.CreateChannel;
@@ -344,6 +384,8 @@ begin
   TAssert.AssertEquals('one error reported', 1, PcAtomicGet(FErrors));
   TAssert.AssertEquals('nothing parked', 0, Integer(Ready(FChannel, FQueue.DeadName)));
   TAssert.AssertEquals(1, Count('PROCESSED_EVENTS'));
+  TAssert.AssertEquals('counted retried', LRetried + 1,
+    MetricValue('outbox.consumer.messages', ['email', 'appointment.booked', 'retried']), 0);
 end;
 
 procedure TOutboxAmqpTests.Consumer_FailsAlways_ParkedAfterTheTries;
@@ -353,8 +395,10 @@ var
   LKeep: IOutboxHandler;
   LConsume: TAMQPChannel;
   LConsumer: TOutboxAmqpConsumer;
+  LParked: Double;
 begin
   LSink := TOutboxAmqpSink.Create(FChannel, EXCHANGE);
+  LParked := MetricValue('outbox.consumer.messages', ['email', 'appointment.booked', 'parked']);
   LHandler := TTestHandler.Create('appointment.booked', -1);
   LKeep := LHandler;
   LConsume := FConnection.CreateChannel;
@@ -374,6 +418,8 @@ begin
   TAssert.AssertEquals('the work queue empty', 0, Integer(Ready(FChannel, FQueue.Name)));
   TAssert.AssertEquals('the retry queue empty', 0, Integer(Ready(FChannel, FQueue.RetryName)));
   TAssert.AssertEquals('not recorded', 0, Count('PROCESSED_EVENTS'));
+  TAssert.AssertEquals('counted parked', LParked + 1,
+    MetricValue('outbox.consumer.messages', ['email', 'appointment.booked', 'parked']), 0);
 end;
 
 procedure TOutboxAmqpTests.Consumer_OtherKind_AckedNotRun;
@@ -383,6 +429,7 @@ var
   LKeep: IOutboxHandler;
   LConsume: TAMQPChannel;
   LConsumer: TOutboxAmqpConsumer;
+  LIgnored: Double;
 begin
   LSink := TOutboxAmqpSink.Create(FChannel, EXCHANGE);
   LHandler := TTestHandler.Create('appointment.booked');
@@ -391,6 +438,7 @@ begin
   LConsumer := TOutboxAmqpConsumer.Create(FDb.Factory, LConsume, FQueue, 'email', LKeep);
   try
     LConsumer.Start;
+    LIgnored := MetricValue('outbox.consumer.messages', ['email', 'other', 'ignored']);
     // Under the binding key, not a kind the handler takes.
     LSink.Deliver(nil, Event('e1', 'appointment.confirmed'), 1700000001);
     LSink.Deliver(nil, Event('e2', 'appointment.booked'), 1700000001);
@@ -402,6 +450,8 @@ begin
     LConsumer.Free;
   end;
   TAssert.AssertEquals('the other kind not run', 1, PcAtomicGet(LHandler.Tries));
+  TAssert.AssertEquals('counted ignored, as "other"', LIgnored + 1,
+    MetricValue('outbox.consumer.messages', ['email', 'other', 'ignored']), 0);
 end;
 
 procedure TOutboxAmqpTests.PurgeProcessed_ByAge;

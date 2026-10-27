@@ -332,6 +332,11 @@ status_is 200 "metrics"
 body_has 'http_server_request_duration_seconds_bucket' "metrics: request duration"
 body_has 'http_route="/auth/login"' "metrics: route template"
 body_has 'pool_name="agenda"' "metrics: the database pool, by name"
+# The application's own (Agenda.Metrics, M5): the bookings the scenarios ran.
+body_has 'agenda_bookings_total{agenda_channel="staff",agenda_booking_result="booked"}'   "metrics: staff bookings booked"
+body_has 'agenda_bookings_total{agenda_channel="staff",agenda_booking_result="slot_unavailable"}'   "metrics: the conflicts"
+body_has 'agenda_bookings_total{agenda_channel="public",agenda_booking_result="booked"}'   "metrics: public bookings"
+body_has '# HELP agenda_slot_lock_fallbacks_total' "metrics: the lock's fallbacks, described"
 [ -n "$METRICS_OUT" ] && cp "$T/body" "$METRICS_OUT"
 
 # --- the rate limit on /auth/ (last: it fills this address's window)
