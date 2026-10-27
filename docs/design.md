@@ -1433,3 +1433,9 @@ JWT keys rotate on a request).
   stop. Delphi (2026-10-27): 115 of 115, 0 leaks, on Win32 and Win64; HTTP on SQLite
   608 + 68 on both (the worker's 6 fewer checks are heaptrc's reports, FPC only), and on
   Win64 with PostgreSQL, Redis and RabbitMQ 619 + 68. M4 holds on both compilers.
+- pascal-amqp-faa **0.4.2** (2026-10-27) fixed the finding above: `Close` cancels the
+  channel's consumers and waits for the callbacks before `Channel.Close`, and an `Ack`/`Nack` on
+  a channel closed or closing no longer goes out. Adopted the same day; `TOutboxAmqpConsumer.Stop`
+  stays (no new work while the process stops, and safe to free before the channel), its comment
+  updated. FPC: 115 unit tests, 0 leaks, Windows and Linux; HTTP on PostgreSQL with RabbitMQ
+  619 + 74 (Windows); compose 22 checks and a clean stop.

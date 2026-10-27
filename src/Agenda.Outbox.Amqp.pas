@@ -119,10 +119,10 @@ type
     /// Cancels the consumer and waits (at most AWaitMs) for the callbacks
     /// running to finish; one that starts after this neither handles nor
     /// acks its message, which the channel's close gives back to the queue.
-    /// Call it before closing the channel: pascal-amqp-faa's Close sends
-    /// Channel.Close first and waits for the callbacks after, so an ack
-    /// sent then reaches a closed channel, and the broker closes the whole
-    /// connection (504).
+    /// Call it before closing the channel, so no new work starts while the
+    /// process shuts down, and before freeing the consumer. (Before
+    /// pascal-amqp-faa 0.4.2 it also kept an ack off a closed channel, which
+    /// closed the whole connection: 504.)
     procedure Stop(AWaitMs: Integer = 30000);
     /// Callbacks running now.
     function InFlight: Integer;
