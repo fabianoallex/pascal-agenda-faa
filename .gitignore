@@ -31,3 +31,4 @@ tests/Unit/fpc/sqlite3.dll
 
 # lazbuild may leave one when building a package alone
 packagefiles.xml
+api/mcp_client.log

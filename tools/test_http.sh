@@ -32,6 +32,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LAZBUILD="${LAZBUILD:-lazbuild}"
 command -v "$LAZBUILD" >/dev/null 2>&1 || LAZBUILD=/c/lazarus4.0/lazbuild.exe
 PORT="${PORT:-9400}"
+# A Python with the official MCP SDK (pip install mcp==2.0.0), for
+# tools/mcp_client_check.py; without it that check is skipped, and said so.
+MCP_PYTHON="${MCP_PYTHON:-python}"
 cd "$ROOT"
 
 # The scenarios' settings: development master key, a lower PBKDF2 cost (the
@@ -130,8 +133,25 @@ start
 TOKEN="$(curl -s -H 'Content-Type: application/json' \
   --data-binary '{"tenant":"other","email":"owner@other.test","password":"correct horse battery staple"}' \
   "http://127.0.0.1:$PORT/auth/login" | sed -n 's/.*"accessToken":"\([^"]*\)".*/\1/p')"
+# The MCP client's tokens (tools/mcp_client_check.py runs after the scenarios).
+demo_token() {
+  curl -s -H 'Content-Type: application/json' \
+    --data-binary "{\"tenant\":\"demo\",\"email\":\"$1\",\"password\":\"correct horse battery staple\"}" \
+    "http://127.0.0.1:$PORT/auth/login" | sed -n 's/.*"accessToken":"\([^"]*\)".*/\1/p'
+}
+MCP_OWNER="$(demo_token owner@demo.test)"
+MCP_STAFF="$(demo_token staff@demo.test)"
 RC=0
 SERVER_LOG="$LOG" sh tools/http_scenarios.sh "$PORT" || RC=$?
+if [ $RC -eq 0 ]; then
+  if "$MCP_PYTHON" -c "import mcp.client, httpx2" >/dev/null 2>&1; then
+    "$MCP_PYTHON" tools/mcp_client_check.py "http://127.0.0.1:$PORT" "$MCP_OWNER" "$MCP_STAFF"       > "$ROOT/api/mcp_client.log" 2>&1 || RC=$?
+    tail -1 "$ROOT/api/mcp_client.log"
+    [ $RC -eq 0 ] || grep -v '^ok ' "$ROOT/api/mcp_client.log"
+  else
+    echo "skipped: the official MCP client (MCP_PYTHON=$MCP_PYTHON has no mcp 2.0.0)"
+  fi
+fi
 stop
 [ $RC -eq 0 ] || { echo "--- $LOG"; tail -20 "$LOG"; exit $RC; }
 [ -n "$TOKEN" ] || { echo "FAIL: no token before the restart"; exit 1; }

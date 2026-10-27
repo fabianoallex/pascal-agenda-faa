@@ -1523,3 +1523,41 @@ Two gaps found while designing:
   Delphi and fphttpserver on FPC, and Linux runs inside Docker Desktop's VM on this machine.
 - **An MCP client needs a valid access token** and renews it outside MCP; a refresh token has
   no place in a model's context (pascal-api-infra-faa's rule).
+
+### M5: the day and the MCP tools (2026-10-27)
+
+- pascal-api-infra-faa **0.25.0** and **0.26.0**, made for this milestone (decisions 1 and 4)
+  and adopted the same day; same dependencies as 0.24.0. 0.25.0: `McpHeader` makes a
+  documented header a tool argument (`If-Match` the tool's `ifMatch`, `Idempotency-Key` its
+  `idempotencyKey`), the reserved headers refused at `Register`, a value that isn't printable
+  ASCII an `isError` without calling the api. 0.26.0: `TOtlpMetricsExporter`, for the worker
+  (the next step).
+- `GET /agenda/day?date=&professional=` (`src/Agenda.Day`, statement `APPOINTMENT.DAY`): the
+  appointments that start on the tenant's local day, any status, by start, each with the
+  professional's, the service's and the customer's names, UTC and the tenant's clock
+  (`localStart`, `localEnd`), and its version. An unknown professional is a 404; the date's
+  rules are the availability's (`invalid_date`, `date_out_of_range`). No paging: a day is
+  bounded by the working hours.
+- `POST /mcp` (`TMcpEndpoint`, after every route; the api's own base URL on 127.0.0.1): 18
+  tools, each named by `OperationId` (`get_day`, `get_availability`, `book_appointment`,
+  `update_appointment`, `cancel_appointment`, `create_customer`, the reads of the catalog,
+  customers, appointments, working hours and time off, `get_me`); 25 routes `NoMcp` (the
+  auth routes, users, every delete, the owner's changes, the public routes). The If-Match
+  parameter's text says what a model sends: the `version` field in double quotes. The api is
+  0.0.4.
+- `tools/http_scenarios_day.sh` and `tools/http_scenarios_mcp.sh` (57 checks), sourced by
+  `tools/http_scenarios.sh` before the public routes; `tools/mcp_result.py` reads the
+  JSON-RPC answers. The MCP checks: the exact tool list, `ifMatch` required, `idempotencyKey`
+  optional; the day through `get_day`; a booking repeated with one key (one booking); a key
+  with a line break refused; cancel without `ifMatch`, with an old version
+  (`precondition_failed`), confirm and cancel with the version read; another tenant's token
+  gets `isError`, the owner's reaches the api; no token is a 401.
+- `tools/mcp_client_check.py`: the official Python SDK (`mcp` 2.0.0) connects, negotiates
+  2026-07-28, lists the tools and runs a model's flow (create a customer, the free slots, book
+  twice with one key, the day, confirm, cancel from an old and the current version). The
+  owner's and the staff's tokens are taken before the scenarios fill the `/auth/` window.
+  `tools/test_http.sh` runs it when `MCP_PYTHON` has the SDK (skipped, and said so,
+  otherwise); `tools/test_http_docker.sh` always (the CI image has `mcp==2.0.0`).
+- Result: FPC Windows 115 unit tests, 0 leaks; HTTP on SQLite 665 checks (from 608) + the
+  worker's 74, on PostgreSQL with Redis and RabbitMQ 676 (from 619) + 74, the official client
+  13 of 13 on both. FPC Linux (CI): 115, 0 leaks; 665 + 79 and 676 + 79, the official client on both; compose 22 checks. The compose run found a race in its own check, not in the code: the trace was read as soon as the worker's send span was there, and the api's batch (exported on its own schedule) came later; `tools/http_scenarios_mail.sh` now waits for both. Delphi: not built yet (the IDE).

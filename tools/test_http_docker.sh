@@ -117,9 +117,23 @@ MSYS_NO_PATHCONV=1 docker run --rm $NETOPT -v "$MOUNT:/src:ro" \
   TOKEN="$(curl -s -H "Content-Type: application/json" \
     --data-binary "{\"tenant\":\"other\",\"email\":\"owner@other.test\",\"password\":\"correct horse battery staple\"}" \
     http://127.0.0.1:9400/auth/login | sed -n "s/.*\"accessToken\":\"\([^\"]*\)\".*/\1/p")"
+  # The official MCP client'"'"'s tokens (tools/mcp_client_check.py, after the scenarios).
+  demo_token() {
+    curl -s -H "Content-Type: application/json" \
+      --data-binary "{\"tenant\":\"demo\",\"email\":\"$1\",\"password\":\"correct horse battery staple\"}" \
+      http://127.0.0.1:9400/auth/login | sed -n "s/.*\"accessToken\":\"\([^\"]*\)\".*/\1/p"
+  }
+  MCP_OWNER="$(demo_token owner@demo.test)"
+  MCP_STAFF="$(demo_token staff@demo.test)"
   RC=0
   OPENAPI_OUT=/t/openapi.json METRICS_OUT=/t/metrics.txt SERVER_LOG=/t/server.log \
     sh /t/tools/http_scenarios.sh 9400 || RC=$?
+  if [ $RC -eq 0 ]; then
+    python3 /t/tools/mcp_client_check.py http://127.0.0.1:9400 "$MCP_OWNER" "$MCP_STAFF" \
+      > /t/mcp_client.log 2>&1 || RC=$?
+    tail -1 /t/mcp_client.log
+    [ $RC -eq 0 ] || grep -v "^ok " /t/mcp_client.log
+  fi
   stop
   [ $RC -eq 0 ] || { echo "--- server.log"; tail -20 /t/server.log; exit $RC; }
   [ -n "$TOKEN" ] || { echo "FAIL: no token before the restart"; exit 1; }

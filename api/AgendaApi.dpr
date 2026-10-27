@@ -79,6 +79,11 @@ program AgendaApi;
                          any user, with If-Match (428 without it, 412 for
                          another version): move, confirm, done, no_show;
                          cancel within the tenant's notice
+    GET  /agenda/day?date=&professional=
+                         any user: one local day, the names next to the ids
+    POST /mcp            the routes above as MCP tools (revision 2026-07-28),
+                         with the caller's token; not the auth routes, users,
+                         deletes, the owner's changes or the public routes
     GET  /health/live, /health/ready, /metrics, /swagger (/swagger/doc.json)
 
   Public, no token (docs/design.md, M3): the tenant is the path's slug
@@ -137,6 +142,7 @@ uses
   PascalApi.Preconditions,
   PascalApi.Idempotency,
   PascalApi.Horse.Idempotency,
+  PascalApi.Horse.Mcp,
   Redis.Types,
   Redis.Client,
   Redis.Lock,
@@ -159,6 +165,7 @@ uses
   Agenda.TimeOff in '..\src\Agenda.TimeOff.pas',
   Agenda.Slots in '..\src\Agenda.Slots.pas',
   Agenda.Availability in '..\src\Agenda.Availability.pas',
+  Agenda.Day in '..\src\Agenda.Day.pas',
   Agenda.Appointments in '..\src\Agenda.Appointments.pas',
   Agenda.SignedLinks in '..\src\Agenda.SignedLinks.pas',
   Agenda.PublicTenancy in '..\src\Agenda.PublicTenancy.pas',
@@ -168,12 +175,15 @@ uses
 
 const
   APP_NAME = 'agenda-api';
-  APP_VERSION = '0.0.3';
+  APP_VERSION = '0.0.4';
   DEFAULT_PORT = 9400;
   // The 32 bytes "development-master-key-change-me": DEV_MODE only.
   DEV_MASTER_KEY = 'dev:ZGV2ZWxvcG1lbnQtbWFzdGVyLWtleS1jaGFuZ2UtbWU=';
   // /public: the end customer's routes, with no token; the tenant is the
   // path's (PublicTenant, below).
+  /// The If-Match parameter's text: all the MCP tool's model reads of it.
+  IF_MATCH_TEXT = 'The version read, in double quotes: the appointment''s "version" ' +
+    'field, as in "3" (its ETag)';
   OPEN_PATHS: array[0..7] of string = ('/health', '/metrics', '/swagger', '/auth/login',
     '/auth/refresh', '/auth/logout', '/favicon.ico', '/public');
   // A public booking's Idempotency-Key: its stored answer carries the link,
@@ -836,6 +846,22 @@ end;
 
 { Availability: any user reads }
 
+procedure GetDay(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
+var
+  LFind: IDayFind;
+  LReader: TDayReader;
+  LDay: IDay;
+begin
+  LFind := THorseQueryParams.Read<IDayFind>(AReq);
+  LReader := TDayReader.Create(ScopeOf(AReq));
+  try
+    LDay := LReader.Find(LFind, TJwt.UnixNow);
+  finally
+    LReader.Free;
+  end;
+  TJsonSend.Send(ARes, TJsonMapper.Shared.ToJson<IDay>(LDay));
+end;
+
 procedure GetAvailability(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
 var
   LFind: IAvailabilityFind;
@@ -1346,6 +1372,7 @@ begin
       .Error(401, 'invalid_credentials: any part is wrong (the answer doesn''t say which)')
       .Error(403, 'tenant_suspended')
       .Error(429, 'Too many attempts from this address')
+      .NoMcp
       .Register(PostLogin);
     TRouteDoc.Post('/auth/refresh').Summary('New tokens for a refresh token, which is spent')
       .Tag('auth')
@@ -1354,27 +1381,32 @@ begin
       .Error(401, 'invalid_refresh_token: unknown, expired, revoked or already used ' +
         '(a reuse revokes every token of that login)')
       .Error(403, 'tenant_suspended')
+      .NoMcp
       .Register(PostRefresh);
     TRouteDoc.Post('/auth/logout').Summary('Revoke a refresh token and the ones before it')
       .Tag('auth')
       .Body<IRefreshRequest>
       .NoContent(204, 'Done (the same for any token)')
+      .NoMcp
       .Register(PostLogout);
     TRouteDoc.Get('/me').Summary('The caller').Tag('auth')
       .Response<IMeResponse>(200)
       .Error(401, 'No valid access token')
       .Error(404, 'The user no longer exists or is inactive')
+      .OperationId('get_me')
       .Register(GetMe);
 
     TRouteDoc.Get('/services').Summary('The tenant''s services, a page at a time').Tag('services')
       .QueryParams<IServiceFind>
       .ResponsePaged<IService>(200, 'A page of services')
       .Error(400, 'A parameter or an order field that is not allowed')
+      .OperationId('list_services')
       .Register(GetServices);
     TRouteDoc.Get('/services/:id').Summary('One service').Tag('services')
       .PathParam('id', 'The service''s id')
       .Response<IService>(200)
       .Error(404, 'The tenant has no service with this id')
+      .OperationId('get_service')
       .Register(GetService);
     TRouteDoc.Post('/services').Summary('Create a service (owner)').Tag('services')
       .Body<IServiceInsert>
@@ -1382,6 +1414,7 @@ begin
       .Error(400, 'Invalid data')
       .Error(403, 'owner_only')
       .Error(409, 'The tenant already has a service with this name')
+      .NoMcp
       .Register(PostService);
     TRouteDoc.Patch('/services/:id').Summary('Change a service (owner)').Tag('services')
       .PathParam('id', 'The service''s id')
@@ -1391,29 +1424,34 @@ begin
       .Error(403, 'owner_only')
       .Error(404, 'The tenant has no service with this id')
       .Error(409, 'The tenant already has a service with this name')
+      .NoMcp
       .Register(PatchService);
     TRouteDoc.Delete('/services/:id').Summary('Delete a service (owner)').Tag('services')
       .PathParam('id', 'The service''s id')
       .NoContent(204, 'Deleted')
       .Error(403, 'owner_only')
       .Error(404, 'The tenant has no service with this id')
+      .NoMcp
       .Register(DeleteService);
     TRouteDoc.Get('/professionals').Summary('The tenant''s professionals, a page at a time')
       .Tag('professionals')
       .QueryParams<IProfessionalFind>
       .ResponsePaged<IProfessional>(200, 'A page of professionals')
       .Error(400, 'A parameter or an order field that is not allowed')
+      .OperationId('list_professionals')
       .Register(GetProfessionals);
     TRouteDoc.Get('/professionals/:id').Summary('One professional').Tag('professionals')
       .PathParam('id', 'The professional''s id')
       .Response<IProfessional>(200)
       .Error(404, 'The tenant has no professional with this id')
+      .OperationId('get_professional')
       .Register(GetProfessional);
     TRouteDoc.Post('/professionals').Summary('Create a professional (owner)').Tag('professionals')
       .Body<IProfessionalInsert>
       .Response<IProfessional>(201, 'Created')
       .Error(400, 'Invalid data')
       .Error(403, 'owner_only')
+      .NoMcp
       .Register(PostProfessional);
     TRouteDoc.Patch('/professionals/:id').Summary('Change a professional (owner)')
       .Tag('professionals')
@@ -1423,6 +1461,7 @@ begin
       .Error(400, 'Invalid data')
       .Error(403, 'owner_only')
       .Error(404, 'The tenant has no professional with this id')
+      .NoMcp
       .Register(PatchProfessional);
     TRouteDoc.Delete('/professionals/:id').Summary('Delete a professional (owner)')
       .Tag('professionals')
@@ -1430,6 +1469,7 @@ begin
       .NoContent(204, 'Deleted')
       .Error(403, 'owner_only')
       .Error(404, 'The tenant has no professional with this id')
+      .NoMcp
       .Register(DeleteProfessional);
 
     TRouteDoc.Get('/professionals/:id/working-hours').Summary('A professional''s week')
@@ -1437,6 +1477,7 @@ begin
       .PathParam('id', 'The professional''s id')
       .Response<IWorkingWeek>(200)
       .Error(404, 'The tenant has no professional with this id')
+      .OperationId('get_working_hours')
       .Register(GetWorkingHours);
     TRouteDoc.Put('/professionals/:id/working-hours').Summary('Replace a professional''s week (owner)')
       .Tag('professionals')
@@ -1446,6 +1487,7 @@ begin
       .Error(400, 'invalid_week: a weekday, a time or an overlap')
       .Error(403, 'owner_only')
       .Error(404, 'The tenant has no professional with this id')
+      .NoMcp
       .Register(PutWorkingHours);
     TRouteDoc.Get('/professionals/:id/time-off').Summary('A professional''s time off, a page at a time')
       .Tag('professionals')
@@ -1454,6 +1496,7 @@ begin
       .ResponsePaged<ITimeOff>(200, 'A page of time off')
       .Error(400, 'invalid_instant, or an order field that is not allowed')
       .Error(404, 'The tenant has no professional with this id')
+      .OperationId('list_time_off')
       .Register(GetTimeOffList);
     TRouteDoc.Get('/professionals/:id/time-off/:offId').Summary('One entry of time off')
       .Tag('professionals')
@@ -1461,6 +1504,7 @@ begin
       .PathParam('offId', 'The entry''s id')
       .Response<ITimeOff>(200)
       .Error(404, 'The professional has no such entry')
+      .OperationId('get_time_off')
       .Register(GetTimeOff);
     TRouteDoc.Post('/professionals/:id/time-off').Summary('Add time off (owner)')
       .Tag('professionals')
@@ -1470,6 +1514,7 @@ begin
       .Error(400, 'invalid_instant, or not whole minutes, start after end, too long')
       .Error(403, 'owner_only')
       .Error(404, 'The tenant has no professional with this id')
+      .NoMcp
       .Register(PostTimeOff);
     TRouteDoc.Delete('/professionals/:id/time-off/:offId').Summary('Remove time off (owner)')
       .Tag('professionals')
@@ -1478,6 +1523,7 @@ begin
       .NoContent(204, 'Removed')
       .Error(403, 'owner_only')
       .Error(404, 'The professional has no such entry')
+      .NoMcp
       .Register(DeleteTimeOff);
     TRouteDoc.Get('/professionals/:id/availability')
       .Summary('Free slots of a professional for a service, on the tenant''s local days')
@@ -1488,6 +1534,7 @@ begin
       .Error(400, 'service or date missing, invalid_date, date_out_of_range, days out of range')
       .Error(404, 'The tenant has no such professional or service')
       .Error(409, 'professional_inactive, service_inactive')
+      .OperationId('get_availability')
       .Register(GetAvailability);
 
     TRouteDoc.Get('/appointments').Summary('The tenant''s appointments, a page at a time')
@@ -1495,12 +1542,14 @@ begin
       .QueryParams<IAppointmentFind>
       .ResponsePaged<IAppointment>(200, 'A page of appointments')
       .Error(400, 'invalid_instant, invalid_status, or an order field that is not allowed')
+      .OperationId('list_appointments')
       .Register(GetAppointments);
     TRouteDoc.Get('/appointments/:id').Summary('One appointment').Tag('appointments')
       .PathParam('id', 'The appointment''s id')
       .Response<IAppointment>(200)
       .ResponseHeader('ETag', 'The version read, for If-Match')
       .Error(404, 'The tenant has no appointment with this id')
+      .OperationId('get_appointment')
       .Register(GetAppointment);
     TRouteDoc.Post('/appointments').Summary('Book a free slot').Tag('appointments')
       .Descr('Idempotency-Key (optional, 1 to 255 visible ASCII characters, such as a ' +
@@ -1516,13 +1565,14 @@ begin
       .Error(409, 'slot_unavailable, professional_inactive, service_inactive, ' +
         'idempotency_key_in_flight')
       .Error(422, 'idempotency_key_reused: the key was used for another request')
+      .McpHeader('Idempotency-Key').OperationId('book_appointment')
       .Register(PostAppointment);
     TRouteDoc.Patch('/appointments/:id').Summary('Move an appointment or set its status')
       .Descr('Send If-Match with the ETag of the version you read (the version in quotes, ' +
         'as in "3"). The answer carries the new ETag.')
       .Tag('appointments')
       .PathParam('id', 'The appointment''s id')
-      .HeaderParam('If-Match', 'The ETag of the version read, as in "3"', True)
+      .HeaderParam('If-Match', IF_MATCH_TEXT, True)
       .Body<IAppointmentPatch>
       .Response<IAppointment>(200, 'Changed')
       .ResponseHeader('ETag', 'The new version')
@@ -1531,13 +1581,14 @@ begin
       .Error(409, 'appointment_closed, not_started, slot_unavailable, professional_inactive')
       .Error(412, 'precondition_failed: it changed since that version')
       .Error(428, 'precondition_required: If-Match missing, or "*"')
+      .McpHeader('If-Match').OperationId('update_appointment')
       .Register(PatchAppointment);
     TRouteDoc.Post('/appointments/:id/cancel').Summary('Cancel an appointment')
       .Descr('Send If-Match with the ETag of the version you read. Possible until the ' +
         'tenant''s notice (24 hours by default) before the start.')
       .Tag('appointments')
       .PathParam('id', 'The appointment''s id')
-      .HeaderParam('If-Match', 'The ETag of the version read, as in "3"', True)
+      .HeaderParam('If-Match', IF_MATCH_TEXT, True)
       .Response<IAppointment>(200, 'Cancelled')
       .ResponseHeader('ETag', 'The new version')
       .Error(400, 'invalid_if_match')
@@ -1545,23 +1596,39 @@ begin
       .Error(409, 'appointment_closed, cancel_notice_passed')
       .Error(412, 'precondition_failed: it changed since that version')
       .Error(428, 'precondition_required: If-Match missing, or "*"')
+      .McpHeader('If-Match').OperationId('cancel_appointment')
       .Register(CancelAppointment);
+
+    TRouteDoc.Get('/agenda/day').Summary('One day of the agenda, on the tenant''s clock')
+      .Descr('The appointments that start on the tenant''s local day, any status, by ' +
+        'start, with the professional''s, the service''s and the customer''s names. ' +
+        'Each one''s version is what If-Match takes to move or cancel it.')
+      .Tag('appointments')
+      .QueryParams<IDayFind>
+      .Response<IDay>(200)
+      .Error(400, 'date missing, invalid_date, date_out_of_range')
+      .Error(404, 'The tenant has no professional with this id')
+      .OperationId('get_day')
+      .Register(GetDay);
 
     TRouteDoc.Get('/customers').Summary('The tenant''s customers, a page at a time')
       .Tag('customers')
       .QueryParams<ICustomerFind>
       .ResponsePaged<ICustomer>(200, 'A page of customers')
       .Error(400, 'A parameter or an order field that is not allowed')
+      .OperationId('list_customers')
       .Register(GetCustomers);
     TRouteDoc.Get('/customers/:id').Summary('One customer').Tag('customers')
       .PathParam('id', 'The customer''s id')
       .Response<ICustomer>(200)
       .Error(404, 'The tenant has no customer with this id')
+      .OperationId('get_customer')
       .Register(GetCustomer);
     TRouteDoc.Post('/customers').Summary('Create a customer').Tag('customers')
       .Body<ICustomerInsert>
       .Response<ICustomer>(201, 'Created')
       .Error(400, 'Invalid data')
+      .OperationId('create_customer')
       .Register(PostCustomer);
     TRouteDoc.Patch('/customers/:id').Summary('Change a customer').Tag('customers')
       .PathParam('id', 'The customer''s id')
@@ -1569,24 +1636,28 @@ begin
       .Response<ICustomer>(200, 'The customer after the change')
       .Error(400, 'Invalid data')
       .Error(404, 'The tenant has no customer with this id')
+      .NoMcp
       .Register(PatchCustomer);
     TRouteDoc.Delete('/customers/:id').Summary('Delete a customer (owner)').Tag('customers')
       .PathParam('id', 'The customer''s id')
       .NoContent(204, 'Deleted')
       .Error(403, 'owner_only')
       .Error(404, 'The tenant has no customer with this id')
+      .NoMcp
       .Register(DeleteCustomer);
     TRouteDoc.Get('/users').Summary('The tenant''s users, a page at a time (owner)').Tag('users')
       .QueryParams<IUserFind>
       .ResponsePaged<IUser>(200, 'A page of users')
       .Error(400, 'A parameter or an order field that is not allowed')
       .Error(403, 'owner_only')
+      .NoMcp
       .Register(GetUsers);
     TRouteDoc.Get('/users/:id').Summary('One user (owner)').Tag('users')
       .PathParam('id', 'The user''s id')
       .Response<IUser>(200)
       .Error(403, 'owner_only')
       .Error(404, 'The tenant has no user with this id')
+      .NoMcp
       .Register(GetUser);
     TRouteDoc.Post('/users').Summary('Create a user (owner)').Tag('users')
       .Body<IUserInsert>
@@ -1594,6 +1665,7 @@ begin
       .Error(400, 'Invalid data; password_too_short; unknown_professional')
       .Error(403, 'owner_only')
       .Error(409, 'The email, or the professional, belongs to another user')
+      .NoMcp
       .Register(PostUser);
     TRouteDoc.Patch('/users/:id').Summary('Change a user (owner)').Tag('users')
       .PathParam('id', 'The user''s id')
@@ -1603,6 +1675,7 @@ begin
       .Error(403, 'owner_only')
       .Error(404, 'The tenant has no user with this id')
       .Error(409, 'own_account: your own role or active; or the email or professional is taken')
+      .NoMcp
       .Register(PatchUser);
     TRouteDoc.Delete('/users/:id').Summary('Delete a user (owner)').Tag('users')
       .PathParam('id', 'The user''s id')
@@ -1610,6 +1683,7 @@ begin
       .Error(403, 'owner_only')
       .Error(404, 'The tenant has no user with this id')
       .Error(409, 'own_account: you can''t delete yourself')
+      .NoMcp
       .Register(DeleteUser);
 
     TRouteDoc.Get('/public/:slug/services').Summary('A tenant''s active services (no account)')
@@ -1620,6 +1694,7 @@ begin
       .Error(400, 'A parameter or an order field that is not allowed')
       .Error(404, 'No such tenant')
       .Error(429, 'Too many requests from this address')
+      .NoMcp
       .Register(GetPublicServices);
     TRouteDoc.Get('/public/:slug/professionals')
       .Summary('A tenant''s active professionals (no account)').Tag('public')
@@ -1629,6 +1704,7 @@ begin
       .Error(400, 'A parameter or an order field that is not allowed')
       .Error(404, 'No such tenant')
       .Error(429, 'Too many requests from this address')
+      .NoMcp
       .Register(GetPublicProfessionals);
     TRouteDoc.Get('/public/:slug/professionals/:id/availability')
       .Summary('Free slots of a professional for a service (no account)').Tag('public')
@@ -1640,6 +1716,7 @@ begin
       .Error(404, 'No such tenant, professional or service')
       .Error(409, 'professional_inactive, service_inactive')
       .Error(429, 'Too many requests from this address')
+      .NoMcp
       .Register(GetAvailability);
     TRouteDoc.Post('/public/:slug/appointments').Summary('Book a free slot (no account)')
       .Tag('public')
@@ -1673,6 +1750,7 @@ begin
       .Error(404, 'No such tenant or appointment')
       .Error(410, 'link_expired')
       .Error(429, 'Too many requests from this address')
+      .NoMcp
       .Register(GetPublicAppointment);
     TRouteDoc.Post('/public/:slug/appointments/:id/cancel')
       .Summary('Cancel an appointment, by its signed link').Tag('public')
@@ -1689,7 +1767,13 @@ begin
       .Error(409, 'appointment_closed, cancel_notice_passed, appointment_changed')
       .Error(410, 'link_expired')
       .Error(429, 'Too many requests from this address')
+      .NoMcp
       .Register(CancelPublicAppointment);
+
+    // MCP (M5): every route above that isn't NoMcp is a tool, called back
+    // through this api with the caller's token (pascal-api-infra-faa's
+    // TMcpEndpoint; after every route, which it reads once).
+    TMcpEndpoint.Register('/mcp', 'http://127.0.0.1:' + IntToStr(GPort), APP_NAME, APP_VERSION);
 
     TMetricsEndpoint.Register;
     THealthEndpoint.AddCheck('database', GHooks.DatabaseReady);

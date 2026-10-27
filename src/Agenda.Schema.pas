@@ -530,6 +530,19 @@ begin
       'WHERE PROFESSIONAL_ID = :PROFESSIONAL_ID AND ${TENANT} AND STATUS <> :CANCELLED ' +
       'AND BUSY_UNTIL_UTC > :FROM_UTC AND START_UTC < :TO_UTC ' +
       '[EXCEPT {] AND ID <> :EXCEPT_ID [} EXCEPT]')
+    // One local day of the agenda (Agenda.Day, M5): the names next to the
+    // ids, each table through the tenant filter.
+    .Add(COMMON_SQL_DIR, 'APPOINTMENT.DAY',
+      'SELECT A.ID, A.START_UTC, A.END_UTC, A.STATUS, A.VERSION, ' +
+      'A.PROFESSIONAL_ID, P.NAME AS PROFESSIONAL_NAME, A.SERVICE_ID, S.NAME AS SERVICE_NAME, ' +
+      'A.CUSTOMER_ID, C.NAME AS CUSTOMER_NAME ' +
+      'FROM APPOINTMENTS A ' +
+      'JOIN PROFESSIONALS P ON P.ID = A.PROFESSIONAL_ID AND ${TENANT.P} ' +
+      'JOIN SERVICES S ON S.ID = A.SERVICE_ID AND ${TENANT.S} ' +
+      'JOIN CUSTOMERS C ON C.ID = A.CUSTOMER_ID AND ${TENANT.C} ' +
+      'WHERE ${TENANT.A} AND A.START_UTC >= :FROM_UTC AND A.START_UTC < :TO_UTC ' +
+      '[PROFESSIONAL {] AND A.PROFESSIONAL_ID = :PROFESSIONAL_ID [} PROFESSIONAL] ' +
+      'ORDER BY A.START_UTC, P.NAME, A.ID')
 
     // --- idempotency keys (PascalApi.Idempotency's TDbIdempotencyStore; the
     // tenant bound as TENANT_ID, the store's contract). ON CONFLICT ... DO

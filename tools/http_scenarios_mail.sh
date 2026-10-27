@@ -119,7 +119,8 @@ for I in $(seq 1 60); do
   # MSYS_NO_PATHCONV: Git Bash would turn /data into a Windows path.
   MSYS_NO_PATHCONV=1 docker run --rm -v agenda_otel-data:/data busybox cat /data/traces.json     > "$T/traces.json" 2>/dev/null
   "$PY" "$ROOT/tools/otel_spans.py" "$T/traces.json" "$TRACE" > "$T/spans.txt" 2>/dev/null
-  grep -q "^agenda-worker	email send" "$T/spans.txt" && break
+  # Both processes' batches: each exports on its own schedule (OTEL_BSP_SCHEDULE_DELAY).
+  grep -q "^agenda-worker	email send" "$T/spans.txt" && grep -q "^agenda-api	" "$T/spans.txt" && break
   sleep 0.5
 done
 grep -q "^agenda-api	" "$T/spans.txt" && ok || fail "trace $TRACE: no api span ($(cat "$T/spans.txt"))"

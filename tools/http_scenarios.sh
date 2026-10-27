@@ -34,6 +34,12 @@
 # - Idempotency-Key (tools/http_scenarios_idempotency.sh): a retry replays the
 #   first answer (a 201, a 409, a 400), another body is a 422, keys per tenant,
 #   four retries at once run once;
+# - one day of the agenda (tools/http_scenarios_day.sh): the tenant's local
+#   day, the names next to the ids, one professional, the errors, tenants;
+# - the api as MCP tools (tools/http_scenarios_mcp.sh): the catalog (what is
+#   in and out, ifMatch required, idempotencyKey optional), the day read by a
+#   model, a booking repeated with one key, moving and cancelling with
+#   ifMatch, the caller's token on each call;
 # - the public routes (tools/http_scenarios_public.sh): no token, the tenant
 #   from the slug (unknown and suspended one 404), active services and
 #   professionals only, booking with a required key and the customer found
@@ -275,6 +281,10 @@ status_is 200 "the access token itself still works"
 . "$(dirname "$0")/http_scenarios_changes.sh"
 # --- Idempotency-Key on the booking
 . "$(dirname "$0")/http_scenarios_idempotency.sh"
+# --- one day of the agenda (M5)
+. "$(dirname "$0")/http_scenarios_day.sh"
+# --- the api as MCP tools (after the day: it books and cancels on it)
+. "$(dirname "$0")/http_scenarios_mcp.sh"
 # --- the public routes (last of the files: it fills the /public/ window)
 . "$(dirname "$0")/http_scenarios_public.sh"
 

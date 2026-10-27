@@ -139,6 +139,10 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
+        <Filename Value="..\src\Agenda.Day.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
         <Filename Value="..\src\Agenda.Appointments.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
