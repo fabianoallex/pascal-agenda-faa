@@ -1,7 +1,7 @@
 # pascal-agenda-faa — design
 
-Status: scope agreed with the user on 2026-10-18. M0 to M3 built (see "Progress" and the
-milestone sections after it).
+Status: scope agreed with the user on 2026-10-18. M0 to M4 built (see "Progress" and the
+milestone sections after it); M5 designed (2026-10-27).
 
 ## Why this application exists
 
@@ -90,7 +90,7 @@ Operations: `/health`, `/metrics`, `/openapi.json`, `/mcp`.
 - **Outbox relay**: in the api or the worker; reads `outbox` and hands each event to a sink (AMQP here; see "Library candidates").
 - Development: SQLite, no Docker needed for the api alone.
 - `docker compose`: PostgreSQL, Redis, RabbitMQ, Mailpit (fake SMTP), OpenTelemetry
-  Collector, Prometheus; api and worker built with plain `fpc` on Linux.
+  Collector, Prometheus, Grafana; api and worker built with plain `fpc` on Linux.
 - The same sources build on Delphi (Windows) and Lazarus/FPC; CI on Linux with FPC.
 - The libraries are git submodules in `external/`, pinned, one copy each (the
   `using-faa-libraries` skill).
@@ -1442,3 +1442,84 @@ JWT keys rotate on a request).
   updated. FPC: 115 unit tests, 0 leaks, Windows and Linux; HTTP on PostgreSQL with RabbitMQ
   619 + 74 (Windows); compose 22 checks and a clean stop. Delphi: 115 of 115, 0 leaks, Win32
   and Win64; HTTP on SQLite 608 + 68 on both, on PostgreSQL with RabbitMQ 619 + 68 (Win64).
+
+## M5: design (2026-10-27)
+
+The api offered to an AI agent over MCP, the api and the worker on dashboards, and the four
+builds under load. Seven decisions taken with the user (2026-10-27); two of them are changes
+in pascal-api-infra-faa, made in sessions there, as pascal-amqp-faa's 0.4.2 was. Nothing built
+yet.
+
+What exists today:
+- The api serves `/metrics` (Prometheus text): request duration and active requests by
+  route, and pascal-db-faa's pool.
+- pascal-api-infra-faa 0.24.0 has `TMcpEndpoint`: the documented routes become tools, and each
+  call goes back through the api with the caller's token.
+- No MCP route, no dashboard, no load test. The worker has no HTTP, so no metrics.
+
+Two gaps found while designing:
+- The MCP tools leave header parameters out: the executor sends no header of the model's
+  (`PascalApi.Mcp`, `WithoutHeaderParams`; noted in 0.23.0). Moving and cancelling require
+  `If-Match` (428 without), so an agent couldn't cancel, which "The product" promises.
+- `GET /appointments` returns ids only (professional, service, customer): summarising a day
+  would take a call per name.
+
+### Decisions (user, 2026-10-27)
+
+1. **`If-Match` and `Idempotency-Key` through MCP: fixed in pascal-api-infra-faa.** A
+   documented header parameter becomes a tool argument when the route opts in, per parameter,
+   and the executor sends it as that header. The same change gives `Idempotency-Key` to the
+   booking tool: a model that repeats a call is the case the key exists for. Not taken: a
+   version in the body as an alternative to `If-Match` (two ways to say one thing), or moving
+   and cancelling out of MCP (the product's promise).
+2. **The tools**: one `/mcp`, behind JWT, with a staff or owner token. In: availability,
+   list and read appointments, book, move, cancel, the day (decision 3), list and read
+   customers, services and professionals, create a customer. Out (`NoMcp`): login, refresh
+   and logout, users, every delete, working hours and time off changes, creating or changing
+   services and professionals, the public routes. Every tool named by `OperationId` (the
+   derived names drop a final "s": `list_appointment`).
+3. **A new route, `GET /agenda/day?date=&professional=`**: one day in the tenant's time zone,
+   each appointment with the professional's, the service's and the customer's names, its
+   status and version; `professional` optional. The MCP tool "the day", and the desktop
+   client's main view in M6.
+4. **The worker's metrics over OTLP**, to the collector already in the compose file, which
+   Prometheus reads. The exporter is pascal-api-infra-faa's, next to the traces' one
+   (`PascalApi.Otlp`; its observability design lists "metrics over OTLP" as not done), from
+   `PcMetrics`, pushed on an interval. The worker keeps no port open. Not taken: a small HTTP
+   server in the worker for `/metrics` and `/health`.
+5. **Metrics of the application**, in `PcMetrics` with OpenTelemetry names:
+   - worker: outbox rows pending and the oldest one's age, events published, events handled
+     by kind and result (done, retried, parked), emails sent and skipped, the send's duration;
+   - api: bookings by channel (staff, public) and result, slot conflicts, bookings made
+     without the lock because Redis was down;
+   - RabbitMQ: its own Prometheus plugin (queue depth, unacked).
+6. **Dashboards**: Prometheus and Grafana in the compose file, three dashboards kept in the
+   repository and provisioned at start (api, worker, broker). A script checks that
+   Prometheus's targets are up, that the dashboards' queries return series after the
+   scenarios, and that Grafana loads the three.
+7. **Load test with k6**, run in Docker (no install), its scripts in `load/`:
+   - scenarios on PostgreSQL with Redis: reads (availability, the day, lists), bookings with
+     several clients on one slot, the public routes;
+   - targets: FPC on Linux (the compose file), FPC on Windows, Delphi Win64 and Win32, all on
+     the same PostgreSQL;
+   - a run fails on any 5xx, two bookings of one slot, a leak at the stop, memory growing
+     between two runs, or the api's metrics disagreeing with k6's counts; the speed is
+     recorded, not gated;
+   - `tools/ci-test.sh` gets a short run (about 20 s); the full run is by hand.
+
+### What follows from rules already set
+
+- **A tool call is a request**: authenticated by the caller's token, counted by the rate
+  limit, logged, in the MCP request's trace; a role the route refuses is an `isError` result.
+- **The MCP check uses the official client**, as pascal-api-infra-faa's CI does (the Python
+  SDK, `mcp` 2.0.0): list the tools, read the day, book, move and cancel with `If-Match`.
+- **The new route and metrics** are unit-tested and in the HTTP scenarios on both compilers
+  and both databases; `promtool check metrics` on the api's `/metrics`.
+- **Acceptance** as in every milestone: FPC Windows and Linux, Delphi Win32 and Win64, 0 leaks.
+
+### Known limits, expected
+
+- **The comparison is between stacks, not compilers alone**: Horse's HTTP server is Indy on
+  Delphi and fphttpserver on FPC, and Linux runs inside Docker Desktop's VM on this machine.
+- **An MCP client needs a valid access token** and renews it outside MCP; a refresh token has
+  no place in a model's context (pascal-api-infra-faa's rule).
