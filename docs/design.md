@@ -1440,4 +1440,5 @@ JWT keys rotate on a request).
   a channel closed or closing no longer goes out. Adopted the same day; `TOutboxAmqpConsumer.Stop`
   stays (no new work while the process stops, and safe to free before the channel), its comment
   updated. FPC: 115 unit tests, 0 leaks, Windows and Linux; HTTP on PostgreSQL with RabbitMQ
-  619 + 74 (Windows); compose 22 checks and a clean stop.
+  619 + 74 (Windows); compose 22 checks and a clean stop. Delphi: 115 of 115, 0 leaks, Win32
+  and Win64; HTTP on SQLite 608 + 68 on both, on PostgreSQL with RabbitMQ 619 + 68 (Win64).
