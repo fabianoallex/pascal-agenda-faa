@@ -1560,6 +1560,9 @@ Two gaps found while designing:
   otherwise); `tools/test_http_docker.sh` always (the CI image has `mcp==2.0.0`).
 - Result: FPC Windows 115 unit tests, 0 leaks; HTTP on SQLite 665 checks (from 608) + the
   worker's 74, on PostgreSQL with Redis and RabbitMQ 676 (from 619) + 74, the official client
-  13 of 13 on both. FPC Linux (CI): 115, 0 leaks; 665 + 79 and 676 + 79, the official client on both; compose 22 checks. The compose run found a race in its own check, not in the code: the trace was read as soon as the worker's send span was there, and the api's batch (exported on its own schedule) came later; `tools/http_scenarios_mail.sh` now waits for both. Delphi (the api rebuilt): HTTP on SQLite 665 + 68, Win32 and Win64, on
-  PostgreSQL with Redis and RabbitMQ 676 + 68 (Win64), the official client 0 failed
-  on each.
+  13 of 13 on both. FPC Linux (CI): 115, 0 leaks; 665 + 79 and 676 + 79, the official client on
+  both; compose 22 checks. The compose run found a race in its own check, not in the code: the
+  trace was read as soon as the worker's send span was there, and the api's batch (exported on
+  its own schedule) came later; `tools/http_scenarios_mail.sh` now waits for both. Delphi (the
+  api rebuilt): HTTP on SQLite 665 + 68, Win32 and Win64, on PostgreSQL with Redis and RabbitMQ
+  676 + 68 (Win64), the official client 0 failed on each.
