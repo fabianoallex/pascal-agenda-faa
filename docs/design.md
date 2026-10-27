@@ -106,6 +106,7 @@ Operations: `/health`, `/metrics`, `/openapi.json`, `/mcp`.
 | M4 | Outbox → AMQP → worker, scheduled reminders | Messaging, a trace across processes |
 | M5 | MCP tools, dashboards, load test (k6 or wrk) | MCP, metrics under load, FPC/Linux vs Delphi/Windows |
 | M6 | Delphi VCL desktop client sharing the server's DTOs | Typed HTTP client, refresh, DTO reuse |
+| M7 | Review of the library candidates still in this application (see "Library candidates") | Which pieces are worth a library without a second case |
 
 Every milestone ends with: unit tests (DUnitX masters, FPCUnit mirrors) and HTTP scenario
 scripts green on FPC (Windows and Linux) and Delphi (Win32 and Win64), 0 leaks.
@@ -142,6 +143,20 @@ two libraries would share goes to pascal-common-faa.
 | IANA time zones on both compilers | pascal-common-faa | **biggest risk**: neither RTL converts an arbitrary zone. Linux has `/usr/share/zoneinfo`; Windows has the registry (Windows names) or an embedded database. Own design phase before M2. **Done in pascal-common-faa 1.22.0** (`PascalCommon.TimeZones`, the tzdb embedded); adopted 2026-10-20 |
 
 **Probable** (a second case should confirm the shape):
+
+A candidate moves with a second case **or at the final review (M7)**, decided by the user
+(2026-10-27). The review looks at each candidate still here and records one decision per
+candidate (promote, keep in the application, drop) with these criteria:
+
+- Use inside this application: more than one place (another job on the lease, another
+  consumer on the outbox) counts as a case.
+- Generality: the unit depends only on the libraries, with no agenda rule left in it.
+- Stability: its API unchanged across the milestones since it was written.
+- The cost of keeping it here: how much another application would copy, and how easy it is to
+  copy wrong (the outbox's retry, dead queue and dedupe: large; the stop signal: small but
+  platform details).
+- The destination: which library, and whether it adds a dependency between libraries (the
+  AMQP sink needs a bridge).
 
 - Transactional outbox + relay (the dual write problem). Shape discussed with the user on
   2026-10-23, built here in M4 as `src/Agenda.Outbox` (the core and the local sink, 11 unit
