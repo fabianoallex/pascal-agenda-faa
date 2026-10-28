@@ -1720,7 +1720,8 @@ Two gaps found while designing:
   - **And a booking committed then answered 409**, the case already found with the pool: the
     `Idempotency-Key`'s completion, after the commit, met the lock. The database had 568
     appointments, k6 got 525 201s: the 43 others all on the scenario that sends a key; 12 keys
-    stayed in flight (`DONE=0`), the rest were released, so a retry with the key books again.
+    stayed in flight (`DONE=0`), the rest were released, so a retry with the key runs the
+    booking again and gets 409 (the slot taken, by the client's own appointment).
     FPC: 2 in a pass. This moves the candidate below ("completed after the caller's commit")
     from a rare case to one in four bookings under write contention on SQLite.
 
