@@ -120,7 +120,7 @@ program AgendaApi;
 
   tools/http_scenarios.sh checks all of this over HTTP. *)
 
-{$IFDEF FPC}{$MODE DELPHI}{$H+}{$ENDIF}
+{$IFDEF FPC}{$MODE DELPHI}{$H+}{$I AgendaApi.fpc.inc}{$ENDIF}
 {$APPTYPE CONSOLE}
 
 uses
@@ -335,7 +335,7 @@ end;
 // and the repositories work alike), or one 404 for a slug that is unknown,
 // suspended or can't be an id (M3 decision 3). Other paths pass untouched;
 // TTenantMiddleware, before it, already cleared the mark on them.
-{$IFDEF FPC}{$IF FPC_FULLVERSION < 30301}
+{$IFDEF AGENDA_CONNECTION_CLOSE}
 // FPC 3.2.2's fphttpserver closes the connection after every response
 // without saying so (no Connection header; Horse's FPC provider says the
 // same), so an HTTP/1.1 client that keeps it for the next request writes to
@@ -346,7 +346,7 @@ begin
   ARes.AddHeader('Connection', 'close');
   ANext();
 end;
-{$IFEND}{$ENDIF}
+{$ENDIF}
 
 procedure PublicTenant(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
 var
@@ -1430,9 +1430,9 @@ begin
         TOtlpHttpExporter.FromEnvironment, GHooks.Error);
     TErrorHandlerMiddleware.Register(GHooks.Error);
     TLoggerMiddleware.AddField('tenant.id', TenantIdOf);
-    {$IFDEF FPC}{$IF FPC_FULLVERSION < 30301}
+    {$IFDEF AGENDA_CONNECTION_CLOSE}
     THorse.Use(@ConnectionClose);
-    {$IFEND}{$ENDIF}
+    {$ENDIF}
     // The logger first: it also answers a middleware's exception on FPC.
     THorse.Use(TLoggerMiddleware.New(nil, alfJson));
     THorse.Use(TMetricsMiddleware.New);
