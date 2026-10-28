@@ -8,7 +8,8 @@ A pass fails on: k6's thresholds (any 5xx or network error, a failed check,
 a double booking: k6 exits 99), the api's request count (/metrics, its
 routes but /metrics and /health/*, which Prometheus and the health check
 call too) differing from k6's http_reqs, the api's staff bookings booked
-and slot_unavailable differing from k6's counts. The memory fails when the
+slot_unavailable and failed differing from k6's counts (failed: a 409
+other than slot_unavailable, the database busy, which k6 counts as busy). The memory fails when the
 last pass ends above the first by more than MEMORY_GROWTH and MEMORY_SLACK_MB
 (the passes add data, so some growth is expected). The speed is printed, not
 judged.
@@ -62,6 +63,7 @@ def check_pass(tag, n, summary_path, before, after, memory, k6rc):
     booked = k6_count(summary, "agenda_booked") + k6_count(summary, "agenda_race_booked")
     conflicts = k6_count(summary, "agenda_conflicts") + k6_count(summary, "agenda_race_conflicts")
     doubles = k6_count(summary, "agenda_double_bookings")
+    busy = k6_count(summary, "agenda_busy")
     api_reqs = api_requests(after) - api_requests(before)
     api_booked = (total(after, "agenda_bookings_total", agenda_channel="staff",
                         agenda_booking_result="booked")
@@ -71,6 +73,10 @@ def check_pass(tag, n, summary_path, before, after, memory, k6rc):
                            agenda_booking_result="slot_unavailable")
                      - total(before, "agenda_bookings_total", agenda_channel="staff",
                              agenda_booking_result="slot_unavailable"))
+    api_failed = (total(after, "agenda_bookings_total", agenda_channel="staff",
+                        agenda_booking_result="failed")
+                  - total(before, "agenda_bookings_total", agenda_channel="staff",
+                          agenda_booking_result="failed"))
     if k6rc != 0:
         fails.append("k6 exited %d (a threshold failed)" % k6rc)
     if failed:
@@ -85,11 +91,16 @@ def check_pass(tag, n, summary_path, before, after, memory, k6rc):
         fails.append("the api counted %d bookings, k6 got %d 201s" % (api_booked, booked))
     if api_conflicts != conflicts:
         fails.append("the api counted %d conflicts, k6 got %d 409s" % (api_conflicts, conflicts))
+    # A booking the api counted failed is a busy 409 here: any other error is
+    # a 5xx (failed above) or a check that failed.
+    if api_failed != busy:
+        fails.append("the api counted %d failed bookings, k6 got %d busy 409s" % (api_failed, busy))
     race = k6_count(summary, "agenda_race_booked")
     print("%s pass %s: %d requests, %.0f/s, p50 %.1f ms, p95 %.1f ms, p99 %.1f ms, max %.0f ms; "
-          "%d booked, %d conflicts (race: %d booked of %d); %s MB"
+          "%d booked, %d conflicts, %d busy (%d confirms) (race: %d booked of %d); %s MB"
           % (tag, n, reqs, m.get("http_reqs", {}).get("rate", 0), dur.get("p(50)", 0),
-             dur.get("p(95)", 0), dur.get("p(99)", 0), dur.get("max", 0), booked, conflicts, race,
+             dur.get("p(95)", 0), dur.get("p(99)", 0), dur.get("max", 0), booked, conflicts,
+             busy, k6_count(summary, "agenda_confirm_busy"), race,
              race + k6_count(summary, "agenda_race_conflicts"), memory))
     for f in fails:
         print("FAIL %s pass %s: %s" % (tag, n, f))

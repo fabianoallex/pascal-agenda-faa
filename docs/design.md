@@ -202,7 +202,7 @@ candidate (promote, keep in the application, drop) with these criteria:
 - An `Idempotency-Key` completed after the caller's commit can fail on its own (no pool
   connection): the client gets a 5xx for a change that was made. pascal-api-infra-faa's
   `THorseIdempotentRequest`; found 2026-10-27 under load, "M5: under load". **Fixed there**
-  in 0.27.0 (2026-10-28, not adopted yet): `Complete` never raises and keeps the key; an
+  in 0.27.0 (2026-10-28, adopted the same day): `Complete` never raises and keeps the key; an
   optional `CompleteOn` stores the answer in the handler's own transaction.
 - `Agenda.WinHeap` (Delphi on Windows: the program's memory on the process heap; Delphi's own
   manager kept a program's threads at one thread's throughput, pascal-db-faa gotcha 55):
@@ -1733,6 +1733,15 @@ Two gaps found while designing:
     PostgreSQL, 475-689 → 779-857, SQLdb 916-1,020. Not the adapter. The api and the worker
     now start with `Agenda.WinHeap` (first unit; the startup line says which manager runs;
     `MEMORY_MANAGER=default` keeps Delphi's, for comparing).
+  - **pascal-api-infra-faa 0.27.0 adopted** (2026-10-28): a booking's key whose answer can't be
+    stored is logged ("the Idempotency-Key answer was not stored, sent anyway") and the 201
+    goes out. FPC Windows, SQLite: the api's bookings equal k6's 201s again (they differed by
+    2 before; 3 such lines in a run). And the counts: a 409 other than `slot_unavailable` is
+    the database busy (SQLite's writer lock waited out), counted apart by k6 (`agenda_busy`)
+    and compared with the api's failed bookings; the key's claim, before the booking, meets the
+    same lock, so a claim that fails counts as a failed booking now (`StartBooking`). A run on
+    a busy machine (pascal-db-faa's MySQL and SQL Server containers up) made 35 requests a
+    second and 29 503s from the pool; again on a quiet one, 163/s and none.
   - **And a booking committed then answered 409**, the case already found with the pool: the
     `Idempotency-Key`'s completion, after the commit, met the lock. The database had 568
     appointments, k6 got 525 201s: the 43 others all on the scenario that sends a key; 12 keys

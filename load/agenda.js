@@ -49,6 +49,15 @@ export const conflicts = new Counter('agenda_conflicts');
 export const raceBooked = new Counter('agenda_race_booked');
 export const raceConflicts = new Counter('agenda_race_conflicts');
 export const doubleBookings = new Counter('agenda_double_bookings');
+// A 409 that isn't the slot taken: the database busy (SQLite's writer lock
+// waited out, ELockConflictException), "try again". An answer, counted apart:
+// the api counts these bookings as failed.
+export const busy = new Counter('agenda_busy');
+export const confirmBusy = new Counter('agenda_confirm_busy');
+
+function slotTaken(r) {
+  return r.status === 409 && String(r.body).indexOf('"code":"slot_unavailable"') >= 0;
+}
 
 http.setResponseCallback(http.expectedStatuses({ min: 200, max: 499 }));
 
@@ -206,10 +215,13 @@ export function bookings(data) {
     if (Math.random() < 0.1) {
       const c = http.patch(BASE + '/appointments/' + b.json('id'), JSON.stringify({ status: 'confirmed' }),
         auth(data.staff, { 'Content-Type': 'application/json', 'If-Match': '"' + b.json('version') + '"' }));
-      verify(c, 'bookings: confirm 200', (x) => x.status === 200);
+      verify(c, 'bookings: confirm 200 or busy', (x) => x.status === 200 || x.status === 409);
+      if (c.status === 409) confirmBusy.add(1);
     }
-  } else if (b.status === 409) {
+  } else if (slotTaken(b)) {
     conflicts.add(1);
+  } else if (b.status === 409) {
+    busy.add(1);
   }
 }
 
@@ -226,7 +238,8 @@ export function race(data) {
   }, data.staff);
   verify(b, 'race: 201 or 409', (x) => x.status === 201 || x.status === 409);
   if (b.status === 201) raceBooked.add(1);
-  else if (b.status === 409) raceConflicts.add(1);
+  else if (slotTaken(b)) raceConflicts.add(1);
+  else if (b.status === 409) busy.add(1);
 }
 
 export function publicReads(data) {

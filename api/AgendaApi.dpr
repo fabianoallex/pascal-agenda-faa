@@ -1000,6 +1000,24 @@ begin
   end;
 end;
 
+// A booking's key claimed (True: a replay was sent). A claim that fails is a
+// booking that failed, counted as such: the key's store meets the same
+// database (on SQLite, its writer lock under load: a 409, M5).
+function StartBooking(var AIdem: THorseIdempotentRequest; AReq: THorseRequest;
+  ARes: THorseResponse; const AScope: TTenantDataScope; const AChannel: string;
+  ARequired: Boolean): Boolean;
+begin
+  try
+    Result := AIdem.Start(GIdempotency, AReq, ARes, AScope.Discriminator, ARequired);
+  except
+    on E: Exception do
+    begin
+      CountBooking(AChannel, E);
+      raise;
+    end;
+  end;
+end;
+
 // With an Idempotency-Key (pascal-api-infra-faa 0.23.0), a key already
 // answered replays that answer (THorseIdempotentRequest: its headers,
 // Idempotent-Replayed, its body); the tenant is the key's scope.
@@ -1012,7 +1030,7 @@ var
   LBody, LHeaders: string;
 begin
   LScope := ScopeOf(AReq);
-  if LIdem.Start(GIdempotency, AReq, ARes, LScope.Discriminator) then
+  if StartBooking(LIdem, AReq, ARes, LScope, BOOKING_CHANNEL_STAFF, False) then
     Exit;
   LRepo := TAppointmentRepository.Create(LScope, GSlotLock);
   try
@@ -1140,7 +1158,7 @@ var
 begin
   CheckPublicKeyLength(AReq);
   LScope := ScopeOf(AReq);
-  if LIdem.Start(GIdempotency, AReq, ARes, LScope.Discriminator, True) then
+  if StartBooking(LIdem, AReq, ARes, LScope, BOOKING_CHANNEL_PUBLIC, True) then
     Exit;
   LAgenda := NewPublicAgenda(AReq);
   try
