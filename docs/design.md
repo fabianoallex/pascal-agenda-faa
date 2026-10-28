@@ -1783,8 +1783,8 @@ comparison, with Delphi's own manager (`MEMORY_MANAGER=default`):
   second (FPC Windows: 163), and Delphi Win32 with SQLite from 175 to 487-587, its busy 409s
   from 90-95 a pass to 2-7: each booking holds SQLite's writer lock for less time.
 - The memory manager was the gap between the compilers that M5 set out to measure, not the
-  database adapter or Indy; FPC on Linux (CI and compose, the table above) stays the fastest
-  on PostgreSQL at the same load. The FPC Windows tail (p99 about 3 s, the slowest request up
+  database adapter or Indy. FPC on Linux ran in Docker with k6 on its network (259-286/s,
+  "M5: under load"): not the same setup, so not compared here. The FPC Windows tail (p99 about 3 s, the slowest request up
   to 20 s on PostgreSQL) is still not looked into.
 - Delphi Debug: HTTP 669 + 68 on Win32 and Win64, 680 + 68 on Win64 with PostgreSQL, the
   official MCP client on all three, each api on the process heap. FPC Windows: unit tests
