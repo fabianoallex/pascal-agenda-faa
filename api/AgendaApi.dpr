@@ -40,6 +40,8 @@ program AgendaApi;
                          first signs; required unless DEV_MODE=true
     PUBLIC_RATE_LIMIT    a minute per client address on /public/ (60)
     LISTEN_QUEUE         connections waiting to be accepted (128)
+    MAX_CONNECTIONS      Delphi: requests served at once (256); WebBroker
+                         answers one more with a 500 Horse never sees
     PUBLIC_BASE_URL      what goes before /public/... in a link ('': a path)
     TRUSTED_PROXY_HOPS   proxies in front of the API that append to
                          X-Forwarded-For (0: only a loopback peer's counts)
@@ -1870,6 +1872,12 @@ begin
     // Connections waiting to be accepted (Horse's default, 15, overflowed
     // under load: FPC's server opens one per request, M5).
     THorse.ListenQueue := TAppConfig.GetInt('LISTEN_QUEUE', 128);
+    {$IFNDEF FPC}
+    // Delphi's WebBroker serves 32 requests at once by default and answers
+    // the next one with a 500 of its own, before Horse: no log line, no
+    // metric (measured under load, M5). FPC's server has no such limit.
+    THorse.MaxConnections := TAppConfig.GetInt('MAX_CONNECTIONS', 256);
+    {$ENDIF}
     StopSignalInstall;
     GWatcher := TStopWatcher.Create(False);
     {$IFDEF UNIX}

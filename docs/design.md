@@ -1664,6 +1664,14 @@ Two gaps found while designing:
     Candidate for pascal-api-infra-faa or Horse.
   - **Horse's listen queue is 15**; with a connection per request, dials timed out under
     load. `LISTEN_QUEUE` (128) sets `THorse.ListenQueue`.
+  - **Delphi's WebBroker serves 32 requests at once** (`TWebRequestHandler.MaxConnections`;
+    Horse changes it only when `THorse.MaxConnections` is set) and answers the next one with
+    a 500 of its own, "Maximum number of concurrent connections exceeded", before Horse: no
+    log line, no metric. Measured on Delphi Win64 with PostgreSQL: 75% of k6's requests
+    failed so, the api counted 8725 of 34273; it showed as the count check failing.
+    `MAX_CONNECTIONS` (256) sets it on Delphi. `load/agenda.js` now logs the first failed
+    checks of each virtual user with the status and the body of a 5xx. Candidate for
+    pascal-api-infra-faa's guide (a Delphi api under load) or Horse's default.
   - **The database pool (10) answered 503 under load**: a booking holds its connection while
     it waits for the professional's row lock, so 20 clients booking one professional left the
     reads without one (pascal-db-faa's `EPoolTimeoutException` after 5 s). And a booking

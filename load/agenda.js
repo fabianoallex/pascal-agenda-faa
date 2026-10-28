@@ -52,6 +52,20 @@ export const doubleBookings = new Counter('agenda_double_bookings');
 
 http.setResponseCallback(http.expectedStatuses({ min: 200, max: 499 }));
 
+// A failed check, with what came back: the first few of each virtual user
+// go to k6's log (the summary only counts them).
+let reported = 0;
+function verify(r, name, ok) {
+  const passed = check(r, { [name]: ok });
+  if (!passed && reported < 3) {
+    reported++;
+    console.warn(name + ': ' + r.request.method + ' ' + r.url.replace(BASE, '') + ' status ' +
+      r.status + (r.error ? ' (' + r.error_code + ' ' + r.error + ')' : '') +
+      (r.status >= 500 ? ': ' + String(r.body).slice(0, 200) : ''));
+  }
+  return passed;
+}
+
 export const options = {
   setupTimeout: '120s',
   teardownTimeout: '180s',
@@ -170,7 +184,7 @@ export function reads(data) {
   } else {
     r = http.get(BASE + '/customers?search=Load', auth(data.staff));
   }
-  check(r, { 'reads: 200': (x) => x.status === 200 });
+  verify(r, 'reads: 200', (x) => x.status === 200);
 }
 
 export function bookings(data) {
@@ -178,7 +192,7 @@ export function bookings(data) {
   const service = pick(data.services);
   const r = http.get(BASE + '/professionals/' + pro + '/availability?service=' + service +
     '&date=' + pick(data.dates), auth(data.staff));
-  check(r, { 'bookings: availability 200': (x) => x.status === 200 });
+  verify(r, 'bookings: availability 200', (x) => x.status === 200);
   if (r.status !== 200) return;
   const slots = r.json('slots');
   if (!slots || slots.length === 0) return;
@@ -186,13 +200,13 @@ export function bookings(data) {
     professionalId: pro, serviceId: service, customerId: pick(data.customers),
     startsAt: pick(slots).startsAt,
   }, data.staff, { 'Idempotency-Key': 'load-' + RUN + '-' + exec.vu.idInTest + '-' + exec.vu.iterationInScenario });
-  check(b, { 'bookings: 201 or 409': (x) => x.status === 201 || x.status === 409 });
+  verify(b, 'bookings: 201 or 409', (x) => x.status === 201 || x.status === 409);
   if (b.status === 201) {
     booked.add(1);
     if (Math.random() < 0.1) {
       const c = http.patch(BASE + '/appointments/' + b.json('id'), JSON.stringify({ status: 'confirmed' }),
         auth(data.staff, { 'Content-Type': 'application/json', 'If-Match': '"' + b.json('version') + '"' }));
-      check(c, { 'bookings: confirm 200': (x) => x.status === 200 });
+      verify(c, 'bookings: confirm 200', (x) => x.status === 200);
     }
   } else if (b.status === 409) {
     conflicts.add(1);
@@ -210,7 +224,7 @@ export function race(data) {
     professionalId: data.racePro, serviceId: data.services[0], customerId: pick(data.customers),
     startsAt: start.toISOString().replace('.000Z', 'Z'),
   }, data.staff);
-  check(b, { 'race: 201 or 409': (x) => x.status === 201 || x.status === 409 });
+  verify(b, 'race: 201 or 409', (x) => x.status === 201 || x.status === 409);
   if (b.status === 201) raceBooked.add(1);
   else if (b.status === 409) raceConflicts.add(1);
 }
@@ -224,7 +238,7 @@ export function publicReads(data) {
       '/availability?service=' + pick(data.services) + '&date=' + pick(data.dates));
   }
   // 429: the public limit by address (k6 is one address); an answer, not a failure.
-  check(r, { 'public: 200 or 429': (x) => x.status === 200 || x.status === 429 });
+  verify(r, 'public: 200 or 429', (x) => x.status === 200 || x.status === 429);
 }
 
 // No two active appointments of one professional overlap, on every day the
