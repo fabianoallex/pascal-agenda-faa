@@ -1689,9 +1689,12 @@ Two gaps found while designing:
   | compose | 2 | 15809 | 256/s | 123 ms | 311 ms | 476 ms | 1180 | 300 of 1200 | 68 MB |
   | fpc-linux | 1 | 16027 | 259/s | 97 ms | 676 ms | 1178 ms | 916 | 298 of 1192 | 23 MB |
   | fpc-linux | 2 | 17750 | 286/s | 92 ms | 577 ms | 1023 ms | 984 | 299 of 1193 | 25 MB |
+  | fpc-win (k6 2.2.0 on Windows) | 1 | 10891 | 168/s | 127 ms | 787 ms | 3689 ms | 928 | 298 of 1190 | 34 MB |
+  | fpc-win | 2 | 11980 | 185/s | 125 ms | 667 ms | 2527 ms | 966 | 299 of 1194 | 34 MB |
 
   Every pass: 0 failed requests, every check, no double booking, the api's counts equal to
-  k6's. Not measured yet: the Windows targets (they need k6 on Windows: downloading its
-  binary was refused here, an executable from outside) and Delphi's Release builds (the
-  IDE).
+  k6's. FPC on Windows has a long tail (p99 2.5 to 3.7 s, the slowest request 16 to 23 s)
+  that FPC on Linux hasn't: not looked into. k6 on Windows installed by the user (winget,
+  2.2.0; the container runs 0.54.0): the same script, the same summary. Not measured yet:
+  Delphi's Release builds (the IDE).
 - CI (FPC Linux, tools/ci-test.sh): 116 unit tests, 0 leaks; HTTP 669 + 79 (SQLite) and 680 + 79 (PostgreSQL), the official MCP client on both, the api stopped by SIGTERM at each start (SQLite: the known block of 64 bytes; PostgreSQL: the known pool error); compose 22 + the dashboards; the short load run (20 s, 10 users) 318/s, p95 110 ms, every check. FPC Windows: HTTP 669 + 74 and 680 + 74, the official client on both. Delphi: not built yet (the stop watcher's StopListenGraceful path is Delphi's own).

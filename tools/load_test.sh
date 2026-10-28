@@ -204,6 +204,8 @@ case "$TARGET" in
   *)
     K6_DOCKER=0
     K6_EXE="${K6_EXE:-$(command -v k6 2>/dev/null || true)}"
+    # Where its installer (winget install k6) puts it, before a new shell has it on PATH.
+    [ -n "$K6_EXE" ] || { [ -x "/c/Program Files/k6/k6.exe" ] && K6_EXE="/c/Program Files/k6/k6.exe"; }
     [ -n "$K6_EXE" ] || { echo "no k6 on Windows: install it (k6.io) or set K6_EXE"; exit 1; }
     K6_BASE="http://127.0.0.1:$PORT" ;;
 esac
