@@ -79,6 +79,8 @@ uses
   cthreads,
   cwstring,
   {$ENDIF}
+  // First on Windows: Delphi's threads scale on the process heap (M5).
+  Agenda.WinHeap in '..\src\Agenda.WinHeap.pas',
   SysUtils,
   PascalJsonMapper.Mapper,
   PascalCommon.SafeLog,
@@ -528,9 +530,11 @@ begin
       end;
 
       if GDrain then
-        SafeWriteln('%s %s draining as %s', [APP_NAME, APP_VERSION, GOwner])
+        SafeWriteln('%s %s draining as %s (memory: %s)', [APP_NAME, APP_VERSION, GOwner,
+          MemoryManagerName])
       else
-        SafeWriteln('%s %s running as %s', [APP_NAME, APP_VERSION, GOwner]);
+        SafeWriteln('%s %s running as %s (memory: %s)', [APP_NAME, APP_VERSION, GOwner,
+          MemoryManagerName]);
       GNextReminders := 0;
       GNextPurge := 0;
       GNextPending := 0;

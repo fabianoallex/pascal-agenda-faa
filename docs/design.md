@@ -201,7 +201,12 @@ candidate (promote, keep in the application, drop) with these criteria:
   pascal-api-infra-faa or Horse: found 2026-10-27 under load, "M5: under load".
 - An `Idempotency-Key` completed after the caller's commit can fail on its own (no pool
   connection): the client gets a 5xx for a change that was made. pascal-api-infra-faa's
-  `THorseIdempotentRequest`; found 2026-10-27 under load, "M5: under load".
+  `THorseIdempotentRequest`; found 2026-10-27 under load, "M5: under load". **Fixed there**
+  in 0.27.0 (2026-10-28, not adopted yet): `Complete` never raises and keeps the key; an
+  optional `CompleteOn` stores the answer in the handler's own transaction.
+- `Agenda.WinHeap` (Delphi on Windows: the program's memory on the process heap; Delphi's own
+  manager kept a program's threads at one thread's throughput, pascal-db-faa gotcha 55):
+  pascal-common-faa; written 2026-10-28, "M5: under load".
 - An instant type for the mapper: zone required on input, `Z` on output (pascal-jsonmapper-faa).
 - A Boolean parameter into an `INTEGER` column fails on PostgreSQL ("column ... is of type
   integer but expression is of type boolean"); SQLite takes it, and pascal-db-faa's contract suite
@@ -1720,6 +1725,14 @@ Two gaps found while designing:
     first guess, a read transaction upgraded to a write failing at once, was wrong: the
     booking's and the idempotency store's transactions start with a write. Capacity, not a
     library bug: SQLite is the development engine here.
+  - **Why Delphi was slower** (pascal-db-faa, 2026-10-28, gotcha 55; measured there without
+    HTTP, SQLite): Delphi's own memory manager keeps a program's threads at one thread's
+    throughput. FireDAC made about 2,100 operations a second with 1, 8 or 32 threads, SQLdb
+    2,120 → 9,177; Zeos, the same code on both compilers, 4,057 on FPC and 560 on Delphi with
+    32 threads. On the Windows process heap, FireDAC went to 6,214 (32 threads); on
+    PostgreSQL, 475-689 → 779-857, SQLdb 916-1,020. Not the adapter. The api and the worker
+    now start with `Agenda.WinHeap` (first unit; the startup line says which manager runs;
+    `MEMORY_MANAGER=default` keeps Delphi's, for comparing).
   - **And a booking committed then answered 409**, the case already found with the pool: the
     `Idempotency-Key`'s completion, after the commit, met the lock. The database had 568
     appointments, k6 got 525 201s: the 43 others all on the scenario that sends a key; 12 keys

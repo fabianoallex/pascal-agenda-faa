@@ -130,6 +130,8 @@ uses
   cthreads,
   cwstring,
   {$ENDIF}
+  // First on Windows: Delphi's threads scale on the process heap (M5).
+  Agenda.WinHeap in '..\src\Agenda.WinHeap.pas',
   SysUtils,
   Classes,
   Horse,
@@ -1886,7 +1888,8 @@ begin
     // takes that for an error and listens again.
     BlockStopSignals;
     {$ENDIF}
-    SafeWriteln('%s %s listening on port %d', [APP_NAME, APP_VERSION, GPort]);
+    SafeWriteln('%s %s listening on port %d (memory: %s)', [APP_NAME, APP_VERSION, GPort,
+      MemoryManagerName]);
     THorse.Listen(GPort);
     SafeWriteln('%s stopped', [APP_NAME]);
   finally

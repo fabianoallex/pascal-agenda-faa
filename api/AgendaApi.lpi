@@ -181,6 +181,10 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
+        <Filename Value="..\src\Agenda.WinHeap.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
         <Filename Value="..\src\Agenda.Appointments.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
