@@ -1,7 +1,7 @@
 # pascal-agenda-faa — design
 
-Status: scope agreed with the user on 2026-10-18. M0 to M4 built (see "Progress" and the
-milestone sections after it); M5 designed (2026-10-27).
+Status: scope agreed with the user on 2026-10-18. M0 to M5 built (see "Progress" and the
+milestone sections after it); M5 closed 2026-10-28.
 
 ## Why this application exists
 
@@ -1755,4 +1755,43 @@ Two gaps found while designing:
   that FPC on Linux hasn't: not looked into. k6 on Windows installed by the user (winget,
   2.2.0; the container runs 0.54.0): the same script, the same summary. Not measured yet:
   Delphi's Release builds (the IDE).
-- CI (FPC Linux, tools/ci-test.sh): 116 unit tests, 0 leaks; HTTP 669 + 79 (SQLite) and 680 + 79 (PostgreSQL), the official MCP client on both, the api stopped by SIGTERM at each start (SQLite: the known block of 64 bytes; PostgreSQL: the known pool error); compose 22 + the dashboards; the short load run (20 s, 10 users) 318/s, p95 110 ms, every check. FPC Windows: HTTP 669 + 74 and 680 + 74, the official client on both. Delphi (Debug): HTTP 669 + 68 on Win32 and Win64, 680 + 68 on Win64 with PostgreSQL, the official client on all three; Ctrl+Break (sent by a script to the api in a process group of its own) stops it through StopListenGraceful on both, exit code 0 in 0.2 s, "agenda-api stopped". The Delphi api has no leak report at its stop (the unit tests carry Delphi's leak check). Delphi under load: see the WebBroker limit above; measured again after MAX_CONNECTIONS.
+- CI (FPC Linux, tools/ci-test.sh): 116 unit tests, 0 leaks; HTTP 669 + 79 (SQLite) and 680 + 79 (PostgreSQL), the official MCP client on both, the api stopped by SIGTERM at each start (SQLite: the known block of 64 bytes; PostgreSQL: the known pool error); compose 22 + the dashboards; the short load run (20 s, 10 users) 318/s, p95 110 ms, every check. FPC Windows: HTTP 669 + 74 and 680 + 74, the official client on both. Delphi (Debug): HTTP 669 + 68 on Win32 and Win64, 680 + 68 on Win64 with PostgreSQL, the official client on all three; Ctrl+Break (sent by a script to the api in a process group of its own) stops it through StopListenGraceful on both, exit code 0 in 0.2 s, "agenda-api stopped". The Delphi api has no leak report at its stop (the unit tests carry Delphi's leak check). Delphi under load: see the WebBroker limit above and "M5: closed" below.
+
+### M5: closed (2026-10-28)
+
+Every target under load passes (two passes of 60 s, every check, the api's counts equal to
+k6's, no double booking, the memory flat), with pascal-api-infra-faa 0.27.0, `MAX_CONNECTIONS`
+and `Agenda.WinHeap`. Delphi's builds measured with the Windows process heap and, for
+comparison, with Delphi's own manager (`MEMORY_MANAGER=default`):
+
+| Target | Memory manager | Pass | Requests | Rate | p50 | p95 | p99 | Booked | Busy 409 | Memory |
+|---|---|---|---|---|---|---|---|---|---|---|
+| delphi-win64, PostgreSQL | windows heap | 1 | 13234 | 188/s | 100 ms | 701 ms | 2566 ms | 951 | 0 | 33 MB |
+| delphi-win64, PostgreSQL | windows heap | 2 | 13171 | 201/s | 103 ms | 706 ms | 2495 ms | 944 | 0 | 34 MB |
+| delphi-win64, PostgreSQL | delphi | 1 | 8875 | 135/s | 161 ms | 1053 ms | 4889 ms | 864 | 0 | 33 MB |
+| delphi-win64, PostgreSQL | delphi | 2 | 8108 | 123/s | 170 ms | 1403 ms | 5437 ms | 804 | 0 | 34 MB |
+| delphi-win32, SQLite | windows heap | 1 | 36032 | 587/s | 32 ms | 140 ms | 674 ms | 850 | 2 | 36 MB |
+| delphi-win32, SQLite | windows heap | 2 | 29951 | 487/s | 39 ms | 169 ms | 679 ms | 788 | 7 | 38 MB |
+| delphi-win32, SQLite | delphi | 1 | 10865 | 175/s | 82 ms | 784 ms | 6689 ms | 299 | 90 | 31 MB |
+| delphi-win32, SQLite | delphi | 2 | 10911 | 177/s | 81 ms | 791 ms | 6672 ms | 295 | 95 | 30 MB |
+| fpc-win, PostgreSQL | fpc | 1 | 11093 | 163/s | 132 ms | 740 ms | 2940 ms | 950 | 0 | 34 MB |
+| fpc-win, PostgreSQL | fpc | 2 | 10690 | 163/s | 159 ms | 663 ms | 2702 ms | 968 | 0 | 35 MB |
+| fpc-win, SQLite | fpc | 1 | 10954 | 172/s | 138 ms | 593 ms | 1025 ms | 914 | 0 | 46 MB |
+| fpc-win, SQLite | fpc | 2 | 10124 | 161/s | 168 ms | 572 ms | 1099 ms | 900 | 0 | 68 MB |
+
+- On the process heap Delphi Win64 with PostgreSQL went from 123-135 to 188-201 requests a
+  second (FPC Windows: 163), and Delphi Win32 with SQLite from 175 to 487-587, its busy 409s
+  from 90-95 a pass to 2-7: each booking holds SQLite's writer lock for less time.
+- The memory manager was the gap between the compilers that M5 set out to measure, not the
+  database adapter or Indy; FPC on Linux (CI and compose, the table above) stays the fastest
+  on PostgreSQL at the same load. The FPC Windows tail (p99 about 3 s, the slowest request up
+  to 20 s on PostgreSQL) is still not looked into.
+- Delphi Debug: HTTP 669 + 68 on Win32 and Win64, 680 + 68 on Win64 with PostgreSQL, the
+  official MCP client on all three, each api on the process heap. FPC Windows: unit tests
+  116, 0 leaks; HTTP 669 + 74 and 680 + 74. CI (FPC Linux): green, the two stop cases known
+  (the block of 64 bytes; pascal-db-faa's pool error on PostgreSQL, open).
+- Still open from M5: the PostgreSQL pool's `EThreadError` at the stop (pascal-db-faa, prompt
+  given), the 64-byte block at the stop, the FPC Windows tail; candidates: `Connection: close`
+  on FPC 3.2.2, `MAX_CONNECTIONS` for a Delphi api, `Agenda.WinHeap`, `Agenda.StopSignal`.
+  `CompleteOn` (closing the in-flight window of a key whose answer wasn't stored) not
+  adopted: 2-3 such keys a run on SQLite under load, none on PostgreSQL.
