@@ -1699,6 +1699,30 @@ Two gaps found while designing:
   | fpc-linux | 2 | 17750 | 286/s | 92 ms | 577 ms | 1023 ms | 984 | 299 of 1193 | 25 MB |
   | fpc-win (k6 2.2.0 on Windows) | 1 | 10891 | 168/s | 127 ms | 787 ms | 3689 ms | 928 | 298 of 1190 | 34 MB |
   | fpc-win | 2 | 11980 | 185/s | 125 ms | 667 ms | 2527 ms | 966 | 299 of 1194 | 34 MB |
+  | fpc-win, SQLite | 1 | 14185 | 221/s | 76 ms | 525 ms | 1635 ms | 681 | 297 of 1190 | 44 MB |
+  | fpc-win, SQLite | 2 | 20594 | 330/s | 66 ms | 241 ms | 1030 ms | 911 | 300 of 1201 | 45 MB |
+  | delphi-win64 (MAX_CONNECTIONS 256) | 1 | 7645 | 113/s | 163 ms | 1579 ms | 6238 ms | 758 | 294 of 1174 | 33 MB |
+  | delphi-win64 | 2 | 7443 | 111/s | 170 ms | 1669 ms | 6279 ms | 742 | 295 of 1177 | 34 MB |
+  | delphi-win32, SQLite | 1 | 10849 | 176/s | 78 ms | 821 ms | 6687 ms | 262 | 218 of 1192 | 30 MB |
+  | delphi-win32, SQLite | 2 | 10346 | 169/s | 80 ms | 843 ms | 6687 ms | 263 | 225 of 1191 | 31 MB |
+
+  Not every pass above passed its checks (2026-10-28):
+  - **Delphi with PostgreSQL is slower than FPC on the same machine** (113/s against 185/s,
+    every route: `GET /services` p50 94 ms against 63; the bookings p95 6 s against 3.8 s), and
+    5 requests of 15088 got 503 (`EPoolTimeoutException`, the pool's 40 all held). Delphi uses
+    pascal-db-faa's FireDAC adapter, FPC its SQLdb one; where the time goes was not looked into.
+  - **On SQLite, writers under load get "database is locked"** at once, answered 409
+    (`ELockConflictException`): 238 times on Delphi (FireDAC), 19 on FPC (SQLdb), both with a
+    5 s busy timeout. Suspected, not measured: a transaction that read and then writes
+    (deferred) gets SQLITE_BUSY without the busy timeout when another writer holds the lock
+    (`BEGIN IMMEDIATE` avoids it). For pascal-db-faa (a write transaction mode) or the
+    application.
+  - **And a booking committed then answered 409**, the case already found with the pool: the
+    `Idempotency-Key`'s completion, after the commit, met the lock. The database had 568
+    appointments, k6 got 525 201s: the 43 others all on the scenario that sends a key; 12 keys
+    stayed in flight (`DONE=0`), the rest were released, so a retry with the key books again.
+    FPC: 2 in a pass. This moves the candidate below ("completed after the caller's commit")
+    from a rare case to one in four bookings under write contention on SQLite.
 
   Every pass: 0 failed requests, every check, no double booking, the api's counts equal to
   k6's. FPC on Windows has a long tail (p99 2.5 to 3.7 s, the slowest request 16 to 23 s)
