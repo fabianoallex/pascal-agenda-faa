@@ -1,7 +1,7 @@
 # pascal-agenda-faa — design
 
 Status: scope agreed with the user on 2026-10-18. M0 to M5 built (see "Progress" and the
-milestone sections after it); M5 closed 2026-10-28.
+milestone sections after it); M5 closed 2026-10-28. M6 designed 2026-10-28 ("M6: design").
 
 ## Why this application exists
 
@@ -105,7 +105,7 @@ Operations: `/health`, `/metrics`, `/openapi.json`, `/mcp`.
 | M3 | Public routes by slug, rate limit, signed cancel link | Tenant outside the token, rate limit |
 | M4 | Outbox → AMQP → worker, scheduled reminders | Messaging, a trace across processes |
 | M5 | MCP tools, dashboards, load test (k6 or wrk) | MCP, metrics under load, FPC/Linux vs Delphi/Windows |
-| M6 | Delphi VCL desktop client sharing the server's DTOs | Typed HTTP client, refresh, DTO reuse |
+| M6 | Desktop client sharing the server's DTOs: VCL (Delphi) and LCL (Lazarus) from one source, screens built in code with OPCB | Typed HTTP client, refresh, DTO reuse |
 | M7 | Review of the library candidates still in this application (see "Library candidates") | Which pieces are worth a library without a second case |
 
 Every milestone ends with: unit tests (DUnitX masters, FPCUnit mirrors) and HTTP scenario
@@ -184,7 +184,8 @@ candidate (promote, keep in the application, drop) with these criteria:
   **Built here 2026-10-26** as `src/Agenda.Leases`, one interface with a database store (the
   default) and a Redis one (`TRedisLock`); see "M4: the worker".
 - RFC 9457 errors (`application/problem+json`) as an option of `TErrorHandlerMiddleware`.
-- Typed HTTP client for Delphi/Lazarus with refresh, retry and trace propagation (M6).
+- Typed HTTP client for Delphi/Lazarus with refresh, retry and trace propagation (M6; its shape
+  in "M6: design", decisions 4 to 7).
 
 **Found while building** (not in the first list):
 
@@ -1795,3 +1796,147 @@ comparison, with Delphi's own manager (`MEMORY_MANAGER=default`):
   on FPC 3.2.2, `MAX_CONNECTIONS` for a Delphi api, `Agenda.WinHeap`, `Agenda.StopSignal`.
   `CompleteOn` (closing the in-flight window of a key whose answer wasn't stored) not
   adopted: 2-3 such keys a run on SQLite under load, none on PostgreSQL.
+
+## M6: design (2026-10-28)
+
+A desktop client for the staff's day on the server's own DTOs: a typed HTTP client with
+refresh, retry and the trace, and the screens built in code from one source for VCL (Delphi)
+and LCL (Lazarus). Nine decisions taken with the user (2026-10-28); one of them adds a
+library outside the `*-faa` family (OPCB). Nothing built yet but the probe below.
+
+What exists today:
+- The DTOs live in the units of their repositories: `Agenda.Appointments` has `PascalDb.Paging`,
+  `PascalApi.Tenancy` and `Redis.Lock` in its interface; `Agenda.Day` and `Agenda.Availability`
+  use `PascalDb.Interfaces`. A client that uses them as they are links pascal-db-faa, FireDAC
+  and the Redis client.
+- What a client can take: `PascalApi.Dto` needs pascal-common-faa only; `PascalApi.OpenApi`
+  only the mapper and the validators, so the `TApiSchema.Describe` calls in each unit's
+  `initialization` can go with the DTOs. Not `PascalApi.Http` (pascal-db-faa in its
+  implementation), so not `PascalApi.Preconditions` either: the client reads the error body
+  (`code`, the fields) itself.
+- The switch between `THTTPClient` (Delphi) and `fphttpclient` (FPC) is written twice in
+  pascal-api-infra-faa (`PascalApi.Otlp`, the MCP executor); the client would be the third.
+- What the server asks of a client: an access token of 900 s, a refresh token of 30 days,
+  rotated, a spent one coming back revokes its family (so two refreshes racing on one token
+  log the user out); `/auth/` limited to 10 a minute per client address.
+- Forms on both compilers: the skill's `references/forms-dfm-lfm.md`. The ten `samples/*Vcl` of
+  pascal-amqp-faa keep a `.dfm` and an `.lfm` next to one `.pas` (checked on LCL/GTK2 on Linux
+  too); both IDEs rewrite those files whole (DPI, `Anchors` order, accents), and they are kept
+  in step by hand. pascal-snake builds its form in code (`CreateNew`, no form file). OPCB
+  (https://github.com/fabianoallex/opcb-object-pascal-component-builder, the author's, Apache
+  2.0) builds controls in code with a fluent API on VCL, LCL and FMX; its suites: 213 tests on
+  FPC, 207 on Delphi, 0 leaks (its README). Its only form built from one source on both
+  compilers is a sample with five buttons.
+
+### Decisions (user, 2026-10-28)
+
+1. **DTO units of their own.** Each group's interfaces, classes, status constants, error codes
+   and `Describe` calls move to a unit that needs only `PascalCommon.Optionals`,
+   `PascalJsonMapper`, `PascalApi.Dto` and `PascalApi.OpenApi` (`Agenda.Appointments.Dtos`,
+   `Agenda.Day.Dtos`, `Agenda.Customers.Dtos`...); the server's units use them, its behaviour
+   unchanged (the HTTP scenarios say so). Not taken: the units as they are (the database in a
+   desktop program), DTOs generated from `/openapi.json` (no reuse left to validate).
+2. **The client checks a body with the server's limits**: `TApiSchema.Check` before sending,
+   the same field failures a 400 would list, without the request. The server still decides.
+3. **The whole client on both compilers, the screens built in code with OPCB.** The core (the
+   DTO units, the typed client, the view models) and the forms build on Delphi Win32/Win64
+   (VCL) and Lazarus (LCL) from the same source: no `.dfm`/`.lfm`, each form calls `CreateNew`
+   and lays itself out with OPCB, a submodule (`external/opcb`, pinned to a commit: it has no
+   tags). The logic lives in view models with tests; a form reads their state and passes its
+   events on (pascal-snake's rule). On Linux the core's tests run in CI; the screens are not
+   built there (the CI image has no LCL). If OPCB fell short, the fallback was `CreateNew` with
+   controls placed by hand; `.dfm` + `.lfm` was not taken (the skill's measured cost).
+4. **HTTP**: each compiler's own client behind `IHttpTransport` (one `Send`: method, URL,
+   headers, body in; status, headers, body out), with a fake one for the unit tests:
+   `THTTPClient` on Delphi (WinHTTP, the TLS of Windows, no OpenSSL to ship), `fphttpclient`
+   with `opensslsockets` on FPC. The third copy of that switch is a candidate (pascal-common-faa
+   or pascal-api-infra-faa). Not taken: Indy (OpenSSL 1.0.2 for TLS), Synapse (OpenSSL on the
+   Windows desktop too).
+5. **Two layers.** `Agenda.HttpClient`, the "Typed HTTP client" candidate, knows nothing of the
+   agenda: base URL, bearer token, refresh, retry, `traceparent`, JSON through `TJsonMapper`,
+   the error body read into an exception (status, `code`, fields), `ETag`/`If-Match`,
+   `Idempotency-Key`. `Agenda.Client` has one hand-written method per route (`GetDay`,
+   `GetAvailability`, `Book`, `Move`, `SetStatus`, `Cancel`, `FindCustomers`, `CreateCustomer`...),
+   taking and returning the server's DTO interfaces.
+6. **Refresh once at a time, the refresh token in memory only.** One refresh in flight; a
+   caller that needs a token meanwhile waits for it and uses the new one, so a client never
+   revokes its own family. Renewed before it runs out (`expiresIn` less a margin), and on a 401
+   once more, then the request again. The program logs in when it starts and logs out
+   (`/auth/logout`) when it closes; keeping the token between runs (DPAPI) is out of M6.
+7. **Retry**: a GET up to three times with a backoff on a lost connection, 502, 503 and 504,
+   after the `Retry-After` of a 429 or 503; a booking with an `Idempotency-Key` made by the
+   client for each user action and kept across its tries, so it retries the same way; a PATCH
+   or a cancel never retried on its own: on a lost connection the client reads the appointment
+   again and shows it (a second try would meet a 412). A 409 `slot_unavailable` or a 412 is
+   told to the user, and the day read again.
+8. **The screens are the staff's day**: login (server, slug, email, password); the day as the
+   main view (`GET /agenda/day`, by professional, moving between dates); booking (customer,
+   service, professional, free slots); moving, the status (confirmed, done, no_show),
+   cancelling; customers (search, create, edit: a PATCH with the email absent, null or a value,
+   the three states of an optional sent by a client). The owner's screens (services,
+   professionals, working hours, time off, users) stay out. The day is read again after each
+   change, on F5 and every 60 s. No call runs on the UI thread: pascal-common-faa's pool runs
+   it, `TThread.Queue` brings the result back, a window that closes waits for its call.
+9. **One trace from the click**: a trace id per user action, sent as `traceparent` (its retries
+   and refresh in the same trace); the client's spans exported through `PascalApi.Otlp` only
+   when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, so one trace runs from the click to the worker's
+   email.
+
+### What follows from rules already set
+
+- **No time zone in the client**: it shows `localStart`/`localEnd` as the server sends them and
+  books the instant of the slot as the availability gave it.
+- **Tests**: the core's unit tests with the fake transport (refresh once at a time, retry, the
+  key kept, the error body read) on the four targets; a console program, `AgendaClientCheck`,
+  run by `tools/test_http.sh` as `mcp_client_check.py` is, through the real api: login, the day,
+  a booking twice with one key, a move with `If-Match`, a 412 from an old version, a cancel, and
+  with a short `ACCESS_TOKEN_SECONDS` two calls at once on a spent token (one refresh, the family
+  alive); the forms by hand from a written list, on VCL and LCL.
+- **Settings**: the server's address from a `.env` next to the program (`TAppConfig`).
+- **Candidates**: `Agenda.HttpClient`, the transport switch, the error body in a light unit;
+  listed in "Library candidates" when built.
+- **Acceptance** as in every milestone: FPC Windows and Linux, Delphi Win32 and Win64, 0 leaks
+  (the screens: Windows, both compilers).
+
+### Known limits, expected
+
+- **Behind one address**: ten logins or refreshes a minute per address on `/auth/`; an office
+  whose desktops share one public address and all log in at eight meets it. Recorded, not
+  changed now.
+- **No push**: another user's change reaches the day within 60 s.
+- **The screens are checked by hand**, not by a script; the view models carry the tests.
+
+### M6: the OPCB probe (2026-10-28)
+
+`external/opcb` at **b61c993** (2026-08-09, no tags). A probe outside the repository (the M4
+Synapse probe's way): a main window like the day (a bar on top, a `TListView` with `alClient`)
+and a login dialog in OPCB's grid mode, both `CreateNew`, one `.pas` in `{$MODE DELPHI}`
+calling OPCB (`{$mode objfpc}`, generics) with method pointers only; a program that builds
+both, resizes the window and checks the layout, then quits.
+
+- FPC 3.2.2 Win64 (Lazarus 4.4): 10 of 10 checks, 0 unfreed blocks: the list fills the window
+  and follows a resize, accented text kept, the click handler wired, the grid in two columns,
+  the buttons below it, the dialog sized to its content (`RecalcParentSize`).
+- **Found (OPCB)**: in grid mode a control without an explicit height is placed with height 0:
+  its top is the cell's middle (`AdjustRectForCellLayout` gets 0), the LCL then gives the
+  `TEdit` its own height, and what follows the grid (`GridFinish`, `BreakLine`) starts over its
+  last row. The creator's `SetControlHeight` default doesn't reach a grid cell (it reaches the
+  controls after the grid). Here: `GridCellStrechAll`, the cell's height given to each
+  control (the same layout on the VCL); the height-0 case itself measured on the LCL only. To
+  be fixed in OPCB, not here.
+- Also learnt: after `GridFinish` the grid is one block in the outer level's direction; a row
+  below it needs `BreakLine` in that level (OPCB's `grid-autoexpand` sample does `.Break`).
+- Delphi 12 Win64 (the same probe, `OpcbProbeDelphi.dpr`, a `.dproj` from the skill's
+  scaffold; run by the user, Debug and Release): 9 of 10, the same layout as the LCL (the grid,
+  the buttons below it, the list following a resize), and one failure the LCL hides:
+- **Found (OPCB)**: `RecalcParentSize` sets the parent's `Height` and `Width`. On the LCL for
+  Windows a form's `Height` is its client area (the dialog came out 167 high, 155 needed); on
+  the VCL it includes the caption and the borders, so the dialog's client area was 128 for
+  buttons that end at 155 (39 pixels short), and its width short the same way (the edits cut
+  at the right; the probe didn't check the width). `ClientHeight`/`ClientWidth` for a
+  `TWinControl` parent would be right on both. Here: the client size set by the form from its
+  last control. To be fixed in OPCB.
+- Also different, harmless: a `TLabel` stretched to its cell keeps the cell's height on the
+  VCL (28) and its text's on the LCL (15).
+- Delphi 12 Win32 builds too; no leak report at the stop on either platform
+  (`ReportMemoryLeaksOnShutdown`, a dialog only when something leaked).

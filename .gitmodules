@@ -22,3 +22,6 @@
 [submodule "external/synapse"]
 	path = external/synapse
 	url = https://github.com/geby/synapse.git
+[submodule "external/opcb"]
+	path = external/opcb
+	url = https://github.com/fabianoallex/opcb-object-pascal-component-builder.git
