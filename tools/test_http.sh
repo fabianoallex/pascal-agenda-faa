@@ -118,6 +118,12 @@ stop() {
   sleep 1
 }
 start() {
+  # Something else on the port (the compose file's api publishes 9400) would
+  # answer the health check before this api binds, and take the first
+  # requests: say so instead.
+  if curl -s -o /dev/null "http://127.0.0.1:$PORT/health/live"; then
+    echo "port $PORT already answers (docker compose's api?): set PORT"; exit 1
+  fi
   (cd "$DIR" && "$EXE" "$PORT" > "$LOG" 2>&1 &)
   for I in 1 2 3 4 5 6 7 8 9 10; do
     curl -s -o /dev/null "http://127.0.0.1:$PORT/health/live" && return 0; sleep 1

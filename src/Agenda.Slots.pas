@@ -37,8 +37,6 @@ uses
 const
   /// Free slots start on this grid, from the start of each working span.
   SLOT_STEP_MINUTES = 15;
-  /// GET .../availability: at most this many days in one answer.
-  MAX_AVAILABILITY_DAYS = 14;
 
 type
   /// [StartUtc, EndUtc), Unix seconds.

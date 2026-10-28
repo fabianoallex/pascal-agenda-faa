@@ -1920,8 +1920,9 @@ both, resizes the window and checks the layout, then quits.
 - **Found (OPCB)**: in grid mode a control without an explicit height is placed with height 0:
   its top is the cell's middle (`AdjustRectForCellLayout` gets 0), the LCL then gives the
   `TEdit` its own height, and what follows the grid (`GridFinish`, `BreakLine`) starts over its
-  last row. The creator's `SetControlHeight` default doesn't reach a grid cell (it reaches the
-  controls after the grid). Here: `GridCellStrechAll`, the cell's height given to each
+  last row. The creator's `SetControlHeight` default comes too late for a cell: `Add` applies it
+  (`ApplyDefaultControlSize`) after the control is built at the position computed with height
+  0, and over the cell's stretched height. Here: `GridCellStrechAll`, the cell's height given to each
   control (the same layout on the VCL); the height-0 case itself measured on the LCL only. To
   be fixed in OPCB, not here.
 - Also learnt: after `GridFinish` the grid is one block in the outer level's direction; a row
@@ -1940,3 +1941,28 @@ both, resizes the window and checks the layout, then quits.
   VCL (28) and its text's on the LCL (15).
 - Delphi 12 Win32 builds too; no leak report at the stop on either platform
   (`ReportMemoryLeaksOnShutdown`, a dialog only when something leaked).
+
+### M6: the DTO units (2026-10-28, decisions 1 and 2)
+
+- Six units of their own: `Agenda.Appointments.Dtos` (the statuses, `STATUS_CANCELLED` among
+  them, moved from `Agenda.Availability`; the error codes; the ordering), `Agenda.Availability.Dtos`
+  (its error codes; `MAX_AVAILABILITY_DAYS`, moved from `Agenda.Slots`, where only the
+  description used it), `Agenda.Day.Dtos`, `Agenda.Customers.Dtos`, `Agenda.Professionals.Dtos`,
+  `Agenda.Services.Dtos` (its limits). Each holds the interfaces, the classes, the mapper's
+  registrations and the `Describe` calls; it uses pascal-common-faa, pascal-jsonmapper-faa and
+  `PascalApi.Dto`/`PascalApi.OrderBy`/`PascalApi.OpenApi` only. The server's units use them
+  (`Agenda.Day`, `Agenda.Appointments` and `Agenda.Public` gained a `uses`). The users',
+  working hours' and time off's DTOs stay in their units (no screen of the client needs them);
+  `Agenda.AuthDtos` was already apart.
+- Checked: a program on the six units and `Agenda.AuthDtos`, built with no pascal-db-faa,
+  pascal-redis-faa or Horse in its search path (FPC Win64): a booking to JSON and back, and a
+  service of 900 minutes refused by `TApiSchema.Check` before any request (`durationMinutes`),
+  0 unfreed blocks.
+- The api unchanged: FPC Windows, HTTP on SQLite 669 + 74, on PostgreSQL with Redis and RabbitMQ
+  680 + 74, the restart; unit tests 116, 0 leaks, on FPC Windows and Linux. Not run: the official
+  MCP client (this machine's `python` has no `mcp`). Delphi: waiting for the IDE.
+- Found while running them: the compose file's api, left up, publishes port 9400, the runner's
+  default; the health check reached it before the api under test bound the port, so the token
+  for the restart came from it ("no token before the restart", the same on the last commit).
+  `tools/test_http.sh` now stops with a message when the port already answers; `PORT=9410` runs
+  beside the compose file.

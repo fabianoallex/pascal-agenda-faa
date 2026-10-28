@@ -133,11 +133,23 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
+        <Filename Value="..\src\Agenda.Services.Dtos.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
         <Filename Value="..\src\Agenda.Services.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
+        <Filename Value="..\src\Agenda.Professionals.Dtos.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
         <Filename Value="..\src\Agenda.Professionals.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\src\Agenda.Customers.Dtos.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
@@ -165,7 +177,15 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
+        <Filename Value="..\src\Agenda.Availability.Dtos.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
         <Filename Value="..\src\Agenda.Availability.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\src\Agenda.Day.Dtos.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
@@ -182,6 +202,10 @@
       </Unit>
       <Unit>
         <Filename Value="..\src\Agenda.WinHeap.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\src\Agenda.Appointments.Dtos.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>

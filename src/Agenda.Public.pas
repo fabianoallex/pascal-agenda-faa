@@ -233,7 +233,11 @@ uses
   Agenda.Services,
   Agenda.Professionals,
   Agenda.Customers,
-  Agenda.Appointments;
+  Agenda.Appointments,
+  Agenda.Services.Dtos,
+  Agenda.Professionals.Dtos,
+  Agenda.Customers.Dtos,
+  Agenda.Appointments.Dtos;
 
 { DTOs }
 
