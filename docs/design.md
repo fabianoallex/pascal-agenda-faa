@@ -1711,12 +1711,15 @@ Two gaps found while designing:
     every route: `GET /services` p50 94 ms against 63; the bookings p95 6 s against 3.8 s), and
     5 requests of 15088 got 503 (`EPoolTimeoutException`, the pool's 40 all held). Delphi uses
     pascal-db-faa's FireDAC adapter, FPC its SQLdb one; where the time goes was not looked into.
-  - **On SQLite, writers under load get "database is locked"** at once, answered 409
-    (`ELockConflictException`): 238 times on Delphi (FireDAC), 19 on FPC (SQLdb), both with a
-    5 s busy timeout. Suspected, not measured: a transaction that read and then writes
-    (deferred) gets SQLITE_BUSY without the busy timeout when another writer holds the lock
-    (`BEGIN IMMEDIATE` avoids it). For pascal-db-faa (a write transaction mode) or the
-    application.
+  - **On SQLite, writers under load get "database is locked"**, answered 409
+    (`ELockConflictException`): 238 times on Delphi (FireDAC), 19 on FPC (SQLdb). Every one
+    after the busy timeout (5 s) ran out: the requests took 6.3 s at least (their access log
+    lines, by trace id). SQLite has one writer at a time and a booking holds the write lock
+    from its first statement (the professional's row) to its commit, so under load the queue of
+    writers passes 5 s; on Delphi sooner, each operation being slower (the item above). A
+    first guess, a read transaction upgraded to a write failing at once, was wrong: the
+    booking's and the idempotency store's transactions start with a write. Capacity, not a
+    library bug: SQLite is the development engine here.
   - **And a booking committed then answered 409**, the case already found with the pool: the
     `Idempotency-Key`'s completion, after the commit, met the lock. The database had 568
     appointments, k6 got 525 201s: the 43 others all on the scenario that sends a key; 12 keys
