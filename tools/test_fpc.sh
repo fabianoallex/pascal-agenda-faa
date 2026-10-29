@@ -12,9 +12,10 @@ command -v "$LAZBUILD" >/dev/null 2>&1 || LAZBUILD=/c/lazarus4.0/lazbuild.exe
 
 cd "$ROOT"
 python tools/gen_fpc_mirror.py
-# Delphi reads a source without a BOM in the ANSI code page, FPC (here) in
-# UTF-8: a non-ASCII literal in such a file passes on FPC and fails on
-# Delphi (2026-10-29, "JoÃ£o"). Write \uXXXX in JSON, or save with a BOM.
+# Accented text is written as it reads ('João', never escapes), in a source
+# saved as UTF-8 with a BOM: without one, Delphi reads the file in the ANSI
+# code page and FPC (here) in UTF-8, so the literal passes on FPC and fails
+# on Delphi (2026-10-29, "JoÃ£o").
 python - <<'EOF'
 import glob, sys
 bad = [f for f in glob.glob('src/*.pas') + glob.glob('tests/**/*.pas', recursive=True)
@@ -22,7 +23,7 @@ bad = [f for f in glob.glob('src/*.pas') + glob.glob('tests/**/*.pas', recursive
        if not open(f, 'rb').read().startswith(b'\xef\xbb\xbf')
        and any(c > 127 for c in open(f, 'rb').read())]
 if bad:
-    print('non-ASCII text in a source without a BOM (Delphi reads it as ANSI):', *bad)
+    print('non-ASCII text in a source without a BOM (save it as UTF-8 with a BOM):', *bad)
     sys.exit(1)
 EOF
 # Agenda.OutboxTests opens SQLite: SQLdb loads sqlite3.dll next to the runner,

@@ -137,13 +137,13 @@ begin
     '{"id":"a1","startsAt":"2026-11-02T12:00:00Z","endsAt":"2026-11-02T12:30:00Z",' +
     '"localStart":"2026-11-02T09:00:00","localEnd":"2026-11-02T09:30:00","status":"booked",' +
     '"version":3,"professionalId":"p 1","professionalName":"Ana","serviceId":"s1",' +
-    '"serviceName":"Corte","customerId":"c1","customerName":"Jo\u00e3o"}]}');
+    '"serviceName":"Corte","customerId":"c1","customerName":"João"}]}');
   LDay := FClient.GetDay('2026-11-02', 'p 1');
   TAssert.AssertEquals('America/Sao_Paulo', LDay.TimeZone);
   TAssert.AssertEquals(1, Length(LDay.Appointments));
   TAssert.AssertEquals(3, LDay.Appointments[0].Version);
   TAssert.AssertEquals('2026-11-02T09:00:00', LDay.Appointments[0].LocalStart);
-  TAssert.AssertEquals('Jo' + JsonCodePointToStr($E3) + 'o', LDay.Appointments[0].CustomerName);
+  TAssert.AssertEquals('João', LDay.Appointments[0].CustomerName);
   TAssert.AssertEquals('http://agenda.test/agenda/day?date=2026-11-02&professional=p%201',
     FFake.Request(1).Url);
 end;

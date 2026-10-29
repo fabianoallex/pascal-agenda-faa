@@ -2160,7 +2160,9 @@ both, resizes the window and checks the layout, then quits.
   the main thread and a forgotten task, the error kinds, the three view models on the fake
   transport), 177 in all, 0 failures, 0 leaks on FPC Windows and Linux (also on one CPU).
 - Found on Delphi (the user's run, 176 of 177): `Agenda.ClientTests` expected "João" and got
-  "JoÃ£o". A script of this session had turned the test's JSON escape `ã` into the
-  character itself, in a file without a BOM: FPC reads such a source as UTF-8, Delphi in the
-  ANSI code page. The escape is back, and `tools/test_fpc.sh` now fails on any non-ASCII text
-  in the project's `.pas`/`.dpr` without a BOM, so FPC catches what only Delphi showed.
+  "JoÃ£o". A script of this session had written the accent into a file without a BOM:
+  FPC reads such a source as UTF-8, Delphi in the ANSI code page. Rule (the user, 2026-10-29):
+  accented text is written as it reads, never as escapes (hard to maintain), in a source
+  saved as UTF-8 with a BOM, which both compilers read as UTF-8. The tests and
+  `AgendaClientCheck` now do so, and `tools/test_fpc.sh` fails on non-ASCII text in the
+  project's `.pas`/`.dpr` without a BOM, so FPC catches what only Delphi showed.

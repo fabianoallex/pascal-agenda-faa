@@ -1,4 +1,4 @@
-program AgendaClientCheck;
+﻿program AgendaClientCheck;
 
 { The desktop client's calls against the real api (decision "Tests" of
   "M6: design"): what the unit tests check on the fake transport, through
@@ -265,7 +265,7 @@ begin
     Check(LClient.Me.Role = 'staff', 'me: the staff');
 
     // A customer, its name with accents, found without them.
-    LName := 'Jo' + JsonCodePointToStr($E3) + 'o Cliente ' + FSuffix;
+    LName := 'João Cliente ' + FSuffix;
     LCustomer := TCustomerInsert.Create;
     LCustomerRef := LCustomer;
     LCustomer.Name := LName;
