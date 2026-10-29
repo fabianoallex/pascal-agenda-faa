@@ -2115,5 +2115,5 @@ both, resizes the window and checks the layout, then quits.
   query, the page), 163 in all, 0 failures, 0 leaks on FPC Windows and Linux. HTTP, FPC Windows:
   SQLite 669 + 74 + client 29, PostgreSQL with Redis and RabbitMQ 680 + 74 + 29; FPC Linux
   (Docker, SQLite) the scenarios, the worker's 79 and the client's 29 with 0 unfreed blocks.
-  Delphi: waiting for the IDE (the unit tests, and `AgendaClientCheck` through
-  `CLIENT_CHECK_EXE`).
+  Delphi 12 Win32 Debug (the user, `CLIENT_CHECK_EXE`): HTTP 669 + 68 (the worker's usual
+  Delphi count) + client 29, no leak report. Delphi: the unit tests and Win64 still to run.
