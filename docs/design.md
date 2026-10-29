@@ -2013,4 +2013,4 @@ both, resizes the window and checks the layout, then quits.
   customer created as "João Ação Müller" and found by `search=acao` with the same name, a
   POST without a body answered 428 (not 411), a closed port as `EHttpTransport`; 0 unfreed
   blocks. `AgendaClientCheck` (decision 5 on) will run such exchanges in `tools/test_http.sh`.
-  Delphi: waiting for the IDE.
+  Delphi 12 Win32 and Win64 (the user): 124 of 124, no leak.
