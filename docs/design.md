@@ -199,6 +199,11 @@ candidate (promote, keep in the application, drop) with these criteria:
 - Percent-encoding a query string's values (RFC 3986, UTF-8 bytes): pascal-api-infra-faa's
   `McpUrlEncode` is private to the MCP unit, so the client wrote its own, `ApiQueryEscape` in
   `src/Agenda.HttpClient` (M6): the second copy (pascal-common-faa).
+- Background work for a screen with its result back on the UI thread, on `PcPool`: a task
+  with `Run` (pool thread) and `Done` (UI thread, via `TThread.Queue`), `Forget(owner)` so a
+  late answer never reaches a freed view model, `WaitIdle` for `OnCloseQuery`, and a manual
+  runner for tests (pascal-common-faa, next to the pool; FPC 3.2.2 has no closures, so a task
+  is an object). **Built here 2026-10-29** as `src/Agenda.Desktop.Tasks` (M6).
 - A package of pascal-api-infra-faa's units a client needs (`PascalApi.Dto`, `PascalApi.OpenApi`,
   `PascalApi.OrderBy`, `PascalApi.Text`): `pascal_api_infra_faa.lpk` requires `pascal_db_faa`,
   so the desktop client's `.lpi` takes the library's `src` as a search path instead (M6).
@@ -2117,3 +2122,41 @@ both, resizes the window and checks the layout, then quits.
   (Docker, SQLite) the scenarios, the worker's 79 and the client's 29 with 0 unfreed blocks.
   Delphi 12 Win32 Debug (the user, `CLIENT_CHECK_EXE`): HTTP 669 + 68 (the worker's usual
   Delphi count) + client 29, no leak report. Delphi: the unit tests and Win64 still to run.
+
+### M6: the view models (2026-10-29, decisions 3 and 8)
+
+- No screen yet: the logic first, in view models a form will read and feed (pascal-snake's
+  rule), tested without LCL or VCL on the four targets.
+- `src/Agenda.Desktop.Tasks`: `TUiTask` (`Run` on a pool thread, its results in the task's
+  fields; `Done` on the UI thread, to the view model; an exception in `Run` goes to `Fail`, and
+  `Done` still runs). `TPoolTaskRunner` on `PcPool` with `TThread.Queue`, `WaitIdle` pumping
+  `CheckSynchronize` (for `OnCloseQuery`: the forms are freed before any unit's finalization);
+  `TManualTaskRunner` for the tests (each task run when the test says, so the busy state is
+  seen in between). `Forget(owner)` in a view model's destructor skips its tasks' `Done`.
+- `src/Agenda.Desktop.Errors`: the exception as a `TUiError` record for `Done` (the exception
+  is gone by then): `ekInvalid` with the fields (local check or a 400), `ekSession` (401),
+  `ekConflict` (409, 412), `ekRefused`, `ekServer`, `ekOffline`, `ekOther`; the server's
+  message as the text when it sent one.
+- `src/Agenda.Desktop.Models` (the common part: busy, error, notice, `OnChange`,
+  `OnSessionLost`), and three view models:
+  - `Agenda.Desktop.Login`: server (an address without a scheme gets `http://`), company,
+    email, password; `Submit` makes the `TAgendaClient` and logs in on the pool; on success the
+    password is forgotten and `TakeClient` hands the client to the program. A 401 here is
+    "Wrong company, email or password.", not a lost session.
+  - `Agenda.Desktop.Day`: the day by date and professional; reads after each change, on
+    `Reload` (F5) and `Tick` (60 s, skipped while a call runs); an older read answering late is
+    dropped (a sequence number); the selection follows the id; confirm, done, no-show, cancel
+    with the version shown as `If-Match`, allowed as the server's rules (done and no-show once
+    started, on an injectable UTC clock); a 409 or 412 becomes a notice and the day is read
+    again.
+  - `Agenda.Desktop.Booking`: services and professionals, the free slots of the chosen day
+    (read again on each choice, late answers dropped), a customer search, `Book`. The
+    `Idempotency-Key` belongs to one choice (service, professional, slot, customer): pressed
+    again after no answer, the same key (the server replays); a new choice, a new key. A 409
+    `slot_unavailable` is a notice, the slots read again, the slot cleared.
+- The UI's texts are English, as the rest of the project (the OPCB probe's Portuguese captions
+  were the probe's).
+- Tests: 14 (`Agenda.DesktopTests`: the manual runner, the pool runner for real with `Done` on
+  the main thread and a forgotten task, the error kinds, the three view models on the fake
+  transport), 177 in all, 0 failures, 0 leaks on FPC Windows and Linux (also on one CPU).
+  Delphi: waiting for the IDE.

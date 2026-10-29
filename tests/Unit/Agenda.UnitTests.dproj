@@ -165,6 +165,13 @@
         <DCCReference Include="..\..\src\Agenda.Services.Dtos.pas"/>
         <DCCReference Include="..\..\src\Agenda.Client.pas"/>
         <DCCReference Include="Agenda.ClientTests.pas"/>
+        <DCCReference Include="..\..\src\Agenda.Desktop.Tasks.pas"/>
+        <DCCReference Include="..\..\src\Agenda.Desktop.Errors.pas"/>
+        <DCCReference Include="..\..\src\Agenda.Desktop.Models.pas"/>
+        <DCCReference Include="..\..\src\Agenda.Desktop.Login.pas"/>
+        <DCCReference Include="..\..\src\Agenda.Desktop.Day.pas"/>
+        <DCCReference Include="..\..\src\Agenda.Desktop.Booking.pas"/>
+        <DCCReference Include="Agenda.DesktopTests.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>

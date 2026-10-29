@@ -50,6 +50,12 @@ uses
   Agenda.Professionals.Dtos in '..\..\src\Agenda.Professionals.Dtos.pas',
   Agenda.Services.Dtos in '..\..\src\Agenda.Services.Dtos.pas',
   Agenda.Client in '..\..\src\Agenda.Client.pas',
+  Agenda.Desktop.Tasks in '..\..\src\Agenda.Desktop.Tasks.pas',
+  Agenda.Desktop.Errors in '..\..\src\Agenda.Desktop.Errors.pas',
+  Agenda.Desktop.Models in '..\..\src\Agenda.Desktop.Models.pas',
+  Agenda.Desktop.Login in '..\..\src\Agenda.Desktop.Login.pas',
+  Agenda.Desktop.Day in '..\..\src\Agenda.Desktop.Day.pas',
+  Agenda.Desktop.Booking in '..\..\src\Agenda.Desktop.Booking.pas',
   Agenda.DUnitXCompat in 'Agenda.DUnitXCompat.pas',
   Agenda.PasswordsTests in 'Agenda.PasswordsTests.pas',
   Agenda.TokensTests in 'Agenda.TokensTests.pas',
@@ -68,7 +74,8 @@ uses
   Agenda.HttpTransportTests in 'Agenda.HttpTransportTests.pas',
   Agenda.HttpClientTests in 'Agenda.HttpClientTests.pas',
   Agenda.HttpSessionTests in 'Agenda.HttpSessionTests.pas',
-  Agenda.ClientTests in 'Agenda.ClientTests.pas';
+  Agenda.ClientTests in 'Agenda.ClientTests.pas',
+  Agenda.DesktopTests in 'Agenda.DesktopTests.pas';
 
 var
   runner: ITestRunner;
