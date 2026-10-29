@@ -33,7 +33,8 @@ uses
   Agenda.MailTests,
   Agenda.WorkerTests,
   Agenda.OutboxAmqpTests,
-  Agenda.HttpTransportTests;
+  Agenda.HttpTransportTests,
+  Agenda.HttpClientTests;
 
 var
   ConsoleApp: TTestRunner;

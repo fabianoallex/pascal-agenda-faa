@@ -188,6 +188,8 @@ candidate (promote, keep in the application, drop) with these criteria:
   in "M6: design", decisions 4 to 7). Its transport **built here 2026-10-29** as
   `src/Agenda.HttpTransport` (`IHttpTransport`, each compiler's own client, the third copy of
   that switch) with a fake, `src/Agenda.HttpTransport.Fake`; see "M6: the HTTP transport".
+  The client over it **built here 2026-10-29** as `src/Agenda.HttpClient`; see "M6: the
+  generic client".
 
 **Found while building** (not in the first list):
 
@@ -2014,3 +2016,27 @@ both, resizes the window and checks the layout, then quits.
   POST without a body answered 428 (not 411), a closed port as `EHttpTransport`; 0 unfreed
   blocks. `AgendaClientCheck` (decision 5 on) will run such exchanges in `tools/test_http.sh`.
   Delphi 12 Win32 and Win64 (the user): 124 of 124, no leak.
+
+### M6: the generic client (2026-10-29, decisions 5 and 7)
+
+- `src/Agenda.HttpClient`, `TApiHttpClient.Execute(TApiRequest)`: JSON text in and out (the
+  mapping is the typed layer's), `Accept`, the body's type, `If-Match`, `Idempotency-Key`, a
+  `traceparent` per try in the request's trace (`TraceId`, one per user action; a new trace
+  when none), the bearer token from an `IApiCredentials`. A 2xx is returned; any other status
+  raises `EApiError` with the error body's message, `code` and `fields` as `TPcFieldErrors`
+  (the type a local `TApiSchema.Check` fills, so a screen shows both alike); a body that isn't
+  JSON leaves the status alone ("GET /x answered 404").
+- Decision 7 inside it: a GET or HEAD, and a request with an `Idempotency-Key`, go again on a
+  lost connection, 429, 502, 503, 504, and (keyed only) on 409 `idempotency_key_in_flight`,
+  which the first draft of the decision missed: the retry of a booking whose first try still
+  runs meets that 409 (pascal-api-infra-faa's lease), and waiting is right. Three tries in all,
+  300 ms then 600 ms, or the answer's `Retry-After` in seconds; one longer than 10 s goes to the
+  caller instead. A PATCH or a cancel is never sent twice (`NoRetry` stops a GET too). The
+  waits go through a `Sleep` property, recorded by the tests.
+- Decision 6's hook: on a 401 the client asks `IApiCredentials.Renew(staleToken)` once and,
+  when it gives a token, sends again (not a retry); a second 401 goes to the caller.
+  `Anonymous` requests (login, refresh) carry no token and renew nothing. The single-flight
+  refresh is the credentials' own (next step).
+- Execute keeps no state between calls: several threads may call it.
+- Tests: 16 (`Agenda.HttpClientTests`, on the fake transport), 140 in all, 0 failures, 0 leaks
+  on FPC Windows and Linux. Delphi: waiting for the IDE.
