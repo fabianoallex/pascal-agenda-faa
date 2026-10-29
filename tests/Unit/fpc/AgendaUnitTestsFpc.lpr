@@ -35,7 +35,8 @@ uses
   Agenda.OutboxAmqpTests,
   Agenda.HttpTransportTests,
   Agenda.HttpClientTests,
-  Agenda.HttpSessionTests;
+  Agenda.HttpSessionTests,
+  Agenda.ClientTests;
 
 var
   ConsoleApp: TTestRunner;

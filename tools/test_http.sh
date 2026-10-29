@@ -17,6 +17,11 @@
 # it with --drain on the same database (the api restarted, so the public
 # rate limit's window is empty again).
 #
+# The desktop client (M6): a third start with ACCESS_TOKEN_SECONDS=8 runs
+# client/check/AgendaClientCheck (its own /auth/ window, tokens that run out
+# while it works). CLIENT_CHECK_EXE=client/check/Win32/Debug/AgendaClientCheck.exe
+# for a Delphi build.
+#
 # DB_ENGINE=postgresql runs them on PostgreSQL: a fresh postgres:17 container
 # (PG_IMAGE) on port 55433 (PG_PORT), removed at the end, and the 64-bit
 # libpq.dll of the newest install under C:\Program Files\PostgreSQL
@@ -60,6 +65,13 @@ if [ -z "$WORKER_EXE" ]; then
   fi
   cp "${SQLITE_DLL:-.deps/sqlite3.dll}" worker/sqlite3.dll
   WORKER_EXE=worker/AgendaWorker.exe
+fi
+if [ -z "$CLIENT_CHECK_EXE" ]; then
+  if ! (cd client/check && "$LAZBUILD" -B AgendaClientCheck.lpi > build.log 2>&1); then
+    grep -E "Error|Fatal" client/check/build.log | head -30
+    exit 1
+  fi
+  CLIENT_CHECK_EXE=client/check/AgendaClientCheck.exe
 fi
 EXE="$ROOT/$AGENDA_EXE"
 DIR="$(dirname "$EXE")"
@@ -193,3 +205,18 @@ fi
 grep -q "at version $VERSION" "$LOG" || { echo "FAIL: not at version $VERSION"; cat "$LOG"; exit 1; }
 [ "$STATUS" = 200 ] || { echo "FAIL: a token from before the restart answered $STATUS"; exit 1; }
 echo "ok: no migration on the second start, version $VERSION; a token from before the restart verifies"
+
+echo "== the desktop client's calls (AgendaClientCheck), tokens of 8 s"
+export ACCESS_TOKEN_SECONDS=8
+start
+unset ACCESS_TOKEN_SECONDS
+CRC=0
+CLOG="$ROOT/client/check/check.log"
+CHECK_TOKEN_SECONDS=8 "$ROOT/$CLIENT_CHECK_EXE" "http://127.0.0.1:$PORT" > "$CLOG" 2>&1 || CRC=$?
+stop
+grep "^client check:" "$CLOG" || { echo "FAIL: no summary from AgendaClientCheck"; cat "$CLOG"; exit 1; }
+[ $CRC -eq 0 ] || { grep -v "^ok " "$CLOG"; exit $CRC; }
+# An FPC build reports its heap (heaptrc) at the end.
+if grep -q "unfreed memory blocks" "$CLOG"; then
+  grep -q "^0 unfreed memory blocks" "$CLOG" || { echo "FAIL: AgendaClientCheck leaked"; sed -n '/unfreed/,$p' "$CLOG" | head -30; exit 1; }
+fi

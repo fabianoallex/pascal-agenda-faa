@@ -6,9 +6,11 @@
 # pascal-api-infra-faa's tools/promtool_check.sh); starts it again: no
 # migration may run, and a token issued before the restart must verify;
 # then the worker (built with heaptrc) through tools/http_scenarios_worker.sh,
-# SIGTERM included. Its lease is the database's here: the appointments'
-# scenarios shut Redis down, and from inside the container it can't be
-# started again (tools/test_http.sh checks the Redis lease on Windows).
+# SIGTERM included; then a third start with ACCESS_TOKEN_SECONDS=8 for the
+# desktop client's calls (client/check/AgendaClientCheck, with heaptrc).
+# The worker's lease is the database's here: the appointments' scenarios
+# shut Redis down, and from inside the container it can't be started again
+# (tools/test_http.sh checks the Redis lease on Windows).
 #
 # Plain fpc, not lazbuild: every path is given by hand (-Fu/-Fi), the same
 # copies the .lpi names. The image needs FPC 3.2.2, curl, libsqlite3-0,
@@ -82,7 +84,7 @@ MSYS_NO_PATHCONV=1 docker run --rm $NETOPT -v "$MOUNT:/src:ro" \
   -e AMQP_HOST="$AMQP_HOST" -e AMQP_RETRY_MS=2000 \
   -e DB_FILE=/t/run/agenda.sqlite "$IMAGE" sh -c '
   set -e
-  mkdir -p /t/units /t/wunits /t/run && cp -r /src/src /src/api /src/worker /src/tools /src/external /t/
+  mkdir -p /t/units /t/wunits /t/cunits /t/run && cp -r /src/src /src/api /src/worker /src/client /src/tools /src/external /t/
   E=/t/external
   P="-Fu/t/src -Fi/t/src"
   P="$P -Fu$E/pascal-api-infra-faa/src -Fi$E/pascal-api-infra-faa/src -Fu$E/pascal-api-infra-faa/src/horse"
@@ -99,6 +101,13 @@ MSYS_NO_PATHCONV=1 docker run --rm $NETOPT -v "$MOUNT:/src:ro" \
   W="-Fu$E/synapse -Fi$E/synapse -Fu$E/pascal-amqp-faa/src -Fi$E/pascal-amqp-faa/src"
   fpc -v0 -Mdelphi -dUseCThreads $P $W -gh -gl -FU/t/wunits -o/t/AgendaWorker AgendaWorker.dpr \
     > /t/wbuild.log 2>&1 || { grep -iE "error|fatal" /t/wbuild.log | head -30; exit 1; }
+  # The client: no pascal-db-faa, Redis or Horse in its paths.
+  cd /t/client/check
+  C="-Fu/t/src -Fi/t/src -Fu$E/pascal-api-infra-faa/src -Fi$E/pascal-api-infra-faa/src"
+  C="$C -Fu$E/pascal-common-faa/src -Fi$E/pascal-common-faa/src -Fu$E/pascal-common-faa/bridges/jsonmapper"
+  C="$C -Fu$E/pascal-jsonmapper-faa/src -Fi$E/pascal-jsonmapper-faa/src"
+  fpc -v0 -Mdelphi -dUseCThreads $C -gh -gl -FU/t/cunits -o/t/AgendaClientCheck AgendaClientCheck.dpr \
+    > /t/cbuild.log 2>&1 || { grep -iE "error|fatal" /t/cbuild.log | head -30; exit 1; }
   cd /t/run
   # heaptrc (-gh) writes its report at the stop to HEAPTRC_FILE (M5: the api
   # stops cleanly on SIGTERM).
@@ -197,4 +206,19 @@ MSYS_NO_PATHCONV=1 docker run --rm $NETOPT -v "$MOUNT:/src:ro" \
   grep -q "at version $VERSION" /t/server.log || { echo "FAIL: not at version $VERSION"; cat /t/server.log; exit 1; }
   [ "$STATUS" = 200 ] || { echo "FAIL: a token from before the restart answered $STATUS"; exit 1; }
   echo "ok: no migration on the second start, version $VERSION; a token from before the restart verifies"
+
+  echo "== the desktop client'"'"'s calls (AgendaClientCheck), tokens of 8 s"
+  export ACCESS_TOKEN_SECONDS=8
+  start
+  unset ACCESS_TOKEN_SECONDS
+  CRC=0
+  rm -f /t/client-heap.txt
+  HEAPTRC="log=/t/client-heap.txt" CHECK_TOKEN_SECONDS=8 /t/AgendaClientCheck http://127.0.0.1:9400 \
+    > /t/client.log 2>&1 || CRC=$?
+  stop
+  grep "^client check:" /t/client.log || { echo "FAIL: no summary from AgendaClientCheck"; cat /t/client.log; exit 1; }
+  [ $CRC -eq 0 ] || { grep -v "^ok " /t/client.log; exit $CRC; }
+  grep -q "^0 unfreed memory blocks" /t/client-heap.txt \
+    || { echo "FAIL: AgendaClientCheck leaked"; head -30 /t/client-heap.txt; exit 1; }
+  echo "ok: AgendaClientCheck, 0 unfreed blocks"
 '

@@ -110,7 +110,7 @@ end;
 function TTestRefresher.Refresh(const ARefreshToken: string): TApiTokens;
 var
   N: Integer;
-  LResponse: TApiResponse;
+  LResponse: TApiReply;
 begin
   FLock.Acquire;
   try
@@ -133,7 +133,7 @@ begin
           LResponse.Status := 429;
         LResponse.Body := '{"error":"no","code":"invalid_refresh_token"}';
         LResponse.Headers := nil;
-        raise EApiError.CreateFromResponse(TApiRequest.Create('POST', '/auth/refresh'), LResponse);
+        raise EApiError.CreateFromResponse(TApiCall.Create('POST', '/auth/refresh'), LResponse);
       end;
     roNoAnswer:
       raise EHttpTransport.Create('connection refused');
@@ -347,7 +347,7 @@ begin
     LClient.Credentials := FSessionRef;
     LFake.Answer(401, '{"error":"Token expired.","code":"invalid_token"}');
     LFake.Answer(200, '{"id":"u1"}');
-    TAssert.AssertEquals('{"id":"u1"}', LClient.Execute(TApiRequest.Create('GET', '/me')).Body);
+    TAssert.AssertEquals('{"id":"u1"}', LClient.Execute(TApiCall.Create('GET', '/me')).Body);
     TAssert.AssertEquals('Bearer acc0', LFake.Request(0).Header('Authorization'));
     TAssert.AssertEquals('Bearer acc1', LFake.Request(1).Header('Authorization'));
     TAssert.AssertEquals(1, FRefresher.Calls);

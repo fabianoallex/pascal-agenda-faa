@@ -51,7 +51,7 @@ const
 
 type
   /// What the client sends; Path starts with '/' and carries the query.
-  TApiRequest = record
+  TApiCall = record
     Method: string;
     Path: string;
     /// JSON; '' for none.
@@ -66,10 +66,10 @@ type
     Anonymous: Boolean;
     /// Never retried, even when it could be.
     NoRetry: Boolean;
-    class function Create(const AMethod, APath: string): TApiRequest; static;
+    class function Create(const AMethod, APath: string): TApiCall; static;
   end;
 
-  TApiResponse = record
+  TApiReply = record
     Status: Integer;
     Body: string;
     Headers: THttpFields;
@@ -88,7 +88,7 @@ type
     FMethod: string;
     FPath: string;
   public
-    constructor CreateFromResponse(const ARequest: TApiRequest; const AResponse: TApiResponse);
+    constructor CreateFromResponse(const ARequest: TApiCall; const AResponse: TApiReply);
     property Status: Integer read FStatus;
     /// The body's "code" ('' when it had none).
     property Code: string read FCode;
@@ -123,16 +123,16 @@ type
     FTimeoutMs: Integer;
     FSleep: TApiSleepProc;
     procedure DefaultSleep(AMilliseconds: Integer);
-    function Exchange(const ARequest: TApiRequest; const ATraceId, AToken: string): TApiResponse;
-    function MayRetry(const ARequest: TApiRequest): Boolean;
-    function WaitBefore(const ARequest: TApiRequest; const AResponse: TApiResponse;
+    function Exchange(const ARequest: TApiCall; const ATraceId, AToken: string): TApiReply;
+    function MayRetry(const ARequest: TApiCall): Boolean;
+    function WaitBefore(const ARequest: TApiCall; const AResponse: TApiReply;
       AAttempt: Integer; out AWaitMs: Integer): Boolean;
   public
     /// ABaseUrl without the trailing '/' (one is removed).
     constructor Create(const ABaseUrl: string; const ATransport: IHttpTransport);
     /// A 2xx answer; EApiError for any other status, EHttpTransport when
     /// there was no answer and no retry left.
-    function Execute(const ARequest: TApiRequest): TApiResponse;
+    function Execute(const ARequest: TApiCall): TApiReply;
     property BaseUrl: string read FBaseUrl;
     property Credentials: IApiCredentials read FCredentials write FCredentials;
     /// Tries in all for a request that may be retried (1: no retry).
@@ -144,6 +144,29 @@ type
     /// How the client waits between tries (tests record it).
     property Sleep: TApiSleepProc read FSleep write FSleep;
   end;
+
+  /// A page of a list as pascal-api-infra-faa writes it: page, limit,
+  /// total, totalPages, hasNext, hasPrev, items.
+  TApiPageInfo = record
+    Page: Integer;
+    Limit: Integer;
+    Total: Int64;
+    TotalPages: Int64;
+    HasNext: Boolean;
+    HasPrev: Boolean;
+  end;
+
+  EApiPageFormat = class(Exception);
+
+/// AText for a query string: UTF-8, every byte but A-Z a-z 0-9 - . _ ~ as
+/// %XX (RFC 3986's unreserved characters).
+function ApiQueryEscape(const AText: string): string;
+/// '?name=value&...' from name/value pairs; a pair whose value is '' is
+/// left out; '' when every value is.
+function ApiQuery(const ANamesAndValues: array of string): string;
+/// The page's numbers in AInfo and its "items" array as JSON text, for the
+/// mapper; EApiPageFormat when ABody isn't such a page.
+function ReadApiPage(const ABody: string; out AInfo: TApiPageInfo): string;
 
 /// A key for Idempotency-Key: 32 lowercase hex digits, random.
 function NewIdempotencyKey: string;
@@ -157,7 +180,99 @@ implementation
 
 uses
   PascalCommon.TraceContext,
+  PascalCommon.Utf8,
   PascalJsonMapper.Json;
+
+function ApiQueryEscape(const AText: string): string;
+const
+  HEX = '0123456789ABCDEF';
+var
+  LBytes: TBytes;
+  I: Integer;
+  B: Byte;
+begin
+  Result := '';
+  LBytes := PcStringToUtf8Bytes(AText);
+  for I := 0 to High(LBytes) do
+  begin
+    B := LBytes[I];
+    if ((B >= Ord('A')) and (B <= Ord('Z'))) or ((B >= Ord('a')) and (B <= Ord('z'))) or
+      ((B >= Ord('0')) and (B <= Ord('9'))) or (B = Ord('-')) or (B = Ord('.')) or
+      (B = Ord('_')) or (B = Ord('~')) then
+      Result := Result + Char(B)
+    else
+      Result := Result + '%' + HEX[(B shr 4) + 1] + HEX[(B and $F) + 1];
+  end;
+end;
+
+function ApiQuery(const ANamesAndValues: array of string): string;
+var
+  I: Integer;
+begin
+  if Odd(Length(ANamesAndValues)) then
+    raise EArgumentException.Create('ApiQuery: names and values in pairs');
+  Result := '';
+  I := 0;
+  while I < High(ANamesAndValues) do
+  begin
+    if ANamesAndValues[I + 1] <> '' then
+    begin
+      if Result = '' then
+        Result := '?'
+      else
+        Result := Result + '&';
+      Result := Result + ApiQueryEscape(ANamesAndValues[I]) + '=' +
+        ApiQueryEscape(ANamesAndValues[I + 1]);
+    end;
+    Inc(I, 2);
+  end;
+end;
+
+function ReadApiPage(const ABody: string; out AInfo: TApiPageInfo): string;
+
+  function Int(ARoot: TJsonValue; const AName: string): Int64;
+  var
+    LValue: TJsonValue;
+  begin
+    LValue := ARoot.Find(AName);
+    if (LValue = nil) or (LValue.Kind <> jkNumber) or not LValue.TryAsInt64(Result) then
+      raise EApiPageFormat.CreateFmt('a page without a whole "%s"', [AName]);
+  end;
+
+  function Bool(ARoot: TJsonValue; const AName: string): Boolean;
+  var
+    LValue: TJsonValue;
+  begin
+    LValue := ARoot.Find(AName);
+    Result := (LValue <> nil) and (LValue.Kind = jkBoolean) and LValue.AsBoolean;
+  end;
+
+var
+  LRoot, LItems: TJsonValue;
+begin
+  try
+    LRoot := ParseJson(ABody);
+  except
+    on E: EJsonError do
+      raise EApiPageFormat.Create('a page that isn''t JSON: ' + E.Message);
+  end;
+  try
+    if LRoot.Kind <> jkObject then
+      raise EApiPageFormat.Create('a page that isn''t an object');
+    LItems := LRoot.Find('items');
+    if (LItems = nil) or (LItems.Kind <> jkArray) then
+      raise EApiPageFormat.Create('a page without "items"');
+    AInfo.Page := Integer(Int(LRoot, 'page'));
+    AInfo.Limit := Integer(Int(LRoot, 'limit'));
+    AInfo.Total := Int(LRoot, 'total');
+    AInfo.TotalPages := Int(LRoot, 'totalPages');
+    AInfo.HasNext := Bool(LRoot, 'hasNext');
+    AInfo.HasPrev := Bool(LRoot, 'hasPrev');
+    Result := LItems.ToJson;
+  finally
+    LRoot.Free;
+  end;
+end;
 
 function NewIdempotencyKey: string;
 begin
@@ -191,9 +306,9 @@ begin
   Result := True;
 end;
 
-{ TApiRequest }
+{ TApiCall }
 
-class function TApiRequest.Create(const AMethod, APath: string): TApiRequest;
+class function TApiCall.Create(const AMethod, APath: string): TApiCall;
 begin
   Result.Method := AMethod;
   Result.Path := APath;
@@ -205,21 +320,21 @@ begin
   Result.NoRetry := False;
 end;
 
-{ TApiResponse }
+{ TApiReply }
 
-function TApiResponse.Header(const AName: string): string;
+function TApiReply.Header(const AName: string): string;
 begin
   FindHttpField(Headers, AName, Result);
 end;
 
-function TApiResponse.ETag: string;
+function TApiReply.ETag: string;
 begin
   Result := Header('ETag');
 end;
 
 { EApiError }
 
-constructor EApiError.CreateFromResponse(const ARequest: TApiRequest; const AResponse: TApiResponse);
+constructor EApiError.CreateFromResponse(const ARequest: TApiCall; const AResponse: TApiReply);
 var
   LRoot, LValue, LFields, LItem: TJsonValue;
   LMessage: string;
@@ -298,8 +413,8 @@ begin
   SysUtils.Sleep(AMilliseconds);
 end;
 
-function TApiHttpClient.Exchange(const ARequest: TApiRequest;
-  const ATraceId, AToken: string): TApiResponse;
+function TApiHttpClient.Exchange(const ARequest: TApiCall;
+  const ATraceId, AToken: string): TApiReply;
 var
   LSend: TTransportRequest;
   LAnswer: TTransportResponse;
@@ -325,7 +440,7 @@ begin
   Result.Headers := LAnswer.Headers;
 end;
 
-function TApiHttpClient.MayRetry(const ARequest: TApiRequest): Boolean;
+function TApiHttpClient.MayRetry(const ARequest: TApiCall): Boolean;
 begin
   Result := (not ARequest.NoRetry) and (SameText(ARequest.Method, 'GET') or
     SameText(ARequest.Method, 'HEAD') or (ARequest.IdempotencyKey <> ''));
@@ -333,8 +448,8 @@ end;
 
 // Whether a try that got AResponse (Status 0: no answer) goes again, and
 // after how long. AAttempt: the tries made so far.
-function TApiHttpClient.WaitBefore(const ARequest: TApiRequest;
-  const AResponse: TApiResponse; AAttempt: Integer; out AWaitMs: Integer): Boolean;
+function TApiHttpClient.WaitBefore(const ARequest: TApiCall;
+  const AResponse: TApiReply; AAttempt: Integer; out AWaitMs: Integer): Boolean;
 var
   LInFlight: Boolean;
   LRetryAfter: Integer;
@@ -371,7 +486,7 @@ begin
   Result := True;
 end;
 
-function TApiHttpClient.Execute(const ARequest: TApiRequest): TApiResponse;
+function TApiHttpClient.Execute(const ARequest: TApiCall): TApiReply;
 var
   LTraceId, LToken: string;
   LAttempt, LWaitMs: Integer;

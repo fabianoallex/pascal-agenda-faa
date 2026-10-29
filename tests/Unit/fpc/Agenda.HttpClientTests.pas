@@ -20,6 +20,7 @@ interface
 uses
   fpcunit, testregistry,
   SysUtils,
+  PascalJsonMapper.Json,
   Agenda.HttpTransport,
   Agenda.HttpTransport.Fake,
   Agenda.HttpClient;
@@ -43,7 +44,7 @@ type
     FFake: TFakeHttpTransport;
     FTransport: IHttpTransport;
     FClient: TApiHttpClient;
-    FRequest: TApiRequest;
+    FRequest: TApiCall;
     FSleeps: string;
     procedure RecordSleep(AMilliseconds: Integer);
     procedure ExecuteRequest;
@@ -69,6 +70,9 @@ type
     procedure Unauthorized_NotRenewable;
     procedure Anonymous_NoToken_NoRenewal;
     procedure RetryAfter_Parsed;
+    procedure Query_Escaped_EmptyLeftOut;
+    procedure Page_Read;
+    procedure Page_NotAPage;
   end;
 
 implementation
@@ -139,11 +143,11 @@ end;
 
 procedure THttpClientTests.Get_WhatItSends;
 var
-  LResponse: TApiResponse;
+  LResponse: TApiReply;
   LSent: TTransportRequest;
 begin
   FFake.Answer(200, '{"date":"2026-11-02"}', ['ETag: "5"']);
-  LResponse := FClient.Execute(TApiRequest.Create('GET', '/agenda/day?date=2026-11-02'));
+  LResponse := FClient.Execute(TApiCall.Create('GET', '/agenda/day?date=2026-11-02'));
   TAssert.AssertEquals(200, LResponse.Status);
   TAssert.AssertEquals('{"date":"2026-11-02"}', LResponse.Body);
   TAssert.AssertEquals('"5"', LResponse.ETag);
@@ -174,7 +178,7 @@ begin
   TAssert.AssertEquals(32, Length(LKey));
   TAssert.AssertFalse(LKey = NewIdempotencyKey);
   FFake.Answer(201, '{"id":"a1"}');
-  FRequest := TApiRequest.Create('POST', '/appointments');
+  FRequest := TApiCall.Create('POST', '/appointments');
   FRequest.Body := '{"serviceId":"s1"}';
   FRequest.IdempotencyKey := LKey;
   FRequest.IfMatch := '"3"';
@@ -196,7 +200,7 @@ begin
   FFake.Answer(400, '{"error":"\"name\" is required.","code":"invalid_fields","fields":[' +
     '{"field":"name","code":"required","message":"\"name\" is required."},' +
     '{"field":"phone","code":"invalid_phone","message":"Not a phone."}]}');
-  FRequest := TApiRequest.Create('POST', '/customers');
+  FRequest := TApiCall.Create('POST', '/customers');
   FRequest.Body := '{"name":""}';
   try
     FClient.Execute(FRequest);
@@ -223,7 +227,7 @@ procedure THttpClientTests.Error_NotJson_TheStatusAlone;
 begin
   FFake.Answer(404, '<html>Not Found</html>');
   try
-    FClient.Execute(TApiRequest.Create('GET', '/nowhere'));
+    FClient.Execute(TApiCall.Create('GET', '/nowhere'));
     TAssert.Fail('no EApiError');
   except
     on E: EApiError do
@@ -244,7 +248,7 @@ begin
   FFake.Fail;
   FFake.Answer(502, '');
   FFake.Answer(200, '[]');
-  TAssert.AssertEquals('[]', FClient.Execute(TApiRequest.Create('GET', '/customers')).Body);
+  TAssert.AssertEquals('[]', FClient.Execute(TApiCall.Create('GET', '/customers')).Body);
   TAssert.AssertEquals('300,600', FSleeps);
   LRequests := FFake.Requests;
   TAssert.AssertEquals(3, Length(LRequests));
@@ -260,7 +264,7 @@ begin
   FFake.Answer(504, '');
   FFake.Answer(503, '{"error":"busy","code":"busy"}');
   FFake.Answer(200, '');
-  FRequest := TApiRequest.Create('GET', '/customers');
+  FRequest := TApiCall.Create('GET', '/customers');
   try
     FClient.Execute(FRequest);
     TAssert.Fail('no EApiError');
@@ -281,7 +285,7 @@ begin
   FFake.Fail;
   FFake.Fail;
   FFake.Fail;
-  FRequest := TApiRequest.Create('GET', '/customers');
+  FRequest := TApiCall.Create('GET', '/customers');
   TAssert.AssertException(EHttpTransport, ExecuteRequest);
   TAssert.AssertEquals(3, FFake.RequestCount);
 end;
@@ -290,13 +294,13 @@ procedure THttpClientTests.RetryAfter_Waited_OrTooLong;
 begin
   FFake.Answer(429, '', ['Retry-After: 2']);
   FFake.Answer(200, '');
-  FClient.Execute(TApiRequest.Create('GET', '/customers'));
+  FClient.Execute(TApiCall.Create('GET', '/customers'));
   TAssert.AssertEquals('2000', FSleeps);
 
   // Longer than MaxRetryAfterMs (10 s): the caller hears of it at once.
   FSleeps := '';
   FFake.Answer(503, '', ['Retry-After: 60']);
-  FRequest := TApiRequest.Create('GET', '/customers');
+  FRequest := TApiCall.Create('GET', '/customers');
   TAssert.AssertException(EApiError, ExecuteRequest);
   TAssert.AssertEquals('', FSleeps);
   TAssert.AssertEquals(3, FFake.RequestCount);
@@ -305,14 +309,14 @@ end;
 procedure THttpClientTests.Patch_NeverSentTwice;
 begin
   FFake.Fail;
-  FRequest := TApiRequest.Create('PATCH', '/appointments/a1');
+  FRequest := TApiCall.Create('PATCH', '/appointments/a1');
   FRequest.Body := '{"startsAt":"2026-11-02T13:00:00Z"}';
   FRequest.IfMatch := '"2"';
   TAssert.AssertException(EHttpTransport, ExecuteRequest);
   TAssert.AssertEquals(1, FFake.RequestCount);
 
   FFake.Answer(503, '');
-  FRequest := TApiRequest.Create('POST', '/appointments/a1/cancel');
+  FRequest := TApiCall.Create('POST', '/appointments/a1/cancel');
   TAssert.AssertException(EApiError, ExecuteRequest);
   TAssert.AssertEquals(2, FFake.RequestCount);
   TAssert.AssertEquals('', FSleeps);
@@ -321,7 +325,7 @@ end;
 procedure THttpClientTests.Get_NoRetry_SentOnce;
 begin
   FFake.Answer(503, '');
-  FRequest := TApiRequest.Create('GET', '/health/ready');
+  FRequest := TApiCall.Create('GET', '/health/ready');
   FRequest.NoRetry := True;
   TAssert.AssertException(EApiError, ExecuteRequest);
   TAssert.AssertEquals(1, FFake.RequestCount);
@@ -334,7 +338,7 @@ begin
   FFake.Fail;
   FFake.Answer(409, '{"error":"running","code":"idempotency_key_in_flight"}');
   FFake.Answer(201, '{"id":"a1"}');
-  FRequest := TApiRequest.Create('POST', '/appointments');
+  FRequest := TApiCall.Create('POST', '/appointments');
   FRequest.Body := '{"serviceId":"s1"}';
   FRequest.IdempotencyKey := 'k-1';
   TAssert.AssertEquals(201, FClient.Execute(FRequest).Status);
@@ -350,7 +354,7 @@ end;
 procedure THttpClientTests.KeyedPost_OtherConflict_NotRetried;
 begin
   FFake.Answer(409, '{"error":"taken","code":"slot_unavailable"}');
-  FRequest := TApiRequest.Create('POST', '/appointments');
+  FRequest := TApiCall.Create('POST', '/appointments');
   FRequest.IdempotencyKey := 'k-2';
   try
     FClient.Execute(FRequest);
@@ -373,7 +377,7 @@ begin
   FClient.Credentials := LKeep;
   FFake.Answer(401, '{"error":"expired","code":"invalid_token"}');
   FFake.Answer(200, '{}');
-  TAssert.AssertEquals(200, FClient.Execute(TApiRequest.Create('GET', '/me')).Status);
+  TAssert.AssertEquals(200, FClient.Execute(TApiCall.Create('GET', '/me')).Status);
   LRequests := FFake.Requests;
   TAssert.AssertEquals(2, Length(LRequests));
   TAssert.AssertEquals('Bearer old', LRequests[0].Header('Authorization'));
@@ -385,7 +389,7 @@ begin
   // A second 401 for the new token: given up, renewed only once.
   FFake.Answer(401, '');
   FFake.Answer(401, '');
-  FRequest := TApiRequest.Create('GET', '/me');
+  FRequest := TApiCall.Create('GET', '/me');
   TAssert.AssertException(EApiError, ExecuteRequest);
   TAssert.AssertEquals(4, FFake.RequestCount);
   TAssert.AssertEquals(2, LCredentials.Renewals);
@@ -401,7 +405,7 @@ begin
   LKeep := LCredentials;
   FClient.Credentials := LKeep;
   FFake.Answer(401, '');
-  FRequest := TApiRequest.Create('GET', '/me');
+  FRequest := TApiCall.Create('GET', '/me');
   try
     FClient.Execute(FRequest);
     TAssert.Fail('no EApiError');
@@ -423,7 +427,7 @@ begin
   LKeep := LCredentials;
   FClient.Credentials := LKeep;
   FFake.Answer(401, '{"error":"Invalid email or password.","code":"invalid_credentials"}');
-  FRequest := TApiRequest.Create('POST', '/auth/login');
+  FRequest := TApiCall.Create('POST', '/auth/login');
   FRequest.Body := '{"email":"a@b.test"}';
   FRequest.Anonymous := True;
   try
@@ -452,6 +456,59 @@ begin
   TAssert.AssertFalse(TryRetryAfterMs('-1', LMs));
   TAssert.AssertFalse(TryRetryAfterMs('', LMs));
   TAssert.AssertFalse(TryRetryAfterMs('1.5', LMs));
+end;
+
+procedure THttpClientTests.Query_Escaped_EmptyLeftOut;
+begin
+  TAssert.AssertEquals('a-Z_0.9~', ApiQueryEscape('a-Z_0.9~'));
+  TAssert.AssertEquals('a%20b%26c%3Dd%2F%3F%2B', ApiQueryEscape('a b&c=d/?+'));
+  // UTF-8, each byte.
+  TAssert.AssertEquals('Jo%C3%A3o', ApiQueryEscape('Jo' + JsonCodePointToStr($E3) + 'o'));
+  TAssert.AssertEquals('?date=2026-11-02&days=3', ApiQuery(['date', '2026-11-02',
+    'professional', '', 'days', '3']));
+  TAssert.AssertEquals('', ApiQuery(['search', '']));
+  TAssert.AssertEquals('', ApiQuery([]));
+end;
+
+procedure THttpClientTests.Page_Read;
+var
+  LInfo: TApiPageInfo;
+begin
+  TAssert.AssertEquals('[{"id":"c1"},{"id":"c2"}]', ReadApiPage(
+    '{"page":1,"limit":2,"total":3,"totalPages":2,"hasNext":true,"hasPrev":false,' +
+    '"items":[{"id":"c1"},{"id":"c2"}]}', LInfo));
+  TAssert.AssertEquals(1, LInfo.Page);
+  TAssert.AssertEquals(2, LInfo.Limit);
+  TAssert.AssertEquals(Int64(3), LInfo.Total);
+  TAssert.AssertEquals(Int64(2), LInfo.TotalPages);
+  TAssert.AssertTrue(LInfo.HasNext);
+  TAssert.AssertFalse(LInfo.HasPrev);
+  TAssert.AssertEquals('[]', ReadApiPage('{"page":1,"limit":20,"total":0,"totalPages":1,' +
+    '"hasNext":false,"hasPrev":false,"items":[]}', LInfo));
+end;
+
+procedure THttpClientTests.Page_NotAPage;
+var
+  LInfo: TApiPageInfo;
+  LBody: string;
+  I: Integer;
+begin
+  for I := 0 to 3 do
+  begin
+    case I of
+      0: LBody := '[]';
+      1: LBody := '{"page":1,"limit":2,"total":3,"totalPages":2}';
+      2: LBody := '{"page":"1","limit":2,"total":3,"totalPages":2,"items":[]}';
+    else
+      LBody := '<html>';
+    end;
+    try
+      ReadApiPage(LBody, LInfo);
+      TAssert.Fail('no EApiPageFormat for ' + LBody);
+    except
+      on EApiPageFormat do ;
+    end;
+  end;
 end;
 
 initialization

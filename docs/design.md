@@ -196,6 +196,12 @@ candidate (promote, keep in the application, drop) with these criteria:
 - Filling a Find DTO from the query string, and the paged query (count + page through the same
   filters): both repeated in every list route (see "Progress", M1, customers and users).
 - Phone normalization, next to the accent-insensitive search key (pascal-common-faa).
+- Percent-encoding a query string's values (RFC 3986, UTF-8 bytes): pascal-api-infra-faa's
+  `McpUrlEncode` is private to the MCP unit, so the client wrote its own, `ApiQueryEscape` in
+  `src/Agenda.HttpClient` (M6): the second copy (pascal-common-faa).
+- A package of pascal-api-infra-faa's units a client needs (`PascalApi.Dto`, `PascalApi.OpenApi`,
+  `PascalApi.OrderBy`, `PascalApi.Text`): `pascal_api_infra_faa.lpk` requires `pascal_db_faa`,
+  so the desktop client's `.lpi` takes the library's `src` as a search path instead (M6).
 - A console program's stop request: Ctrl+C, Ctrl+Break and the console closing on Windows,
   SIGINT and SIGTERM on Unix, as a flag the main loop reads, and a sleep that wakes on it
   (pascal-common-faa). No library has it: the amqp, redis and pipes samples stop on Enter or
@@ -2063,3 +2069,51 @@ both, resizes the window and checks the layout, then quits.
   once making one refresh, the session ending, the old token kept, the session under
   `TApiHttpClient`), 149 in all, 0 failures, 0 leaks on FPC Windows and Linux (also on one
   CPU), and on Delphi 12 Win32 and Win64 (149 of 149, no leak, the user).
+
+### M6: the agenda's client and its check against the api (2026-10-29, decisions 1, 2, 5, 7, 8)
+
+- `src/Agenda.Client`, `TAgendaClient`: one method per route the staff's screens use (login,
+  logout, me; the day, the free slots, book, read, move, status, cancel; customers: find, read,
+  create, change; the active services and professionals for a booking), taking and returning
+  the server's DTO interfaces. Over `TApiHttpClient` and `TApiSession` (its refresher: POST
+  `/auth/refresh`, anonymous, never retried, a second refresh with a spent token being what the
+  reuse detection revokes). A booking takes the user action's `Idempotency-Key`; a move, a
+  status and a cancel send the version read as `If-Match` (the ETag is the version in quotes,
+  so the day's rows are enough, no read first). Lists through `ReadApiPage` (the page's
+  numbers, its `items` to the mapper) and `ApiQuery`.
+- Decision 2 as built: `TApiSchema.Check` before a customer's create and change and before a
+  booking and a status. Only the customer's name has a limit described (`MaxLength`); the
+  booking and the appointment's PATCH describe none, so the check passes everything there and
+  the server's 400 is what the screen shows. An `Enum` on the PATCH's status would refuse
+  `cancelled` before the server's own `use_cancel` answer (a scenario checks it), so it wasn't
+  added.
+- `client/check/AgendaClientCheck` (`.dpr`, `.lpi`, `.dproj`; in `Agenda.groupproj`): the
+  client against the real api, 29 checks. The owner (through `Http.Execute`) creates a service
+  and a professional working every day; the staff: who they are, a customer named "João
+  Cliente ..." found by `joao cliente`, its email set and cleared (the PATCH's three states), a
+  101-character name refused with no request, the free slots three days on, one key sent twice
+  (one appointment), another key on the slot (409 `slot_unavailable`), the day with the version
+  and the names, a move, the old version's 412, the status, the cancel and a second one (409
+  `appointment_closed`), the logout. Then the tokens, on an api started with
+  `ACCESS_TOKEN_SECONDS=8`: renewed at 6 s with no 401 (counted by a transport around the real
+  one); two calls on two threads at once on a spent token, one refresh for both; another
+  refresh accepted after them (the family alive); the refresh token refused after the logout.
+- `tools/test_http.sh` and `tools/test_http_docker.sh` run it on a third start of the api
+  (`ACCESS_TOKEN_SECONDS=8`, an `/auth/` window of its own); `CLIENT_CHECK_EXE` for a Delphi
+  build. Its project links no pascal-db-faa, Redis or Horse (FPC: none of their units in its
+  output; Linux: built with only the four libraries' paths).
+- Found: `TApiResponse` was also a type of `PascalApi.OpenApi`, which every DTO unit's user
+  sees: the client's records are `TApiCall` and `TApiReply`.
+- Found: a DTO class instance given straight to a `const` interface parameter gets no
+  reference on FPC; when the call raised (the local check), it leaked (2 blocks, the unit
+  tests' heaptrc). The client holds every DTO it builds through its interface first; the
+  check program does the same.
+- Known limit: a refresh whose answer is lost on the way (the server rotated, the client never
+  heard) leaves the client with the spent token; its next refresh is refused as a reuse and the
+  family revoked, so the user logs in again. Not retrying the refresh is what keeps it to that.
+- Tests: 14 for the client (`Agenda.ClientTests`) and 3 more in `Agenda.HttpClientTests` (the
+  query, the page), 163 in all, 0 failures, 0 leaks on FPC Windows and Linux. HTTP, FPC Windows:
+  SQLite 669 + 74 + client 29, PostgreSQL with Redis and RabbitMQ 680 + 74 + 29; FPC Linux
+  (Docker, SQLite) the scenarios, the worker's 79 and the client's 29 with 0 unfreed blocks.
+  Delphi: waiting for the IDE (the unit tests, and `AgendaClientCheck` through
+  `CLIENT_CHECK_EXE`).

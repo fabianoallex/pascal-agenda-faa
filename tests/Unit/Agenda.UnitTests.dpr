@@ -42,6 +42,14 @@ uses
   Agenda.HttpTransport.Fake in '..\..\src\Agenda.HttpTransport.Fake.pas',
   Agenda.HttpClient in '..\..\src\Agenda.HttpClient.pas',
   Agenda.HttpSession in '..\..\src\Agenda.HttpSession.pas',
+  Agenda.AuthDtos in '..\..\src\Agenda.AuthDtos.pas',
+  Agenda.Appointments.Dtos in '..\..\src\Agenda.Appointments.Dtos.pas',
+  Agenda.Availability.Dtos in '..\..\src\Agenda.Availability.Dtos.pas',
+  Agenda.Customers.Dtos in '..\..\src\Agenda.Customers.Dtos.pas',
+  Agenda.Day.Dtos in '..\..\src\Agenda.Day.Dtos.pas',
+  Agenda.Professionals.Dtos in '..\..\src\Agenda.Professionals.Dtos.pas',
+  Agenda.Services.Dtos in '..\..\src\Agenda.Services.Dtos.pas',
+  Agenda.Client in '..\..\src\Agenda.Client.pas',
   Agenda.DUnitXCompat in 'Agenda.DUnitXCompat.pas',
   Agenda.PasswordsTests in 'Agenda.PasswordsTests.pas',
   Agenda.TokensTests in 'Agenda.TokensTests.pas',
@@ -59,7 +67,8 @@ uses
   Agenda.OutboxAmqpTests in 'Agenda.OutboxAmqpTests.pas',
   Agenda.HttpTransportTests in 'Agenda.HttpTransportTests.pas',
   Agenda.HttpClientTests in 'Agenda.HttpClientTests.pas',
-  Agenda.HttpSessionTests in 'Agenda.HttpSessionTests.pas';
+  Agenda.HttpSessionTests in 'Agenda.HttpSessionTests.pas',
+  Agenda.ClientTests in 'Agenda.ClientTests.pas';
 
 var
   runner: ITestRunner;
