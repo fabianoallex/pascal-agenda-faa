@@ -1841,8 +1841,8 @@ What exists today:
 3. **The whole client on both compilers, the screens built in code with OPCB.** The core (the
    DTO units, the typed client, the view models) and the forms build on Delphi Win32/Win64
    (VCL) and Lazarus (LCL) from the same source: no `.dfm`/`.lfm`, each form calls `CreateNew`
-   and lays itself out with OPCB, a submodule (`external/opcb`, pinned to a commit: it has no
-   tags). The logic lives in view models with tests; a form reads their state and passes its
+   and lays itself out with OPCB, a submodule (`external/opcb`, at its tag v0.2.0, the first
+   with the probe's two fixes). The logic lives in view models with tests; a form reads their state and passes its
    events on (pascal-snake's rule). On Linux the core's tests run in CI; the screens are not
    built there (the CI image has no LCL). If OPCB fell short, the fallback was `CreateNew` with
    controls placed by hand; `.dfm` + `.lfm` was not taken (the skill's measured cost).
@@ -1924,7 +1924,7 @@ both, resizes the window and checks the layout, then quits.
   (`ApplyDefaultControlSize`) after the control is built at the position computed with height
   0, and over the cell's stretched height. Here: `GridCellStrechAll`, the cell's height given to each
   control (the same layout on the VCL); the height-0 case itself measured on the LCL only. To
-  be fixed in OPCB, not here.
+  be fixed in OPCB, not here. Fixed in OPCB v0.1.0 (see below).
 - Also learnt: after `GridFinish` the grid is one block in the outer level's direction; a row
   below it needs `BreakLine` in that level (OPCB's `grid-autoexpand` sample does `.Break`).
 - Delphi 12 Win64 (the same probe, `OpcbProbeDelphi.dpr`, a `.dproj` from the skill's
@@ -1936,7 +1936,7 @@ both, resizes the window and checks the layout, then quits.
   buttons that end at 155 (39 pixels short), and its width short the same way (the edits cut
   at the right; the probe didn't check the width). `ClientHeight`/`ClientWidth` for a
   `TWinControl` parent would be right on both. Here: the client size set by the form from its
-  last control. To be fixed in OPCB.
+  last control. To be fixed in OPCB. Fixed in OPCB v0.1.0 (see below).
 - Also different, harmless: a `TLabel` stretched to its cell keeps the cell's height on the
   VCL (28) and its text's on the LCL (15).
 - Delphi 12 Win32 builds too; no leak report at the stop on either platform
@@ -1966,3 +1966,17 @@ both, resizes the window and checks the layout, then quits.
   for the restart came from it ("no token before the restart", the same on the last commit).
   `tools/test_http.sh` now stops with a message when the port already answers; `PORT=9410` runs
   beside the compose file.
+
+### M6: OPCB v0.2.0 adopted (2026-10-28)
+
+- OPCB fixed both findings in its v0.1.0 (its first tag) and added `SetDefaultProp`/
+  `UnsetDefaultProps` in v0.2.0 (c03d7a6; its suites: Lazarus 243, Delphi Win32 237).
+  `external/opcb` moved from b61c993 to v0.2.0; nothing here changes (the probe lives outside
+  the repository).
+- The probe again on FPC Win64, without the workaround (`GridCellStrechHorizontal`, the case of
+  the first finding): with the creator's default height (23) each edit is centered in its cell
+  (tops 14, 42, 70, 98 in cells of 28 from 12) and the buttons start below the grid (132);
+  with no default at all each control is centered by its own height (edits 23 at 14..., labels
+  15 at 17...). 10 of 10 both ways, 0 unfreed blocks. The dialog is still 167 high on the LCL.
+- Delphi Win32/Win64 with v0.2.0: waiting for the IDE (the probe's `OpcbProbeDelphi.dpr`; the
+  check "dialog holds its buttons" is the one the client size fixes).
