@@ -2260,3 +2260,23 @@ The rest of the staff's screens: an appointment moved to another free time, and 
 - Checked: FPC Windows (LCL): `AgendaDesktop` and the smoke build with no warning of ours;
   `tools/test_http.sh` 669 + 74 + client 29 + desktop 56, 0 unfreed blocks. Unit tests 186
   (8 new), 0 leaks. Delphi (VCL): waiting for the IDE.
+
+### M6: the trace from the click (decision 9), waiting for pascal-api-infra-faa (2026-10-29)
+
+The user chose (2026-10-29) to fix the library rather than send `traceparent` alone or leave
+the client's spans out of M6.
+
+- What blocks it: `PascalApi.Otlp` (the exporter) uses `PascalApi.Http` for one type,
+  `THttpHeader` (a name and a value, for the OTLP headers and the resource attributes), and
+  `PascalApi.Http`'s implementation uses `PascalDb.Interfaces`, `PascalDb.Pool` and
+  `PascalDb.Version` (the readiness check). A desktop program that exports its spans would link
+  pascal-db-faa. Everything else `PascalApi.Otlp` needs is light (`PascalApi.Config`,
+  `PascalApi.Text`, `PascalApi.Version`, pascal-common-faa, the mapper's JSON).
+- Asked of pascal-api-infra-faa (v0.27.0 here): `THttpHeader` in a unit of its own with
+  nothing heavy in its uses, `PascalApi.Http` keeping it under the same name (an alias, no
+  caller changed), and `PascalApi.Otlp` using that unit, with a check in its CI that the
+  exporter builds without pascal-db-faa.
+- Nothing is missing in pascal-common-faa (v1.24.0): a user action is a detached span
+  (`StartDetachedSpan`: it starts on the UI thread and ends in the task's `Done`), each call a
+  child span on the pool thread (`StartChildSpan`), and `TraceParent` replaces the client's
+  `TraceId` in the header, so the retries and the refresh stay in the action's trace.
