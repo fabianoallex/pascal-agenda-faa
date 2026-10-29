@@ -2039,7 +2039,8 @@ both, resizes the window and checks the layout, then quits.
   refresh is the credentials' own ("M6: the session").
 - Execute keeps no state between calls: several threads may call it.
 - Tests: 16 (`Agenda.HttpClientTests`, on the fake transport), 140 in all, 0 failures, 0 leaks
-  on FPC Windows and Linux. Delphi: waiting for the IDE.
+  on FPC Windows and Linux; on Delphi 12 Win32 and Win64 with the session's (149 of 149, no
+  leak, the user).
 
 ### M6: the session (2026-10-29, decision 6)
 
@@ -2061,4 +2062,4 @@ both, resizes the window and checks the layout, then quits.
 - Tests: 9 (`Agenda.HttpSessionTests`: the margin on a moved clock, four threads refused at
   once making one refresh, the session ending, the old token kept, the session under
   `TApiHttpClient`), 149 in all, 0 failures, 0 leaks on FPC Windows and Linux (also on one
-  CPU). Delphi: waiting for the IDE.
+  CPU), and on Delphi 12 Win32 and Win64 (149 of 149, no leak, the user).
