@@ -38,6 +38,8 @@ uses
   Agenda.Leases in '..\..\src\Agenda.Leases.pas',
   Agenda.Reminders in '..\..\src\Agenda.Reminders.pas',
   Agenda.Outbox.Amqp in '..\..\src\Agenda.Outbox.Amqp.pas',
+  Agenda.HttpTransport in '..\..\src\Agenda.HttpTransport.pas',
+  Agenda.HttpTransport.Fake in '..\..\src\Agenda.HttpTransport.Fake.pas',
   Agenda.DUnitXCompat in 'Agenda.DUnitXCompat.pas',
   Agenda.PasswordsTests in 'Agenda.PasswordsTests.pas',
   Agenda.TokensTests in 'Agenda.TokensTests.pas',
@@ -52,7 +54,8 @@ uses
   Agenda.OutboxTests in 'Agenda.OutboxTests.pas',
   Agenda.MailTests in 'Agenda.MailTests.pas',
   Agenda.WorkerTests in 'Agenda.WorkerTests.pas',
-  Agenda.OutboxAmqpTests in 'Agenda.OutboxAmqpTests.pas';
+  Agenda.OutboxAmqpTests in 'Agenda.OutboxAmqpTests.pas',
+  Agenda.HttpTransportTests in 'Agenda.HttpTransportTests.pas';
 
 var
   runner: ITestRunner;

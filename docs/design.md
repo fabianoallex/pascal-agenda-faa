@@ -185,7 +185,9 @@ candidate (promote, keep in the application, drop) with these criteria:
   default) and a Redis one (`TRedisLock`); see "M4: the worker".
 - RFC 9457 errors (`application/problem+json`) as an option of `TErrorHandlerMiddleware`.
 - Typed HTTP client for Delphi/Lazarus with refresh, retry and trace propagation (M6; its shape
-  in "M6: design", decisions 4 to 7).
+  in "M6: design", decisions 4 to 7). Its transport **built here 2026-10-29** as
+  `src/Agenda.HttpTransport` (`IHttpTransport`, each compiler's own client, the third copy of
+  that switch) with a fake, `src/Agenda.HttpTransport.Fake`; see "M6: the HTTP transport".
 
 **Found while building** (not in the first list):
 
@@ -1983,3 +1985,32 @@ both, resizes the window and checks the layout, then quits.
   the LCL (edits at 14, 42, 70, 98; buttons at 132), and the dialog's client area 167 high, as
   on the LCL (128 before the fix). Harmless: a `TLabel` there takes the default height (23) and
   the cell's width (80), the LCL one its text's size.
+
+### M6: the HTTP transport (2026-10-29, decision 4)
+
+- `src/Agenda.HttpTransport`: `IHttpTransport.Send` takes a `TTransportRequest` (method, URL,
+  headers, text body, timeout) and gives a `TTransportResponse` (status, headers, text body);
+  `NewHttpTransport` is `THTTPClient` on Delphi and `fphttpclient` with `opensslsockets` on FPC,
+  one client per exchange (callable from the pool's threads), redirects off, 15 s by default.
+  Every status is an answer; `EHttpTransport` only when there was none (refused, timeout, TLS),
+  which leaves to the caller whether the request may go again (decision 7). Bodies are UTF-8
+  through pascal-common-faa's `PascalCommon.Utf8`, not `PascalApi.Text`.
+- `src/Agenda.HttpTransport.Fake`: answers from a queue (`Answer`, `Fail` for a lost
+  connection), keeps the requests, thread-safe; an unexpected request raises
+  `EFakeHttpTransport`, so it fails the test instead of looking like a lost connection.
+- Found: `fphttpclient` sends no `Content-Length` when a request has no body, and a POST
+  without one (the cancel) would go without a length. The transport always gives POST, PUT
+  and PATCH a body, empty when there is none (`HttpMethodHasBody`).
+- Found: the client can't take `PascalApi.Http`'s `THttpHeader` (nor anything in that unit):
+  its implementation uses pascal-db-faa. The same holds for decision 9: `PascalApi.Otlp`
+  uses `PascalApi.Http`, so a client exporting spans would link pascal-db-faa's units. To
+  settle when decision 9 is built (an OTLP exporter with no pascal-db-faa in pascal-api-infra-faa,
+  or `THttpHeader` in a unit of its own there); a library change, the user's decision.
+- Tests: 8 more (`Agenda.HttpTransportTests`: the header lines, headers in any case, the
+  methods with a body, the fake, the compiler's own client on a closed port), 124 in all,
+  0 failures, 0 leaks on FPC Windows and Linux. The real client checked on FPC Win64 against
+  the api (a probe outside the repository): the health check, a failed and a good login, a
+  customer created as "João Ação Müller" and found by `search=acao` with the same name, a
+  POST without a body answered 428 (not 411), a closed port as `EHttpTransport`; 0 unfreed
+  blocks. `AgendaClientCheck` (decision 5 on) will run such exchanges in `tools/test_http.sh`.
+  Delphi: waiting for the IDE.

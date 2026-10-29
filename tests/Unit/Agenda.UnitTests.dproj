@@ -149,6 +149,9 @@
         <DCCReference Include="Agenda.WorkerTests.pas"/>
         <DCCReference Include="..\..\src\Agenda.Outbox.Amqp.pas"/>
         <DCCReference Include="Agenda.OutboxAmqpTests.pas"/>
+        <DCCReference Include="..\..\src\Agenda.HttpTransport.pas"/>
+        <DCCReference Include="..\..\src\Agenda.HttpTransport.Fake.pas"/>
+        <DCCReference Include="Agenda.HttpTransportTests.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>
