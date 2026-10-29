@@ -10,14 +10,19 @@
     AgendaDesktopSmoke <base url>
 
   The owner first creates (through Http.Execute) a service, a professional
-  working every day and a customer; then, as the staff: the login dialog,
-  the booking dialog (service, professional, the day three days on, the
-  first free time, the customer, Book), the day window on that day (the
-  appointment listed), Confirm, then Cancel it; closing logs out.
+  working every day and a customer; then, as the staff: the login dialog;
+  the customers (the list searched; a new one, refused first for its
+  phone; its email cleared in an edit, read back as null); the booking
+  dialog (service, professional, the day three days on, the first free
+  time, the customer, Book); the day window on that day (the appointment
+  listed), Confirm, Move (the move dialog: the last free time), then
+  Cancel it; closing logs out. The modal dialogs are opened here with
+  Show (ShowModal would wait for a user).
 
   One "OK"/"FAIL" line per check and a summary; exit code 1 on a failure.
   SMOKE_SHOTS=<folder> saves each form as a PNG there (login.png,
-  booking.png, day.png) for a look. Windows only (it shows the forms). }
+  customers.png, customer.png, booking.png, move.png, day.png) for a
+  look. Windows only (it shows the forms). }
 
 {$IFDEF FPC}{$MODE DELPHI}{$H+}{$ENDIF}
 {$APPTYPE CONSOLE}
@@ -49,10 +54,15 @@ uses
   Agenda.Desktop.Login in '..\..\..\src\Agenda.Desktop.Login.pas',
   Agenda.Desktop.Day in '..\..\..\src\Agenda.Desktop.Day.pas',
   Agenda.Desktop.Booking in '..\..\..\src\Agenda.Desktop.Booking.pas',
+  Agenda.Desktop.Move in '..\..\..\src\Agenda.Desktop.Move.pas',
+  Agenda.Desktop.Customers in '..\..\..\src\Agenda.Desktop.Customers.pas',
   Agenda.Desktop.Ui in '..\Agenda.Desktop.Ui.pas',
   Agenda.Desktop.LoginForm in '..\Agenda.Desktop.LoginForm.pas',
   Agenda.Desktop.DayForm in '..\Agenda.Desktop.DayForm.pas',
   Agenda.Desktop.BookingForm in '..\Agenda.Desktop.BookingForm.pas',
+  Agenda.Desktop.MoveForm in '..\Agenda.Desktop.MoveForm.pas',
+  Agenda.Desktop.CustomerForm in '..\Agenda.Desktop.CustomerForm.pas',
+  Agenda.Desktop.CustomersForm in '..\Agenda.Desktop.CustomersForm.pas',
   Agenda.Desktop.App in '..\Agenda.Desktop.App.pas';
 
 type
@@ -82,6 +92,9 @@ type
     function WaitRow(AForm: TForm; AList: TListView; const ACustomer, AStatus: string;
       ATimeoutMs: Integer): Integer;
     procedure Setup;
+    function WaitClosed(AForm: TForm): Boolean;
+    procedure RunCustomers;
+    procedure RunMove(ADay: TDayForm; ADate: TDateTime);
     procedure Run;
   public
     constructor Create(const ABase: string);
@@ -358,6 +371,164 @@ begin
   end;
 end;
 
+// Waits for a dialog's ModalResult (set by its OnSaved, OnMoved...): True
+// on mrOk.
+function TSmoke.WaitClosed(AForm: TForm): Boolean;
+var
+  I: Integer;
+begin
+  I := 0;
+  while (AForm.ModalResult = mrNone) and (I < 200) do
+  begin
+    Pump(50);
+    Inc(I);
+  end;
+  Result := AForm.ModalResult = mrOk;
+end;
+
+procedure TSmoke.RunCustomers;
+var
+  LList: TCustomersForm;
+  LEdit: TCustomerForm;
+  LView: TListView;
+  LNewName, LEmail, LId: string;
+  LRead: ICustomer;
+begin
+  // The list, searched.
+  LList := TCustomersForm.CreateFor(nil, Desktop.RunnerRef, Desktop.Client);
+  try
+    LList.Show;
+    LView := LList.FindComponent('lvCustomers') as TListView;
+    Check(WaitFor(LList, 'lblStatus', 'Customers: '), 'customers: the list read',
+      Text(LList, 'lblStatus'));
+    CheckLayout(LList, 'customers');
+    SetEdit(LList, 'edtSearch', 'conceicao smoke ' + FSuffix);
+    Click(LList, 'btnFind');
+    Check(WaitFor(LList, 'lblStatus', 'Customers: 1'), 'customers: found without the accents',
+      Text(LList, 'lblStatus'));
+    Check((LView.Items.Count = 1) and (LView.Items[0].Caption = FCustomerName),
+      'customers: the one listed');
+    Check(not Button(LList, 'btnEdit').Enabled, 'customers: Edit off with nothing selected');
+    if LView.Items.Count > 0 then
+    begin
+      LView.Items[0].Selected := True;
+      Pump(50);
+    end;
+    Check(Button(LList, 'btnEdit').Enabled, 'customers: Edit on once selected');
+    Shot(LList, 'customers');
+  finally
+    LList.Free;
+  end;
+
+  // A new one: the phone refused by the server first.
+  LNewName := 'Smoke New ' + FSuffix;
+  LEmail := 'new' + LowerCase(FSuffix) + '@smoke.test';
+  LId := '';
+  LEdit := TCustomerForm.CreateFor(nil, Desktop.RunnerRef, Desktop.Client, nil);
+  try
+    LEdit.Show;
+    Pump(100);
+    CheckLayout(LEdit, 'customer');
+    Check(not Button(LEdit, 'btnSave').Enabled, 'customer: Save off while blank');
+    SetEdit(LEdit, 'edtName', LNewName);
+    SetEdit(LEdit, 'edtPhone', '12');
+    SetEdit(LEdit, 'edtEmail', LEmail);
+    Check(Button(LEdit, 'btnSave').Enabled, 'customer: Save on once named');
+    Click(LEdit, 'btnSave');
+    Check(WaitFor(LEdit, 'lblStatus', '"phone"'), 'customer: the phone refused, by its field',
+      Text(LEdit, 'lblStatus'));
+    Check(LEdit.Saved = nil, 'customer: not saved');
+    Shot(LEdit, 'customer');
+    SetEdit(LEdit, 'edtPhone', '+55 11 99999-0000');
+    Click(LEdit, 'btnSave');
+    Check(WaitClosed(LEdit), 'customer: created', Text(LEdit, 'lblStatus'));
+    if LEdit.Saved <> nil then
+    begin
+      LId := LEdit.Saved.Id;
+      Check(LEdit.Saved.Phone.ValueOr('') = '+5511999990000', 'customer: the phone normalized',
+        LEdit.Saved.Phone.ValueOr(''));
+    end;
+  finally
+    LEdit.Free;
+  end;
+  if LId = '' then
+    Exit;
+
+  // Its email cleared: the PATCH sends null, the rest stays.
+  LEdit := TCustomerForm.CreateFor(nil, Desktop.RunnerRef, Desktop.Client,
+    Desktop.Client.GetCustomer(LId));
+  try
+    LEdit.Show;
+    Pump(100);
+    Check((Text(LEdit, 'edtName') = LNewName) and (Text(LEdit, 'edtEmail') = LEmail),
+      'customer: the edit filled', Text(LEdit, 'edtEmail'));
+    Check(not Button(LEdit, 'btnSave').Enabled, 'customer: Save off while unchanged');
+    SetEdit(LEdit, 'edtEmail', '');
+    Click(LEdit, 'btnSave');
+    Check(WaitClosed(LEdit), 'customer: saved', Text(LEdit, 'lblStatus'));
+  finally
+    LEdit.Free;
+  end;
+  LRead := Desktop.Client.GetCustomer(LId);
+  Check(LRead.Email.IsNull and (LRead.Phone.ValueOr('') = '+5511999990000') and
+    (LRead.Name = LNewName), 'customer: the email cleared (null), the rest kept');
+end;
+
+procedure TSmoke.RunMove(ADay: TDayForm; ADate: TDateTime);
+var
+  LDayRead: IDay;
+  LRow: IDayAppointment;
+  LMove: TMoveForm;
+  LSlots: TListBox;
+  LList: TListView;
+  LNewTime: string;
+  I, LIndex: Integer;
+begin
+  LDayRead := Desktop.Client.GetDay(FormatDateTime('yyyy"-"mm"-"dd', ADate), FProfessionalId);
+  LRow := nil;
+  for I := 0 to High(LDayRead.Appointments) do
+    if (LDayRead.Appointments[I].CustomerName = FCustomerName) and
+      (LDayRead.Appointments[I].Status = STATUS_CONFIRMED) then
+      LRow := LDayRead.Appointments[I];
+  Check(LRow <> nil, 'move: the appointment read');
+  if LRow = nil then
+    Exit;
+  LNewTime := '';
+  LMove := TMoveForm.CreateFor(nil, Desktop.RunnerRef, Desktop.Client, LRow, ADate);
+  try
+    LMove.Show;
+    LSlots := LMove.FindComponent('lbxSlots') as TListBox;
+    Check(WaitListBox(LSlots, 10000), 'move: free times listed');
+    CheckLayout(LMove, 'move');
+    Check(Pos(FCustomerName, Text(LMove, 'lblWhat')) = 1, 'move: the appointment told',
+      Text(LMove, 'lblWhat'));
+    Check(not Button(LMove, 'btnMove').Enabled, 'move: Move off with no time');
+    if LSlots.Items.Count = 0 then
+      Exit;
+    LIndex := LSlots.Items.Count - 1;
+    LNewTime := LSlots.Items[LIndex];
+    LSlots.ItemIndex := LIndex;
+    LSlots.OnClick(LSlots);
+    Check(Button(LMove, 'btnMove').Enabled, 'move: Move on');
+    Shot(LMove, 'move');
+    Click(LMove, 'btnMove');
+    Check(WaitClosed(LMove), 'move: moved', Text(LMove, 'lblStatus'));
+  finally
+    LMove.Free;
+  end;
+  // The day read again: the new time.
+  Click(ADay, 'btnReload');
+  LList := ADay.FindComponent('lvDay') as TListView;
+  I := 0;
+  repeat
+    Pump(50);
+    Inc(I);
+    LIndex := ListHas(LList, FCustomerName, 1);
+  until ((LIndex >= 0) and (Pos(LNewTime, LList.Items[LIndex].Caption) = 1)) or (I >= 200);
+  Check((LIndex >= 0) and (Pos(LNewTime, LList.Items[LIndex].Caption) = 1),
+    'day: the new time after the move', LNewTime);
+end;
+
 procedure TSmoke.Run;
 var
   LLogin: TLoginModel;
@@ -409,6 +580,7 @@ begin
     end;
     if Desktop.Client = nil then
       Exit;
+    RunCustomers;
 
     // The booking dialog, three days on.
     LDate := FormatDateTime('yyyy"-"mm"-"dd', Date + 3);
@@ -496,6 +668,12 @@ begin
       Shot(LDay, 'day');
       Check((LList.Selected <> nil) and (LList.Selected.SubItems[0] = FCustomerName),
         'day: still selected after the read');
+      Check(Button(LDay, 'btnMove').Enabled, 'day: Move on for a confirmed one');
+      RunMove(LDay, Date + 3);
+      LRow := WaitRow(LDay, LList, FCustomerName, 'Confirmed', 10000);
+      if LRow >= 0 then
+        LList.Items[LRow].Selected := True;
+      Pump(50);
       Click(LDay, 'btnCancel');
       LRow := WaitRow(LDay, LList, FCustomerName, 'Cancelled', 10000);
       Check(LRow >= 0, 'day: cancelled');

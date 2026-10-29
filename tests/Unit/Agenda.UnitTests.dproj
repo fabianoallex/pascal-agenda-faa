@@ -171,6 +171,8 @@
         <DCCReference Include="..\..\src\Agenda.Desktop.Login.pas"/>
         <DCCReference Include="..\..\src\Agenda.Desktop.Day.pas"/>
         <DCCReference Include="..\..\src\Agenda.Desktop.Booking.pas"/>
+        <DCCReference Include="..\..\src\Agenda.Desktop.Move.pas"/>
+        <DCCReference Include="..\..\src\Agenda.Desktop.Customers.pas"/>
         <DCCReference Include="Agenda.DesktopTests.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>

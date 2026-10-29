@@ -23,17 +23,22 @@ uses
   Classes,
   PascalCommon.Validators,
   PascalJsonMapper.Json,
+  PascalJsonMapper.Mapper,
   Agenda.HttpTransport,
   Agenda.HttpTransport.Fake,
   Agenda.HttpClient,
   Agenda.Client,
   Agenda.Appointments.Dtos,
+  Agenda.Customers.Dtos,
+  Agenda.Day.Dtos,
   Agenda.Desktop.Tasks,
   Agenda.Desktop.Errors,
   Agenda.Desktop.Models,
   Agenda.Desktop.Login,
   Agenda.Desktop.Day,
-  Agenda.Desktop.Booking;
+  Agenda.Desktop.Booking,
+  Agenda.Desktop.Move,
+  Agenda.Desktop.Customers;
 
 type
   /// Records where its halves ran.
@@ -62,6 +67,9 @@ type
     procedure NoteLoggedIn(Sender: TObject);
     procedure NoteSessionLost(Sender: TObject);
     procedure NoteBooked(Sender: TObject);
+    procedure NoteMoved(Sender: TObject);
+    procedure NoteSaved(Sender: TObject);
+    function MoveModel(AVersion: Integer): TMoveModel;
     function TestClock: TDateTime;
     procedure LogIn;
   protected
@@ -83,6 +91,14 @@ type
     procedure Booking_Slots_Key_Book;
     procedure Booking_NoAnswer_SameKeyAgain;
     procedure Booking_SlotTaken_ReadAgain;
+    procedure Booking_UseCustomer;
+    procedure Move_Slots_Move_IfMatch;
+    procedure Move_SlotTaken_ThenChangedFirst;
+    procedure Move_Lost_ReadAgain;
+    procedure Customers_Search_Pages_Select;
+    procedure Customer_New_Insert_Fields;
+    procedure Customer_Change_ThreeStates;
+    procedure Customer_Edit_Patch;
   end;
 
 implementation
@@ -183,6 +199,29 @@ end;
 procedure TDesktopTests.NoteBooked(Sender: TObject);
 begin
   FEvents := FEvents + 'B';
+end;
+
+procedure TDesktopTests.NoteMoved(Sender: TObject);
+begin
+  FEvents := FEvents + 'M';
+end;
+
+procedure TDesktopTests.NoteSaved(Sender: TObject);
+begin
+  FEvents := FEvents + 'V';
+end;
+
+// Logged in, a move dialog for a1 (version AVersion) on 2026-11-02, its
+// free times read (SLOTS).
+function TDesktopTests.MoveModel(AVersion: Integer): TMoveModel;
+begin
+  LogIn;
+  Result := TMoveModel.Create(FRunner, FClient, TJsonMapper.Shared.FromJson<IDayAppointment>(
+    Row('a1', 'booked', AVersion, '2026-11-02T15:00:00Z')), JsonStrToDateTime('2026-11-02T00:00:00'));
+  Result.OnMoved := NoteMoved;
+  FFake.Answer(200, SLOTS);
+  Result.Open;
+  FManual.RunPending;
 end;
 
 function TDesktopTests.TestClock: TDateTime;
@@ -626,8 +665,10 @@ begin
     TAssert.AssertFalse(LModel.CanMarkDone);
     FNow := FNow + 2 / SecsPerDay;
     TAssert.AssertTrue(LModel.CanMarkDone);
+    TAssert.AssertTrue(LModel.CanMove);
     // Done: nothing.
     LModel.Select(2);
+    TAssert.AssertFalse(LModel.CanMove);
     TAssert.AssertFalse(LModel.CanConfirm);
     TAssert.AssertFalse(LModel.CanCancel);
     TAssert.AssertFalse(LModel.CanMarkNoShow);
@@ -779,6 +820,335 @@ begin
     TAssert.AssertFalse(LModel.Key = LKey);
     TAssert.AssertTrue(LModel.Booked = nil);
     TAssert.AssertFalse(LModel.CanBook);
+  finally
+    LModel.Free;
+  end;
+end;
+
+const
+  CUSTOMER_BIA = '{"id":"c1","name":"Bia","phone":"+5511999990000","email":"bia@x.test"}';
+  CUSTOMERS_PAGE1 = '{"page":1,"limit":20,"total":21,"totalPages":2,"hasNext":true,' +
+    '"hasPrev":false,"items":[{"id":"c1","name":"Bia","phone":null,"email":null},' +
+    '{"id":"c2","name":"Caio","phone":null,"email":null}]}';
+  CUSTOMERS_PAGE2 = '{"page":2,"limit":20,"total":21,"totalPages":2,"hasNext":false,' +
+    '"hasPrev":true,"items":[{"id":"c3","name":"Davi","phone":null,"email":null}]}';
+  FIELD_EMAIL = '{"error":"bad","code":"invalid_fields","fields":[' +
+    '{"field":"email","code":"invalid_email","message":"Not an email."}]}';
+
+function AppointmentJson(const AId: string; AVersion: Integer; const AStartsAt: string): string;
+begin
+  Result := Format('{"id":"%s","professionalId":"p1","serviceId":"s1","customerId":"c1",' +
+    '"startsAt":"%s","endsAt":"%s","status":"booked","version":%d}',
+    [AId, AStartsAt, AStartsAt, AVersion]);
+end;
+
+procedure TDesktopTests.Booking_UseCustomer;
+var
+  LModel: TBookingModel;
+  LKey: string;
+begin
+  LogIn;
+  LModel := TBookingModel.Create(FRunner, FClient, JsonStrToDateTime('2026-11-02T00:00:00'));
+  try
+    LModel.SetService('s1');
+    FFake.Answer(200, SLOTS);
+    LModel.SetProfessional('p1');
+    FManual.RunPending;
+    LModel.SelectSlot(0);
+    // A search still running when the new customer comes back.
+    FFake.Answer(200, CUSTOMERS);
+    LModel.Search('bi');
+    LKey := LModel.Key;
+    LModel.UseCustomer(TJsonMapper.Shared.FromJson<ICustomer>(
+      '{"id":"c7","name":"Nova","phone":null,"email":"n@x.test"}'));
+    TAssert.AssertEquals('c7', LModel.CustomerId);
+    TAssert.AssertEquals(1, Length(LModel.Customers));
+    TAssert.AssertFalse(LModel.Key = LKey);
+    TAssert.AssertTrue(LModel.CanBook);
+    // The old search's answer: dropped.
+    FManual.RunPending;
+    TAssert.AssertEquals(1, Length(LModel.Customers));
+    TAssert.AssertEquals('Nova', LModel.Customers[0].Name);
+    TAssert.AssertEquals('c7', LModel.CustomerId);
+  finally
+    LModel.Free;
+  end;
+end;
+
+procedure TDesktopTests.Move_Slots_Move_IfMatch;
+var
+  LModel: TMoveModel;
+  LSent: TTransportRequest;
+begin
+  LModel := MoveModel(3);
+  try
+    TAssert.AssertEquals('http://agenda.test/professionals/p1/availability?service=s1&date=2026-11-02&days=1',
+      FFake.Request(1).Url);
+    TAssert.AssertEquals(2, Length(LModel.Slots));
+    TAssert.AssertFalse(LModel.CanMove);
+    LModel.SelectSlot(0);
+    TAssert.AssertTrue(LModel.CanMove);
+    FFake.Answer(200, AppointmentJson('a1', 4, '2026-11-02T12:00:00Z'));
+    LModel.Move;
+    TAssert.AssertFalse(LModel.CanMove);
+    FManual.RunPending;
+    LSent := FFake.Request(2);
+    TAssert.AssertEquals('PATCH', LSent.Method);
+    TAssert.AssertEquals('http://agenda.test/appointments/a1', LSent.Url);
+    TAssert.AssertEquals('"3"', LSent.Header('If-Match'));
+    TAssert.AssertEquals('{"startsAt":"2026-11-02T12:00:00Z"}', LSent.Body);
+    TAssert.AssertTrue(LModel.Error.IsNone);
+    TAssert.AssertEquals(4, LModel.Moved.Version);
+    TAssert.AssertEquals('M', FEvents);
+    TAssert.AssertFalse(LModel.CanMove);
+    // Another day's free times.
+    FFake.Answer(200, SLOTS);
+    LModel.NextDay;
+    FManual.RunPending;
+    TAssert.AssertEquals('2026-11-03', LModel.DateText);
+    TAssert.AssertEquals('http://agenda.test/professionals/p1/availability?service=s1&date=2026-11-03&days=1',
+      FFake.Request(3).Url);
+  finally
+    LModel.Free;
+  end;
+end;
+
+procedure TDesktopTests.Move_SlotTaken_ThenChangedFirst;
+var
+  LModel: TMoveModel;
+begin
+  LModel := MoveModel(3);
+  try
+    LModel.SelectSlot(1);
+    FFake.Answer(409, '{"error":"taken","code":"slot_unavailable"}');
+    FFake.Answer(200, SLOTS);
+    LModel.Move;
+    FManual.RunPending;
+    TAssert.AssertEquals(TEXT_MOVE_SLOT_TAKEN, LModel.Notice);
+    TAssert.AssertTrue(LModel.Error.IsNone);
+    TAssert.AssertEquals(-1, LModel.SlotIndex);
+    TAssert.AssertEquals(2, Length(LModel.Slots));
+    TAssert.AssertEquals('GET', FFake.Request(3).Method);
+    TAssert.AssertFalse(LModel.Stale);
+    // Someone changed it first (412): nothing more to send.
+    LModel.SelectSlot(0);
+    FFake.Answer(412, '{"error":"changed","code":"precondition_failed"}');
+    LModel.Move;
+    FManual.RunPending;
+    TAssert.AssertTrue(LModel.Stale);
+    TAssert.AssertEquals(TEXT_MOVE_STALE, LModel.Notice);
+    TAssert.AssertTrue(LModel.Error.IsNone);
+    TAssert.AssertFalse(LModel.CanMove);
+    TAssert.AssertEquals(0, FFake.Pending);
+    TAssert.AssertEquals('', FEvents);
+  finally
+    LModel.Free;
+  end;
+end;
+
+procedure TDesktopTests.Move_Lost_ReadAgain;
+var
+  LModel: TMoveModel;
+begin
+  LModel := MoveModel(3);
+  try
+    LModel.SelectSlot(0);
+    // Lost, and read again unchanged: it didn't get there.
+    FFake.Fail;
+    FFake.Answer(200, AppointmentJson('a1', 3, '2026-11-02T15:00:00Z'));
+    LModel.Move;
+    FManual.RunPending;
+    TAssert.AssertEquals('GET', FFake.Request(3).Method);
+    TAssert.AssertEquals('http://agenda.test/appointments/a1', FFake.Request(3).Url);
+    TAssert.AssertTrue(LModel.Error.Kind = ekOffline);
+    TAssert.AssertTrue(LModel.Moved = nil);
+    TAssert.AssertTrue(LModel.CanMove);
+    // Lost, and read again moved (a newer version at the chosen time).
+    FFake.Fail;
+    FFake.Answer(200, AppointmentJson('a1', 4, '2026-11-02T12:00:00Z'));
+    LModel.Move;
+    FManual.RunPending;
+    TAssert.AssertTrue(LModel.Error.IsNone);
+    TAssert.AssertEquals(4, LModel.Moved.Version);
+    TAssert.AssertEquals('M', FEvents);
+  finally
+    LModel.Free;
+  end;
+  // Lost, and read again changed some other way: stale.
+  LModel := MoveModel(3);
+  try
+    LModel.SelectSlot(0);
+    FFake.Fail;
+    FFake.Answer(200, AppointmentJson('a1', 4, '2026-11-02T16:00:00Z'));
+    LModel.Move;
+    FManual.RunPending;
+    TAssert.AssertTrue(LModel.Stale);
+    TAssert.AssertTrue(LModel.Error.IsNone);
+    TAssert.AssertTrue(LModel.Moved = nil);
+  finally
+    LModel.Free;
+  end;
+  // Lost, and the read lost too (its three tries): the error, Move again.
+  LModel := MoveModel(3);
+  try
+    LModel.SelectSlot(0);
+    FFake.Fail;
+    FFake.Fail;
+    FFake.Fail;
+    FFake.Fail;
+    LModel.Move;
+    FManual.RunPending;
+    TAssert.AssertTrue(LModel.Error.Kind = ekOffline);
+    TAssert.AssertEquals(TEXT_OFFLINE, LModel.Error.Text);
+    TAssert.AssertTrue(LModel.CanMove);
+    TAssert.AssertEquals(0, FFake.Pending);
+  finally
+    LModel.Free;
+  end;
+end;
+
+procedure TDesktopTests.Customers_Search_Pages_Select;
+var
+  LModel: TCustomersModel;
+begin
+  LogIn;
+  LModel := TCustomersModel.Create(FRunner, FClient);
+  try
+    FFake.Answer(200, CUSTOMERS_PAGE1);
+    LModel.Search(' bi ');
+    TAssert.AssertFalse(LModel.CanNextPage);
+    FManual.RunPending;
+    TAssert.AssertEquals('http://agenda.test/customers?search=bi&page=1&limit=20&orderBy=name',
+      FFake.Request(1).Url);
+    TAssert.AssertEquals(2, Length(LModel.Customers));
+    TAssert.AssertTrue(LModel.CanNextPage);
+    TAssert.AssertFalse(LModel.CanPreviousPage);
+    TAssert.AssertEquals(Int64(21), LModel.Info.Total);
+    LModel.Select(1);
+    TAssert.AssertEquals('c2', LModel.Selected.Id);
+    FFake.Answer(200, CUSTOMERS_PAGE2);
+    LModel.NextPage;
+    FManual.RunPending;
+    TAssert.AssertEquals('http://agenda.test/customers?search=bi&page=2&limit=20&orderBy=name',
+      FFake.Request(2).Url);
+    TAssert.AssertEquals(2, LModel.Info.Page);
+    TAssert.AssertTrue(LModel.Selected = nil);
+    TAssert.AssertTrue(LModel.CanPreviousPage);
+    TAssert.AssertFalse(LModel.CanNextPage);
+    // Read again, a customer just saved selected: the same page.
+    FFake.Answer(200, CUSTOMERS_PAGE2);
+    LModel.Reload('c3');
+    FManual.RunPending;
+    TAssert.AssertEquals('http://agenda.test/customers?search=bi&page=2&limit=20&orderBy=name',
+      FFake.Request(3).Url);
+    TAssert.AssertEquals(0, LModel.SelectedIndex);
+    // One not on the page: nothing selected.
+    FFake.Answer(200, CUSTOMERS_PAGE2);
+    LModel.Reload('zz');
+    FManual.RunPending;
+    TAssert.AssertEquals(-1, LModel.SelectedIndex);
+    // Two searches: the first one's answer, late, is dropped.
+    FFake.Answer(200, CUSTOMERS_PAGE1);
+    FFake.Answer(200, CUSTOMERS_PAGE2);
+    LModel.Search('a');
+    LModel.Search('b');
+    TAssert.AssertTrue(FManual.RunOne);
+    TAssert.AssertEquals(1, Length(LModel.Customers));
+    TAssert.AssertTrue(FManual.RunOne);
+    TAssert.AssertEquals('b', LModel.SearchText);
+    TAssert.AssertFalse(LModel.Busy);
+  finally
+    LModel.Free;
+  end;
+end;
+
+procedure TDesktopTests.Customer_New_Insert_Fields;
+var
+  LModel: TCustomerEditModel;
+begin
+  LogIn;
+  LModel := TCustomerEditModel.CreateNew(FRunner, FClient);
+  try
+    LModel.OnSaved := NoteSaved;
+    TAssert.AssertTrue(LModel.IsNew);
+    TAssert.AssertFalse(LModel.CanSave);
+    LModel.Phone := '  ';
+    LModel.Email := ' bia@x.test ';
+    TAssert.AssertFalse(LModel.CanSave);
+    LModel.Name := ' Bia ';
+    TAssert.AssertTrue(LModel.CanSave);
+    // The server's check refuses the email: the field told.
+    FFake.Answer(400, FIELD_EMAIL);
+    LModel.Save;
+    TAssert.AssertFalse(LModel.CanSave);
+    FManual.RunPending;
+    TAssert.AssertEquals('POST', FFake.Request(1).Method);
+    TAssert.AssertEquals('http://agenda.test/customers', FFake.Request(1).Url);
+    TAssert.AssertEquals('{"name":"Bia","email":"bia@x.test"}', FFake.Request(1).Body);
+    TAssert.AssertTrue(LModel.Error.Kind = ekInvalid);
+    TAssert.AssertEquals('Not an email.', LModel.Error.FieldText('email'));
+    TAssert.AssertTrue(LModel.CanSave);
+    FFake.Answer(201, CUSTOMER_BIA);
+    LModel.Save;
+    FManual.RunPending;
+    TAssert.AssertTrue(LModel.Error.IsNone);
+    TAssert.AssertEquals('c1', LModel.Saved.Id);
+    TAssert.AssertEquals('V', FEvents);
+    TAssert.AssertFalse(LModel.CanSave);
+  finally
+    LModel.Free;
+  end;
+end;
+
+procedure TDesktopTests.Customer_Change_ThreeStates;
+var
+  LCustomer: ICustomer;
+  LChange: ICustomerPatch;
+begin
+  LCustomer := TJsonMapper.Shared.FromJson<ICustomer>(CUSTOMER_BIA);
+  // The same texts (spaces aside): nothing to send.
+  LChange := CustomerChangeOf(LCustomer, ' Bia', '+5511999990000', 'bia@x.test ');
+  TAssert.AssertTrue(CustomerChangeIsEmpty(LChange));
+  // The email emptied: null; the phone typed again: the text; the name
+  // emptied: left out (never null).
+  LChange := CustomerChangeOf(LCustomer, '', '+55 11 8888-7777', '');
+  TAssert.AssertFalse(CustomerChangeIsEmpty(LChange));
+  TAssert.AssertEquals('{"phone":"+55 11 8888-7777","email":null}',
+    TJsonMapper.Shared.ToJson<ICustomerPatch>(LChange));
+  LChange := CustomerChangeOf(LCustomer, 'Beatriz', '+5511999990000', 'bia@x.test');
+  TAssert.AssertEquals('{"name":"Beatriz"}', TJsonMapper.Shared.ToJson<ICustomerPatch>(LChange));
+  // None before: still none is left out, one typed is the text.
+  LCustomer := TJsonMapper.Shared.FromJson<ICustomer>(
+    '{"id":"c2","name":"Caio","phone":null,"email":null}');
+  LChange := CustomerChangeOf(LCustomer, 'Caio', '', 'caio@x.test');
+  TAssert.AssertEquals('{"email":"caio@x.test"}', TJsonMapper.Shared.ToJson<ICustomerPatch>(LChange));
+end;
+
+procedure TDesktopTests.Customer_Edit_Patch;
+var
+  LModel: TCustomerEditModel;
+begin
+  LogIn;
+  LModel := TCustomerEditModel.CreateEdit(FRunner, FClient,
+    TJsonMapper.Shared.FromJson<ICustomer>(CUSTOMER_BIA));
+  try
+    LModel.OnSaved := NoteSaved;
+    TAssert.AssertFalse(LModel.IsNew);
+    TAssert.AssertEquals('Bia', LModel.Name);
+    TAssert.AssertEquals('+5511999990000', LModel.Phone);
+    TAssert.AssertEquals('bia@x.test', LModel.Email);
+    TAssert.AssertFalse(LModel.CanSave);
+    LModel.Email := '';
+    TAssert.AssertTrue(LModel.CanSave);
+    FFake.Answer(200, '{"id":"c1","name":"Bia","phone":"+5511999990000","email":null}');
+    LModel.Save;
+    FManual.RunPending;
+    TAssert.AssertEquals('PATCH', FFake.Request(1).Method);
+    TAssert.AssertEquals('http://agenda.test/customers/c1', FFake.Request(1).Url);
+    TAssert.AssertEquals('{"email":null}', FFake.Request(1).Body);
+    TAssert.AssertTrue(LModel.Saved.Email.IsNull);
+    TAssert.AssertEquals('V', FEvents);
+    TAssert.AssertFalse(LModel.CanSave);
   finally
     LModel.Free;
   end;

@@ -2,8 +2,9 @@ unit Agenda.Desktop.BookingForm;
 
 { The booking dialog (TBookingModel), built in code with OPCB, the same
   source on the VCL and the LCL: the service, the professional and the day
-  on top, the free times and the customers side by side, Book at the
-  bottom. Execute returns True when an appointment was booked. }
+  on top, the free times and the customers side by side (New... creates
+  one, TCustomerForm, and chooses it), Book at the bottom. Execute returns
+  True when an appointment was booked. }
 
 {$IFDEF FPC}{$MODE DELPHI}{$H+}{$ENDIF}
 
@@ -26,6 +27,8 @@ uses
 type
   TBookingForm = class(TForm)
   private
+    FRunner: IUiTaskRunner;
+    FClient: TAgendaClient;
     FModel: TBookingModel;
     FService: TComboBox;
     FProfessional: TComboBox;
@@ -45,6 +48,7 @@ type
     procedure NextClick(Sender: TObject);
     procedure SlotClick(Sender: TObject);
     procedure SearchClick(Sender: TObject);
+    procedure NewCustomerClick(Sender: TObject);
     procedure CustomerClick(Sender: TObject);
     procedure BookClick(Sender: TObject);
     procedure HandleCloseQuery(Sender: TObject; var CanClose: Boolean);
@@ -59,10 +63,16 @@ type
 
 implementation
 
+uses
+  Agenda.Customers.Dtos,
+  Agenda.Desktop.CustomerForm;
+
 constructor TBookingForm.CreateFor(AOwner: TComponent; const ARunner: IUiTaskRunner;
   AClient: TAgendaClient; ADate: TDateTime);
 begin
   inherited CreateNew(AOwner);
+  FRunner := ARunner;
+  FClient := AClient;
   Build;
   FModel := TBookingModel.Create(ARunner, AClient, ADate);
   FModel.OnChange := Render;
@@ -129,18 +139,20 @@ begin
         .WithHeight(23).WithOnClick(NextClick))
       .BreakLine(8)
       .Add(TControlBuilder.Create(TLabel).WithCaption('Free times').WithWidth(140).WithHeight(23))
-      .Add(TControlBuilder.Create(TEdit, 'edtSearch', FSearch).WithWidth(160).WithHeight(23))
+      .Add(TControlBuilder.Create(TEdit, 'edtSearch', FSearch).WithWidth(110).WithHeight(23))
       .Add(TControlBuilder.Create(TButton, 'btnSearch').WithCaption('Find customer')
         .WithWidth(85).WithHeight(23).WithOnClick(SearchClick))
+      .Add(TControlBuilder.Create(TButton, 'btnNewCustomer').WithCaption('New...')
+        .WithWidth(50).WithHeight(23).WithOnClick(NewCustomerClick))
       .BreakLine(4)
       .Add(TControlBuilder.Create(TListBox, 'lbxSlots', FSlots).WithWidth(140).WithHeight(200))
-      .Add(TControlBuilder.Create(TListBox, 'lbxCustomers', FCustomers).WithWidth(250)
+      .Add(TControlBuilder.Create(TListBox, 'lbxCustomers', FCustomers).WithWidth(261)
         .WithHeight(200))
       .BreakLine(8)
-      .Add(TControlBuilder.Create(TLabel, 'lblStatus', FStatus).WithCaption('').WithWidth(395)
+      .Add(TControlBuilder.Create(TLabel, 'lblStatus', FStatus).WithCaption('').WithWidth(409)
         .WithHeight(30))
       .BreakLine(4)
-      .IncLeft(225)
+      .IncLeft(237)
       .Add(TControlBuilder.Create(TButton, 'btnBook', FBook).WithCaption('Book').WithWidth(80)
         .WithHeight(25).WithOnClick(BookClick))
       .Add(TControlBuilder.Create(TButton, 'btnClose', LClose).WithCaption('Close').WithWidth(80)
@@ -268,6 +280,15 @@ end;
 procedure TBookingForm.SearchClick(Sender: TObject);
 begin
   FModel.Search(FSearch.Text);
+end;
+
+procedure TBookingForm.NewCustomerClick(Sender: TObject);
+var
+  LCustomer: ICustomer;
+begin
+  LCustomer := TCustomerForm.Execute(Self, FRunner, FClient, nil);
+  if LCustomer <> nil then
+    FModel.UseCustomer(LCustomer);
 end;
 
 procedure TBookingForm.CustomerClick(Sender: TObject);

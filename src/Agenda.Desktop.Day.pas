@@ -5,7 +5,8 @@ unit Agenda.Desktop.Day;
 { The day screen's view model, the main window (decision 8 of "M6:
   design"): one local day of the tenant (GET /agenda/day), everyone's or a
   professional's, moving between dates; the status of the selected
-  appointment (confirmed, done, no_show) and its cancel.
+  appointment (confirmed, done, no_show) and its cancel. Its move is a
+  dialog of its own (TMoveModel); CanMove says when.
 
   - The day is read again after each change, on Reload (F5) and on Tick (a
     60-second timer of the form; skipped while a call runs). A read that
@@ -77,6 +78,8 @@ type
     function CanCancel: Boolean;
     function CanMarkDone: Boolean;
     function CanMarkNoShow: Boolean;
+    /// A booked or confirmed one moves (the move dialog, TMoveModel).
+    function CanMove: Boolean;
     procedure Confirm;
     procedure Cancel;
     procedure MarkDone;
@@ -351,6 +354,11 @@ end;
 function TDayModel.CanMarkNoShow: Boolean;
 begin
   Result := CanMarkDone;
+end;
+
+function TDayModel.CanMove: Boolean;
+begin
+  Result := CanCancel;
 end;
 
 procedure TDayModel.Change(const AStatus: string; ACancel: Boolean);

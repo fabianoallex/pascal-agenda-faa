@@ -36,10 +36,15 @@ uses
   Agenda.Desktop.Login in '..\..\src\Agenda.Desktop.Login.pas',
   Agenda.Desktop.Day in '..\..\src\Agenda.Desktop.Day.pas',
   Agenda.Desktop.Booking in '..\..\src\Agenda.Desktop.Booking.pas',
+  Agenda.Desktop.Move in '..\..\src\Agenda.Desktop.Move.pas',
+  Agenda.Desktop.Customers in '..\..\src\Agenda.Desktop.Customers.pas',
   Agenda.Desktop.Ui in 'Agenda.Desktop.Ui.pas',
   Agenda.Desktop.LoginForm in 'Agenda.Desktop.LoginForm.pas',
   Agenda.Desktop.DayForm in 'Agenda.Desktop.DayForm.pas',
   Agenda.Desktop.BookingForm in 'Agenda.Desktop.BookingForm.pas',
+  Agenda.Desktop.MoveForm in 'Agenda.Desktop.MoveForm.pas',
+  Agenda.Desktop.CustomerForm in 'Agenda.Desktop.CustomerForm.pas',
+  Agenda.Desktop.CustomersForm in 'Agenda.Desktop.CustomersForm.pas',
   Agenda.Desktop.App in 'Agenda.Desktop.App.pas';
 
 begin

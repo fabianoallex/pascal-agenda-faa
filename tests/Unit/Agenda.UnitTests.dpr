@@ -56,6 +56,8 @@ uses
   Agenda.Desktop.Login in '..\..\src\Agenda.Desktop.Login.pas',
   Agenda.Desktop.Day in '..\..\src\Agenda.Desktop.Day.pas',
   Agenda.Desktop.Booking in '..\..\src\Agenda.Desktop.Booking.pas',
+  Agenda.Desktop.Move in '..\..\src\Agenda.Desktop.Move.pas',
+  Agenda.Desktop.Customers in '..\..\src\Agenda.Desktop.Customers.pas',
   Agenda.DUnitXCompat in 'Agenda.DUnitXCompat.pas',
   Agenda.PasswordsTests in 'Agenda.PasswordsTests.pas',
   Agenda.TokensTests in 'Agenda.TokensTests.pas',

@@ -4,10 +4,12 @@ unit Agenda.Desktop.DayForm;
   OPCB, the same source on the VCL and the LCL.
 
   - A bar on top (the previous and next day, today, the professional, read
-    again, book), the day's list, and a bar at the bottom with what the
-    selected appointment allows and a status line (the error or the notice).
+    again, book, the customers), the day's list, and a bar at the bottom
+    with what the selected appointment allows (move, the status, cancel)
+    and a status line (the error or the notice).
   - F5 reads the day again; a 60-second timer too (the model skips it while
-    a call runs). The booking dialog, on success, makes the day read again.
+    a call runs). The booking dialog, on success, makes the day read again;
+    the move dialog and the customers dialog too.
   - A lost session opens the login again on the same client
     (TLoginModel.CreateAgain); cancelled, the program closes.
   - Closing waits for the calls still running (the runner's WaitIdle,
@@ -48,7 +50,7 @@ type
     FProfessionalIds: TStringList;
     FList: TListView;
     FStatus: TLabel;
-    FConfirm, FDone, FNoShow, FCancel: TButton;
+    FMove, FConfirm, FDone, FNoShow, FCancel: TButton;
     FTimer: TTimer;
     FRendering: Boolean;
     procedure Build;
@@ -61,6 +63,8 @@ type
     procedure TodayClick(Sender: TObject);
     procedure ReloadClick(Sender: TObject);
     procedure BookClick(Sender: TObject);
+    procedure CustomersClick(Sender: TObject);
+    procedure MoveClick(Sender: TObject);
     procedure ConfirmClick(Sender: TObject);
     procedure DoneClick(Sender: TObject);
     procedure NoShowClick(Sender: TObject);
@@ -84,7 +88,9 @@ uses
   Agenda.Desktop.App,
   Agenda.Desktop.Login,
   Agenda.Desktop.LoginForm,
-  Agenda.Desktop.BookingForm;
+  Agenda.Desktop.BookingForm,
+  Agenda.Desktop.MoveForm,
+  Agenda.Desktop.CustomersForm;
 
 function StatusText(const AStatus: string): string;
 begin
@@ -166,6 +172,8 @@ begin
           .WithOnClick(ReloadClick))
         .Add(TControlBuilder.Create(TButton, 'btnBook').WithCaption('Book...').WithWidth(80)
           .WithOnClick(BookClick))
+        .Add(TControlBuilder.Create(TButton, 'btnCustomers').WithCaption('Customers...')
+          .WithWidth(90).WithOnClick(CustomersClick))
       .SuperLevel
       .SubLevel(TControlBuilder.Create(TPanel, 'pnlBottom').WithAlign(alBottom).WithHeight(72)
         .WithCaption(''))
@@ -173,6 +181,8 @@ begin
         .SetTopLeft(8, 8)
         .SetSpace(5, 5)
         .SetControlHeight(25)
+        .Add(TControlBuilder.Create(TButton, 'btnMove', FMove).WithCaption('Move...')
+          .WithWidth(80).WithOnClick(MoveClick))
         .Add(TControlBuilder.Create(TButton, 'btnConfirm', FConfirm).WithCaption('Confirm')
           .WithWidth(80).WithOnClick(ConfirmClick))
         .Add(TControlBuilder.Create(TButton, 'btnDone', FDone).WithCaption('Done')
@@ -277,6 +287,7 @@ begin
     FDate.Caption := FModel.DateText;
     RenderProfessionals;
     RenderRows;
+    FMove.Enabled := FModel.CanMove;
     FConfirm.Enabled := FModel.CanConfirm;
     FDone.Enabled := FModel.CanMarkDone;
     FNoShow.Enabled := FModel.CanMarkNoShow;
@@ -353,6 +364,22 @@ procedure TDayForm.BookClick(Sender: TObject);
 begin
   if TBookingForm.Execute(Self, FRunnerRef, FClient, FModel.Date) then
     FModel.Reload;
+end;
+
+procedure TDayForm.CustomersClick(Sender: TObject);
+begin
+  TCustomersForm.Execute(Self, FRunnerRef, FClient);
+  // A name changed shows in the day.
+  FModel.Reload;
+end;
+
+procedure TDayForm.MoveClick(Sender: TObject);
+begin
+  if not FModel.CanMove then
+    Exit;
+  TMoveForm.Execute(Self, FRunnerRef, FClient, FModel.Selected, FModel.Date);
+  // Moved or not: someone else may have changed it meanwhile.
+  FModel.Reload;
 end;
 
 procedure TDayForm.ConfirmClick(Sender: TObject);

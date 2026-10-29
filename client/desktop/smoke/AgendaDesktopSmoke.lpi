@@ -123,6 +123,14 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
+        <Filename Value="..\..\..\src\Agenda.Desktop.Move.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\src\Agenda.Desktop.Customers.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
         <Filename Value="..\Agenda.Desktop.Ui.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
@@ -136,6 +144,18 @@
       </Unit>
       <Unit>
         <Filename Value="..\Agenda.Desktop.BookingForm.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\Agenda.Desktop.MoveForm.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\Agenda.Desktop.CustomerForm.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\Agenda.Desktop.CustomersForm.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>

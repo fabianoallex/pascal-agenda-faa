@@ -82,10 +82,15 @@
         <DCCReference Include="..\..\..\src\Agenda.Desktop.Login.pas"/>
         <DCCReference Include="..\..\..\src\Agenda.Desktop.Day.pas"/>
         <DCCReference Include="..\..\..\src\Agenda.Desktop.Booking.pas"/>
+        <DCCReference Include="..\..\..\src\Agenda.Desktop.Move.pas"/>
+        <DCCReference Include="..\..\..\src\Agenda.Desktop.Customers.pas"/>
         <DCCReference Include="..\Agenda.Desktop.Ui.pas"/>
         <DCCReference Include="..\Agenda.Desktop.LoginForm.pas"/>
         <DCCReference Include="..\Agenda.Desktop.DayForm.pas"/>
         <DCCReference Include="..\Agenda.Desktop.BookingForm.pas"/>
+        <DCCReference Include="..\Agenda.Desktop.MoveForm.pas"/>
+        <DCCReference Include="..\Agenda.Desktop.CustomerForm.pas"/>
+        <DCCReference Include="..\Agenda.Desktop.CustomersForm.pas"/>
         <DCCReference Include="..\Agenda.Desktop.App.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>

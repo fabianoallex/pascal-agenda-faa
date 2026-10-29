@@ -17,6 +17,7 @@ unit Agenda.Desktop.Booking;
   - A 409 slot_unavailable (someone took the slot): a Notice, the slots
     read again, the slot cleared. The server's 400s show as Error, with the
     fields.
+  - UseCustomer: a customer created from the dialog, chosen at once.
   - After a booking, Booked holds it and OnBooked is raised (the day reads
     itself again). }
 
@@ -74,6 +75,9 @@ type
     /// Searches the customers (name, email or phone; '' lists the first).
     procedure Search(const AText: string);
     procedure SelectCustomer(const ACustomerId: string);
+    /// A customer just created (the customer dialog): listed alone and
+    /// selected.
+    procedure UseCustomer(const ACustomer: ICustomer);
     function CanBook: Boolean;
     procedure Book;
     function DateText: string;
@@ -99,6 +103,9 @@ type
   TBookingTask = class(TAgendaTask)
   protected
     FModel: TBookingModel;
+    // Run's client, taken when the task is made: Run may still be going
+    // on a pool thread after its dialog closed and freed the model.
+    FClient: TAgendaClient;
   end;
 
   TOpenTask = class(TBookingTask)
@@ -144,8 +151,8 @@ type
 
 procedure TOpenTask.Run;
 begin
-  FServices := FModel.FClient.ActiveServices;
-  FProfessionals := FModel.FClient.ActiveProfessionals;
+  FServices := FClient.ActiveServices;
+  FProfessionals := FClient.ActiveProfessionals;
 end;
 
 procedure TOpenTask.Done;
@@ -162,7 +169,7 @@ end;
 
 procedure TSlotsTask.Run;
 begin
-  FSlots := FModel.FClient.GetAvailability(FProfessionalId, FServiceId, FDate).Slots;
+  FSlots := FClient.GetAvailability(FProfessionalId, FServiceId, FDate).Slots;
 end;
 
 procedure TSlotsTask.Done;
@@ -183,7 +190,7 @@ procedure TSearchTask.Run;
 var
   LInfo: TApiPageInfo;
 begin
-  FCustomers := FModel.FClient.FindCustomers(FText, 1, BOOKING_SEARCH_LIMIT, LInfo);
+  FCustomers := FClient.FindCustomers(FText, 1, BOOKING_SEARCH_LIMIT, LInfo);
 end;
 
 procedure TSearchTask.Done;
@@ -202,7 +209,7 @@ end;
 
 procedure TBookTask.Run;
 begin
-  FBooked := FModel.FClient.Book(FBooking, FKey);
+  FBooked := FClient.Book(FBooking, FKey);
 end;
 
 procedure TBookTask.Done;
@@ -257,6 +264,7 @@ var
 begin
   LTask := TOpenTask.Create(Self);
   LTask.FModel := Self;
+  LTask.FClient := FClient;
   StartTask(LTask);
 end;
 
@@ -275,6 +283,7 @@ begin
   end;
   LTask := TSlotsTask.Create(Self);
   LTask.FModel := Self;
+  LTask.FClient := FClient;
   LTask.FSeq := FSlotsSeq;
   LTask.FProfessionalId := FProfessionalId;
   LTask.FServiceId := FServiceId;
@@ -323,6 +332,7 @@ begin
   FSearch := AText;
   LTask := TSearchTask.Create(Self);
   LTask.FModel := Self;
+  LTask.FClient := FClient;
   LTask.FSeq := FSearchSeq;
   LTask.FText := Trim(AText);
   StartTask(LTask);
@@ -336,6 +346,15 @@ begin
     NewKey;
   end;
   Changed;
+end;
+
+procedure TBookingModel.UseCustomer(const ACustomer: ICustomer);
+begin
+  // A search still running would replace the list: its answer is old now.
+  Inc(FSearchSeq);
+  SetLength(FCustomers, 1);
+  FCustomers[0] := ACustomer;
+  SelectCustomer(ACustomer.Id);
 end;
 
 function TBookingModel.CanBook: Boolean;
@@ -356,6 +375,7 @@ begin
   SetError(TUiError.None);
   LTask := TBookTask.Create(Self);
   LTask.FModel := Self;
+  LTask.FClient := FClient;
   LBooking := TAppointmentInsert.Create;
   LTask.FBooking := LBooking;
   LBooking.ProfessionalId := FProfessionalId;

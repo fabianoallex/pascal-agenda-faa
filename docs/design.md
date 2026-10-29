@@ -2204,5 +2204,59 @@ both, resizes the window and checks the layout, then quits.
 - `tools/test_fpc.sh`'s BOM check covers `client/` too.
 - Checked: FPC Windows (LCL): `AgendaDesktop` and the smoke build with no warning of ours; the
   smoke 30 of 30, 0 unfreed blocks, alone and inside `tools/test_http.sh` (669 + 74 + client 29
-  + desktop 30). Unit tests 178, 0 leaks, FPC Windows and Linux. Delphi (VCL): waiting for the
-  IDE.
+  + desktop 30). Unit tests 178, 0 leaks, FPC Windows and Linux. Delphi (VCL): every project
+  of `Agenda.groupproj` builds (the user, 2026-10-29); the smoke's run still owed.
+
+### M6: moving and customers (2026-10-29, decision 8)
+
+The rest of the staff's screens: an appointment moved to another free time, and the customers
+(searched, created, edited).
+
+- `Agenda.Desktop.Move` (`TMoveModel`): the free times of a day for the appointment's
+  professional and service, moving between days (a late read dropped), and Move: a PATCH of
+  `startsAt` with the version the day showed (`If-Match`). A 409 `slot_unavailable` reads the
+  free times again (a Notice). A 412, or another 409, makes the dialog `Stale`: nothing more to
+  send; the day reads itself again when the dialog closes, moved or not. The lost connection of
+  decision 7, which the day's status changes don't cover: the appointment is read again (a GET,
+  retried), so the dialog tells what happened. Moved (a newer version starting at the chosen
+  time) is a success; the same version keeps the error and allows Move again (a second PATCH
+  can't move twice: it would meet 412); anything else is `Stale`. The day's `CanMove`: a booked
+  or confirmed one, as its cancel.
+- `Agenda.Desktop.Customers`: `TCustomersModel`, the list (a search, pages of 20, Reload; the
+  selection follows the id, and Search and Reload can name the customer to select once its
+  page is read, after a save); `TCustomerEditModel`, one customer, new or an edit.
+  `CustomerChangeOf` builds the PATCH from the customer read and the texts typed, each member
+  in one of an optional's three states: left out when the text is the one read, `null` when it
+  was emptied (the phone, the email), the text otherwise; the name emptied is left out, never
+  null (Save is off). This is the case decision 8 named: `IOptNullString` written by a client,
+  the server reading the same DTO. Its tests check the JSON (`{"email":null}`,
+  `{"phone":"..."}`; nothing changed is no member, and Save stays off). A new customer leaves out
+  an empty phone or email. The server normalizes and checks both; its 400 comes back with the
+  fields, and the dialog shows each field's message.
+- `TBookingModel.UseCustomer`: a customer just created from the booking dialog (its New...),
+  listed alone and chosen (a search still running is dropped).
+- A fault found while writing the dialogs: a task's `Run` read its client through the model
+  (`FModel.FClient`), and a dialog closed while the call ran frees the model (its `Done` is
+  skipped, but `Run` is already on a pool thread). The booking dialog had it since its first
+  version. Each task of the booking, move and customers models now takes the client when it is
+  made. The day window waits for its calls on close, as before.
+- The screens: `Agenda.Desktop.MoveForm`, `Agenda.Desktop.CustomersForm` (search, the list with
+  name, phone and email, pages, New..., Edit... and a double click) and
+  `Agenda.Desktop.CustomerForm` (name, phone, email). The day window has Move... in its bottom
+  bar and Customers... in its top bar, and reads the day again after either dialog (a name
+  changed shows in it). The booking dialog has New... next to Find customer.
+- Known limit: the free times leave out the appointment's own span (the availability knows
+  nothing of the move), so a move that overlaps its current time isn't offered, though the
+  server would take it (it checks the new start without the appointment's own span).
+- The smoke, 56 checks (30 before): the customers dialog (the list read, found without the
+  accents, Edit on once selected); a new customer (Save off while blank, the phone "12" refused
+  by the server and told by its field, then created, the phone normalized to
+  `+5511999990000`); its edit (the fields filled, Save off while unchanged, the email emptied,
+  read back as `null` with the rest kept); after Confirm, the move dialog on the appointment
+  read from `GET /agenda/day` (the free times, the appointment told, Move off until a time is
+  chosen, the last time chosen, moved), and the day at the new time. The modal dialogs are
+  shown with `Show` there (`ShowModal` would wait for a user). New screenshots: customers,
+  customer (with the refused phone), move.
+- Checked: FPC Windows (LCL): `AgendaDesktop` and the smoke build with no warning of ours;
+  `tools/test_http.sh` 669 + 74 + client 29 + desktop 56, 0 unfreed blocks. Unit tests 186
+  (8 new), 0 leaks. Delphi (VCL): waiting for the IDE.
