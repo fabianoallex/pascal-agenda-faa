@@ -41,6 +41,7 @@ uses
   Agenda.HttpTransport in '..\..\src\Agenda.HttpTransport.pas',
   Agenda.HttpTransport.Fake in '..\..\src\Agenda.HttpTransport.Fake.pas',
   Agenda.HttpClient in '..\..\src\Agenda.HttpClient.pas',
+  Agenda.HttpSession in '..\..\src\Agenda.HttpSession.pas',
   Agenda.DUnitXCompat in 'Agenda.DUnitXCompat.pas',
   Agenda.PasswordsTests in 'Agenda.PasswordsTests.pas',
   Agenda.TokensTests in 'Agenda.TokensTests.pas',
@@ -57,7 +58,8 @@ uses
   Agenda.WorkerTests in 'Agenda.WorkerTests.pas',
   Agenda.OutboxAmqpTests in 'Agenda.OutboxAmqpTests.pas',
   Agenda.HttpTransportTests in 'Agenda.HttpTransportTests.pas',
-  Agenda.HttpClientTests in 'Agenda.HttpClientTests.pas';
+  Agenda.HttpClientTests in 'Agenda.HttpClientTests.pas',
+  Agenda.HttpSessionTests in 'Agenda.HttpSessionTests.pas';
 
 var
   runner: ITestRunner;

@@ -188,8 +188,8 @@ candidate (promote, keep in the application, drop) with these criteria:
   in "M6: design", decisions 4 to 7). Its transport **built here 2026-10-29** as
   `src/Agenda.HttpTransport` (`IHttpTransport`, each compiler's own client, the third copy of
   that switch) with a fake, `src/Agenda.HttpTransport.Fake`; see "M6: the HTTP transport".
-  The client over it **built here 2026-10-29** as `src/Agenda.HttpClient`; see "M6: the
-  generic client".
+  The client over it **built here 2026-10-29** as `src/Agenda.HttpClient`, and the session's
+  tokens as `src/Agenda.HttpSession`; see "M6: the generic client" and "M6: the session".
 
 **Found while building** (not in the first list):
 
@@ -2036,7 +2036,29 @@ both, resizes the window and checks the layout, then quits.
 - Decision 6's hook: on a 401 the client asks `IApiCredentials.Renew(staleToken)` once and,
   when it gives a token, sends again (not a retry); a second 401 goes to the caller.
   `Anonymous` requests (login, refresh) carry no token and renew nothing. The single-flight
-  refresh is the credentials' own (next step).
+  refresh is the credentials' own ("M6: the session").
 - Execute keeps no state between calls: several threads may call it.
 - Tests: 16 (`Agenda.HttpClientTests`, on the fake transport), 140 in all, 0 failures, 0 leaks
   on FPC Windows and Linux. Delphi: waiting for the IDE.
+
+### M6: the session (2026-10-29, decision 6)
+
+- `src/Agenda.HttpSession`, `TApiSession`, the `IApiCredentials` of a logged-in client: the
+  access token, the refresh token in memory only, the moment to renew. The refresh call is the
+  application's (`IApiTokenRefresher`: the route and its body), so the unit knows no route.
+- One refresh at a time: `Renew(staleToken)` refreshes under a lock; a thread refused
+  meanwhile waits on it and, finding a token other than its stale one, uses it without a
+  refresh of its own. The server's reuse detection (two refreshes with one token revoke the
+  family) never sees the client race itself.
+- Renewed early: `AccessToken` refreshes when less than 60 s are left, or a quarter of the
+  token's life when that is shorter (a test api with `ACCESS_TOKEN_SECONDS=8` renews at 6 s,
+  not on every call). Early, a lost connection, a 429 or a 5xx keeps the old token, which is
+  still good; after a 401 they reach the caller, as the request's own failure would.
+- A refresh refused with 401 ends the session: the tokens forgotten, `Lost` true, `Renew`
+  false, so the request's 401 reaches the screen, which logs in again.
+- A monotonic millisecond clock (`GetTickCount64`), replaced by the tests: a wall clock set
+  back doesn't keep a dead token.
+- Tests: 9 (`Agenda.HttpSessionTests`: the margin on a moved clock, four threads refused at
+  once making one refresh, the session ending, the old token kept, the session under
+  `TApiHttpClient`), 149 in all, 0 failures, 0 leaks on FPC Windows and Linux (also on one
+  CPU). Delphi: waiting for the IDE.

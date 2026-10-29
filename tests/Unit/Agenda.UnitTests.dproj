@@ -154,6 +154,8 @@
         <DCCReference Include="Agenda.HttpTransportTests.pas"/>
         <DCCReference Include="..\..\src\Agenda.HttpClient.pas"/>
         <DCCReference Include="Agenda.HttpClientTests.pas"/>
+        <DCCReference Include="..\..\src\Agenda.HttpSession.pas"/>
+        <DCCReference Include="Agenda.HttpSessionTests.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>
