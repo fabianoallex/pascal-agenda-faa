@@ -36,3 +36,4 @@ tests/Unit/fpc/sqlite3.dll
 packagefiles.xml
 api/mcp_client.log
 dashboards.log
+client/desktop/smoke/traces.json

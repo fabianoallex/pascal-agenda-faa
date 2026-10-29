@@ -103,6 +103,7 @@ type
     FProfessionalId, FServiceId, FDate: string;
     FSlots: TAvailableSlotArray;
   protected
+    function SpanName: string; override;
     procedure Run; override;
     procedure Done; override;
   end;
@@ -118,6 +119,7 @@ type
     FLost: Boolean;
     FRead: IAppointment;
   protected
+    function SpanName: string; override;
     procedure Run; override;
     procedure Done; override;
   end;
@@ -312,6 +314,16 @@ begin
   FStale := True;
   SetNotice(TEXT_MOVE_STALE);
   Changed;
+end;
+
+function TSlotsTask.SpanName: string;
+begin
+  Result := 'move.slots';
+end;
+
+function TChangeTask.SpanName: string;
+begin
+  Result := 'move.move';
 end;
 
 end.

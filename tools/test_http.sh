@@ -23,7 +23,10 @@
 # for a Delphi build. On the same start, client/desktop/smoke/AgendaDesktopSmoke
 # drives the desktop client's screens (VCL or LCL) against it;
 # DESKTOP_SMOKE_EXE=client/desktop/smoke/Win32/Debug/AgendaDesktopSmoke.exe
-# for a Delphi build, SKIP_DESKTOP=1 to leave it out.
+# for a Delphi build, SKIP_DESKTOP=1 to leave it out. Its spans go to
+# tools/otlp_sink.py (port PORT+1, OTLP_SINK_PORT) and tools/desktop_traces.py
+# checks them: each action with its run, each call under a run, each call's
+# trace in the api's log.
 #
 # DB_ENGINE=postgresql runs them on PostgreSQL: a fresh postgres:17 container
 # (PG_IMAGE) on port 55433 (PG_PORT), removed at the end, and the 64-bit
@@ -225,8 +228,20 @@ CLOG="$ROOT/client/check/check.log"
 CHECK_TOKEN_SECONDS=8 "$ROOT/$CLIENT_CHECK_EXE" "http://127.0.0.1:$PORT" > "$CLOG" 2>&1 || CRC=$?
 DRC=0
 DLOG="$ROOT/client/desktop/smoke/smoke.log"
+TRACES="$ROOT/client/desktop/smoke/traces.json"
 if [ -z "$SKIP_DESKTOP" ]; then
-  "$ROOT/$DESKTOP_SMOKE_EXE" "http://127.0.0.1:$PORT" > "$DLOG" 2>&1 || DRC=$?
+  # The desktop's spans (decision 9) go to a stand-in collector; the api
+  # exports none here, its log has each request's trace id.
+  SINK_PORT="${OTLP_SINK_PORT:-$((PORT + 1))}"
+  rm -f "$TRACES"
+  "$MCP_PYTHON" tools/otlp_sink.py "$SINK_PORT" "$TRACES" &
+  SINK_PID=$!
+  for I in 1 2 3 4 5 6 7 8 9 10; do
+    curl -s -o /dev/null "http://127.0.0.1:$SINK_PORT/" && break; sleep 1
+  done
+  OTEL_EXPORTER_OTLP_ENDPOINT="http://127.0.0.1:$SINK_PORT" OTEL_BSP_SCHEDULE_DELAY=500 \
+    "$ROOT/$DESKTOP_SMOKE_EXE" "http://127.0.0.1:$PORT" > "$DLOG" 2>&1 || DRC=$?
+  kill "$SINK_PID" 2>/dev/null || true
 fi
 stop
 grep "^client check:" "$CLOG" || { echo "FAIL: no summary from AgendaClientCheck"; cat "$CLOG"; exit 1; }
@@ -242,4 +257,6 @@ if [ -z "$SKIP_DESKTOP" ]; then
   if grep -q "unfreed memory blocks" "$DLOG"; then
     grep -q "^0 unfreed memory blocks" "$DLOG" || { echo "FAIL: AgendaDesktopSmoke leaked"; sed -n '/unfreed/,$p' "$DLOG" | head -30; exit 1; }
   fi
+  echo "== the desktop client's spans, joined by the api's (decision 9)"
+  "$MCP_PYTHON" tools/desktop_traces.py "$TRACES" "$LOG" || exit 1
 fi

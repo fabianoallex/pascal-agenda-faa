@@ -128,6 +128,7 @@ type
     FPage: Integer;
     FInfo: TApiPageInfo;
     FCustomers: TCustomerArray;
+    function SpanName: string; override;
     procedure Run; override;
     procedure Done; override;
   end;
@@ -142,6 +143,7 @@ type
     FInsert: ICustomerInsert;
     FChange: ICustomerPatch;
     FSaved: ICustomer;
+    function SpanName: string; override;
     procedure Run; override;
     procedure Done; override;
   end;
@@ -396,6 +398,16 @@ begin
     LTask.FChange := CustomerChangeOf(FOriginal, FName, FPhone, FEmail);
   end;
   StartTask(LTask);
+end;
+
+function TCustomersTask.SpanName: string;
+begin
+  Result := 'customers.list';
+end;
+
+function TSaveTask.SpanName: string;
+begin
+  Result := 'customer.save';
 end;
 
 end.

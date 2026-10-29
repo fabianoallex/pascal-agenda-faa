@@ -110,6 +110,7 @@ type
   private
     FProfessionals: TProfessionalArray;
   protected
+    function SpanName: string; override;
     procedure Run; override;
     procedure Done; override;
   end;
@@ -120,6 +121,7 @@ type
     FDate, FProfessionalId: string;
     FDay: IDay;
   protected
+    function SpanName: string; override;
     procedure Run; override;
     procedure Done; override;
   end;
@@ -131,6 +133,7 @@ type
     FStatus: string;
     FCancel: Boolean;
   protected
+    function SpanName: string; override;
     procedure Run; override;
     procedure Done; override;
   end;
@@ -401,6 +404,24 @@ procedure TDayModel.MarkNoShow;
 begin
   if CanMarkNoShow then
     Change(STATUS_NO_SHOW, False);
+end;
+
+function TOpenTask.SpanName: string;
+begin
+  Result := 'day.open';
+end;
+
+function TLoadTask.SpanName: string;
+begin
+  Result := 'day.load';
+end;
+
+function TChangeTask.SpanName: string;
+begin
+  if FCancel then
+    Result := 'day.cancel'
+  else
+    Result := 'day.' + FStatus;
 end;
 
 end.

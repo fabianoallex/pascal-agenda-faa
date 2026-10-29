@@ -4,13 +4,21 @@ unit Agenda.Desktop.App;
 
   1. Settings from the .env next to the program (TAppConfig): AGENDA_SERVER
      (http://127.0.0.1:9400), and AGENDA_TENANT, AGENDA_EMAIL to fill the
-     login in.
+     login in. With OTEL_EXPORTER_OTLP_ENDPOINT set, the spans go to that
+     collector (decision 9: each user action, its run, its calls; the
+     server's spans join the same trace), under the service name
+     agenda-desktop (OTEL_SERVICE_NAME replaces it). PascalApi.Otlp needs
+     no pascal-db-faa since pascal-api-infra-faa 0.28.0; on Lazarus the
+     library's folder is on the search path, not its package (which
+     requires pascal_db_faa).
   2. The login dialog; cancelled, the program ends.
   3. The day as the main form (Application.CreateForm: TDayForm has no
      .dfm/.lfm, its Create calls CreateNew and reads Desktop below).
   4. When it closes: the calls still running waited for, the logout
      (decision 6: the refresh token lives in memory only), the client
-     freed. }
+     freed, then the spans still queued sent (TPcTracing.Shutdown). Export
+     failures aren't shown: a desktop has no console, and a collector down
+     must not bother the user. }
 
 {$IFDEF FPC}{$MODE DELPHI}{$H+}{$ENDIF}
 
@@ -23,13 +31,17 @@ uses
   Vcl.Forms, Vcl.Controls,
   {$ENDIF}
   SysUtils,
+  PascalCommon.Tracing,
   PascalApi.Config,
+  PascalApi.Otlp,
   Agenda.HttpTransport,
   Agenda.Client,
   Agenda.Desktop.Tasks;
 
 const
   DEFAULT_SERVER = 'http://127.0.0.1:9400';
+  DESKTOP_SERVICE_NAME = 'agenda-desktop';
+  DESKTOP_VERSION = '0.0.4';
 
 type
   TDesktop = class
@@ -61,6 +73,10 @@ var
 
 /// The whole program, after Application.Initialize.
 procedure RunDesktop;
+
+/// Starts the tracing when OTEL_EXPORTER_OTLP_ENDPOINT is set (the
+/// environment or the .env); True when started.
+function StartDesktopTracing: Boolean;
 
 implementation
 
@@ -124,20 +140,33 @@ begin
   end;
 end;
 
+function StartDesktopTracing: Boolean;
+begin
+  Result := TAppConfig.Get('OTEL_EXPORTER_OTLP_ENDPOINT', '') <> '';
+  if Result then
+    TPcTracing.Start(TPcTracingOptions.FromEnvironment(DESKTOP_SERVICE_NAME, DESKTOP_VERSION,
+      ReadAppConfig), TOtlpHttpExporter.FromEnvironment);
+end;
+
 procedure RunDesktop;
 var
   LForm: TDayForm;
 begin
-  Desktop := TDesktop.Create;
+  StartDesktopTracing;
   try
-    if Desktop.LogIn then
-    begin
-      Application.CreateForm(TDayForm, LForm);
-      Application.Run;
+    Desktop := TDesktop.Create;
+    try
+      if Desktop.LogIn then
+      begin
+        Application.CreateForm(TDayForm, LForm);
+        Application.Run;
+      end;
+      Desktop.Shutdown;
+    finally
+      FreeAndNil(Desktop);
     end;
-    Desktop.Shutdown;
   finally
-    FreeAndNil(Desktop);
+    TPcTracing.Shutdown;
   end;
 end;
 

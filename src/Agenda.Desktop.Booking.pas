@@ -113,6 +113,7 @@ type
     FServices: TServiceArray;
     FProfessionals: TProfessionalArray;
   protected
+    function SpanName: string; override;
     procedure Run; override;
     procedure Done; override;
   end;
@@ -123,6 +124,7 @@ type
     FProfessionalId, FServiceId, FDate: string;
     FSlots: TAvailableSlotArray;
   protected
+    function SpanName: string; override;
     procedure Run; override;
     procedure Done; override;
   end;
@@ -133,6 +135,7 @@ type
     FText: string;
     FCustomers: TCustomerArray;
   protected
+    function SpanName: string; override;
     procedure Run; override;
     procedure Done; override;
   end;
@@ -143,6 +146,7 @@ type
     FKey: string;
     FBooked: IAppointment;
   protected
+    function SpanName: string; override;
     procedure Run; override;
     procedure Done; override;
   end;
@@ -384,6 +388,26 @@ begin
   LBooking.StartsAt := FSlots[FSlotIndex].StartsAt;
   LTask.FKey := FKey;
   StartTask(LTask);
+end;
+
+function TOpenTask.SpanName: string;
+begin
+  Result := 'booking.open';
+end;
+
+function TSlotsTask.SpanName: string;
+begin
+  Result := 'booking.slots';
+end;
+
+function TSearchTask.SpanName: string;
+begin
+  Result := 'booking.customers';
+end;
+
+function TBookTask.SpanName: string;
+begin
+  Result := 'booking.book';
 end;
 
 end.

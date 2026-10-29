@@ -24,6 +24,15 @@ unit Agenda.Desktop.Tasks;
   - TManualTaskRunner, for the tests: Start keeps the task; RunPending runs
     Run then Done on the caller's thread, so a test sees the "busy" state in
     between and needs no threads.
+  - Spans (decision 9 of "M6: design"): a task is a user action. Start
+    opens a detached span named SpanName (PascalCommon.Tracing: it never
+    becomes a thread's current span, so it can end on another thread), Run
+    goes in a child span "run" that is the pool thread's current span (the
+    HTTP calls inside are its children), and the action's span ends after
+    Done, on the UI thread: from the click to the screen updated. A failed
+    Run is an error on both; a forgotten task's span says so
+    (ui.forgotten). A task freed without its Done (a runner freed early)
+    exports nothing.
 
   A library candidate (docs/design.md, "Library candidates"): nothing of
   this application in it. }
@@ -34,6 +43,7 @@ uses
   SysUtils,
   Classes,
   SyncObjs,
+  PascalCommon.Tracing,
   PascalCommon.Threading,
   PascalCommon.ThreadPool;
 
@@ -45,7 +55,10 @@ type
     FFailed: Boolean;
     FErrorClass: string;
     FErrorMessage: string;
+    FSpan: IPcSpan;
   protected
+    /// The action's span name. The default: the class name without its T.
+    function SpanName: string; virtual;
     /// On a pool thread: the calls, their results kept in fields.
     procedure Run; virtual; abstract;
     /// On the UI thread: the results (or the failure) to the owner.
@@ -59,6 +72,8 @@ type
     property Failed: Boolean read FFailed;
     property ErrorClass: string read FErrorClass;
     property ErrorMessage: string read FErrorMessage;
+    /// The action's span, from Start until after Done (nil before Start).
+    property Span: IPcSpan read FSpan;
   end;
 
   IUiTaskRunner = interface
@@ -139,6 +154,13 @@ begin
   FOwner := AOwner;
 end;
 
+function TUiTask.SpanName: string;
+begin
+  Result := ClassName;
+  if (Result <> '') and (Result[1] = 'T') then
+    Delete(Result, 1, 1);
+end;
+
 procedure TUiTask.Fail(E: Exception);
 begin
   FErrorClass := E.ClassName;
@@ -168,6 +190,7 @@ end;
 
 procedure TUiTaskRunnerBase.Track(ATask: TUiTask);
 begin
+  ATask.FSpan := TPcTracing.StartDetachedSpan(ATask.SpanName);
   FLock.Acquire;
   try
     FTasks.Add(ATask);
@@ -177,12 +200,16 @@ begin
 end;
 
 procedure TUiTaskRunnerBase.RunHalf(ATask: TUiTask);
+var
+  LRun: IPcSpan;
 begin
+  LRun := TPcTracing.StartChildSpan(ATask.FSpan, 'run');
   try
     ATask.Run;
   except
     on E: Exception do
     begin
+      LRun.SetStatus(ssError, E.Message);
       ATask.FFailed := True;
       try
         ATask.Fail(E);
@@ -192,6 +219,8 @@ begin
       end;
     end;
   end;
+  // On this thread: it was its current span.
+  LRun.Finish;
 end;
 
 procedure TUiTaskRunnerBase.DoneHalf(ATask: TUiTask);
@@ -206,8 +235,19 @@ begin
     FLock.Release;
   end;
   try
-    if not LForgotten then
-      ATask.Done;
+    try
+      if not LForgotten then
+        ATask.Done;
+    finally
+      if ATask.FSpan <> nil then
+      begin
+        if ATask.FFailed then
+          ATask.FSpan.SetStatus(ssError, ATask.FErrorMessage);
+        if LForgotten then
+          ATask.FSpan.SetBoolAttribute('ui.forgotten', True);
+        ATask.FSpan.Finish;
+      end;
+    end;
   finally
     ATask.Free;
   end;

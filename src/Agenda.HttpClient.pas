@@ -26,9 +26,16 @@ unit Agenda.HttpClient;
     (BackoffMs, doubled each time); a Retry-After longer than
     MaxRetryAfterMs isn't waited for: the error goes to the caller. Any
     other request (a PATCH, a cancel) is never sent twice by the client.
-  - traceparent: every request carries one, a new span in the request's
-    TraceId (its retries and its renewed token in the same trace); a new
-    trace when the request names none.
+  - Spans (PascalCommon.Tracing): each try is a client span, named after
+    the method, and its traceparent is the one sent. Its parent is the
+    calling thread's current span (a desktop task's run span); with none,
+    the tries share the request's TraceId, or a new trace when it names
+    none. The retries and the try after a renewed token stay in the same
+    trace. Attributes: http.request.method, url.path (no query: it may
+    carry what a user typed), http.response.status_code,
+    http.request.resend_count; a status of 400 or more, or no answer, is
+    an error. With tracing not started the spans record nothing, and the
+    traceparent still goes.
   - Execute keeps no state between calls: several threads may call it at
     once (the client's settings are set before).
 
@@ -40,6 +47,7 @@ interface
 uses
   SysUtils,
   PascalCommon.Validators,
+  PascalCommon.Tracing,
   Agenda.HttpTransport;
 
 const
@@ -123,7 +131,9 @@ type
     FTimeoutMs: Integer;
     FSleep: TApiSleepProc;
     procedure DefaultSleep(AMilliseconds: Integer);
-    function Exchange(const ARequest: TApiCall; const ATraceId, AToken: string): TApiReply;
+    function Exchange(const ARequest: TApiCall; const ATraceParent, AToken: string): TApiReply;
+    function TrySend(const ARequest: TApiCall; const AParent: IPcSpan;
+      const ATraceId: string; ASampled: Boolean; AResend: Integer; const AToken: string): TApiReply;
     function MayRetry(const ARequest: TApiCall): Boolean;
     function WaitBefore(const ARequest: TApiCall; const AResponse: TApiReply;
       AAttempt: Integer; out AWaitMs: Integer): Boolean;
@@ -414,7 +424,7 @@ begin
 end;
 
 function TApiHttpClient.Exchange(const ARequest: TApiCall;
-  const ATraceId, AToken: string): TApiReply;
+  const ATraceParent, AToken: string): TApiReply;
 var
   LSend: TTransportRequest;
   LAnswer: TTransportResponse;
@@ -433,11 +443,56 @@ begin
     LSend.AddHeader('If-Match', ARequest.IfMatch);
   if ARequest.IdempotencyKey <> '' then
     LSend.AddHeader('Idempotency-Key', ARequest.IdempotencyKey);
-  LSend.AddHeader('traceparent', PcFormatTraceParent(ATraceId, PcNewSpanId, True));
+  LSend.AddHeader('traceparent', ATraceParent);
   LAnswer := FTransport.Send(LSend);
   Result.Status := LAnswer.Status;
   Result.Body := LAnswer.Body;
   Result.Headers := LAnswer.Headers;
+end;
+
+// One try in its client span: a child of AParent, or (none) of the trace
+// ATraceId as a root.
+function TApiHttpClient.TrySend(const ARequest: TApiCall; const AParent: IPcSpan;
+  const ATraceId: string; ASampled: Boolean; AResend: Integer; const AToken: string): TApiReply;
+var
+  LSpan: IPcSpan;
+  LPath: string;
+  LQuery: Integer;
+begin
+  if AParent <> nil then
+    LSpan := TPcTracing.StartChildSpan(AParent, UpperCase(ARequest.Method), skClient)
+  else
+    LSpan := TPcTracing.StartSpanWith(ATraceId, PcNewSpanId, '', '', ASampled,
+      UpperCase(ARequest.Method), skClient);
+  try
+    LPath := ARequest.Path;
+    LQuery := Pos('?', LPath);
+    if LQuery > 0 then
+      LPath := Copy(LPath, 1, LQuery - 1);
+    LSpan.SetAttribute('http.request.method', UpperCase(ARequest.Method));
+    LSpan.SetAttribute('url.path', LPath);
+    if AResend > 0 then
+      LSpan.SetIntAttribute('http.request.resend_count', AResend);
+    try
+      Result := Exchange(ARequest, LSpan.TraceParent, AToken);
+    except
+      on E: EHttpTransport do
+      begin
+        LSpan.SetAttribute('error.type', E.ClassName);
+        LSpan.SetStatus(ssError, E.Message);
+        raise;
+      end;
+    end;
+    LSpan.SetIntAttribute('http.response.status_code', Result.Status);
+    if Result.Status >= 400 then
+    begin
+      LSpan.SetAttribute('error.type', IntToStr(Result.Status));
+      LSpan.SetStatus(ssError);
+    end;
+  finally
+    // Finished here, on the thread that started it (it was its current span).
+    LSpan.Finish;
+  end;
 end;
 
 function TApiHttpClient.MayRetry(const ARequest: TApiCall): Boolean;
@@ -489,14 +544,24 @@ end;
 function TApiHttpClient.Execute(const ARequest: TApiCall): TApiReply;
 var
   LTraceId, LToken: string;
-  LAttempt, LWaitMs: Integer;
+  LParent: IPcSpan;
+  LSampled: Boolean;
+  LAttempt, LWaitMs, LSent: Integer;
   LRenewed: Boolean;
 begin
-  LTraceId := ARequest.TraceId;
-  if LTraceId = '' then
-    LTraceId := PcNewTraceId;
+  LParent := TPcTracing.Current;
+  LTraceId := '';
+  LSampled := True;
+  if LParent = nil then
+  begin
+    LTraceId := ARequest.TraceId;
+    if LTraceId = '' then
+      LTraceId := PcNewTraceId;
+    LSampled := TPcTracing.ShouldSample(LTraceId);
+  end;
   LRenewed := False;
   LAttempt := 0;
+  LSent := 0;
   while True do
   begin
     Inc(LAttempt);
@@ -504,7 +569,8 @@ begin
     if (not ARequest.Anonymous) and (FCredentials <> nil) then
       LToken := FCredentials.AccessToken;
     try
-      Result := Exchange(ARequest, LTraceId, LToken);
+      Inc(LSent);
+      Result := TrySend(ARequest, LParent, LTraceId, LSampled, LSent - 1, LToken);
     except
       on EHttpTransport do
       begin

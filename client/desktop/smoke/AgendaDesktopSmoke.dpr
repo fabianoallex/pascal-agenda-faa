@@ -22,7 +22,10 @@
   One "OK"/"FAIL" line per check and a summary; exit code 1 on a failure.
   SMOKE_SHOTS=<folder> saves each form as a PNG there (login.png,
   customers.png, customer.png, booking.png, move.png, day.png) for a
-  look. Windows only (it shows the forms). }
+  look. With OTEL_EXPORTER_OTLP_ENDPOINT set, the spans go there as the
+  program's do (StartDesktopTracing), sent before it ends;
+  tools/test_http.sh points it at tools/otlp_sink.py and checks them with
+  tools/desktop_traces.py. Windows only (it shows the forms). }
 
 {$IFDEF FPC}{$MODE DELPHI}{$H+}{$ENDIF}
 {$APPTYPE CONSOLE}
@@ -36,6 +39,7 @@ uses
   {$ENDIF}
   SysUtils,
   Classes,
+  PascalCommon.Tracing,
   PascalJsonMapper.Json,
   Agenda.HttpTransport in '..\..\..\src\Agenda.HttpTransport.pas',
   Agenda.HttpClient in '..\..\..\src\Agenda.HttpClient.pas',
@@ -720,11 +724,18 @@ begin
     ExitCode := 2;
     Exit;
   end;
-  GSmoke := TSmoke.Create(ParamStr(1));
+  if StartDesktopTracing then
+    Writeln('tracing: on');
   try
-    if not GSmoke.Execute then
-      ExitCode := 1;
+    GSmoke := TSmoke.Create(ParamStr(1));
+    try
+      if not GSmoke.Execute then
+        ExitCode := 1;
+    finally
+      GSmoke.Free;
+    end;
   finally
-    GSmoke.Free;
+    // The spans still queued, sent.
+    TPcTracing.Shutdown;
   end;
 end.

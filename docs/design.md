@@ -203,7 +203,8 @@ candidate (promote, keep in the application, drop) with these criteria:
   with `Run` (pool thread) and `Done` (UI thread, via `TThread.Queue`), `Forget(owner)` so a
   late answer never reaches a freed view model, `WaitIdle` for `OnCloseQuery`, and a manual
   runner for tests (pascal-common-faa, next to the pool; FPC 3.2.2 has no closures, so a task
-  is an object). **Built here 2026-10-29** as `src/Agenda.Desktop.Tasks` (M6).
+  is an object). **Built here 2026-10-29** as `src/Agenda.Desktop.Tasks` (M6), with a span
+  per task (a detached one for the action, `run` on the pool thread) since decision 9.
 - A package of pascal-api-infra-faa's units a client needs (`PascalApi.Dto`, `PascalApi.OpenApi`,
   `PascalApi.OrderBy`, `PascalApi.Text`): `pascal_api_infra_faa.lpk` requires `pascal_db_faa`,
   so the desktop client's `.lpi` takes the library's `src` as a search path instead (M6).
@@ -2261,7 +2262,7 @@ The rest of the staff's screens: an appointment moved to another free time, and 
   `tools/test_http.sh` 669 + 74 + client 29 + desktop 56, 0 unfreed blocks. Unit tests 186
   (8 new), 0 leaks. Delphi (VCL): waiting for the IDE.
 
-### M6: the trace from the click (decision 9), waiting for pascal-api-infra-faa (2026-10-29)
+### M6: the trace from the click (decision 9), on pascal-api-infra-faa 0.28.0 (2026-10-29)
 
 The user chose (2026-10-29) to fix the library rather than send `traceparent` alone or leave
 the client's spans out of M6.
@@ -2280,3 +2281,49 @@ the client's spans out of M6.
   (`StartDetachedSpan`: it starts on the UI thread and ends in the task's `Done`), each call a
   child span on the pool thread (`StartChildSpan`), and `TraceParent` replaces the client's
   `TraceId` in the header, so the retries and the refresh stay in the action's trace.
+- pascal-api-infra-faa 0.28.0 (tag v0.28.0, 1949078) did it: `THttpHeader` in
+  `PascalApi.HttpTypes` (an empty `uses`), `PascalApi.Otlp` on it, and `tests/Deps/OtlpNoDb` in
+  its CI, built with only `src`, pascal-common-faa and the mapper on the search path. The
+  submodule moved to it. Its package still requires `pascal_db_faa`, so the desktop's `.lpi`
+  keeps the library's `src` as a search path, as it did (`PascalDb*` units: none in the
+  desktop's build output, checked).
+- Built, the three levels of one user action:
+  - The action: `TUiTaskRunnerBase` opens a detached span when a task starts (the UI thread),
+    named by the task's `SpanName` (`login`, `day.open`, `day.load`, `day.confirmed`,
+    `day.cancel`, `booking.book`, `move.move`, `customer.save`...; the default is the class
+    name), and ends it after `Done`, on the UI thread: from the click to the screen updated.
+    A failed `Run` is an error; a forgotten task's span says `ui.forgotten`.
+  - Its run: `RunHalf` opens a child span `run`, the pool thread's current span while `Run`
+    goes; the time between the action's start and the run's is the wait for a pool thread.
+  - Its calls: `TApiHttpClient` makes each try a client span (named after the method, with
+    `http.request.method`, `url.path` without the query (a search may carry what a user typed),
+    `http.response.status_code`, `http.request.resend_count`; 400 or more, or no answer, an
+    error), a child of the thread's current span, and sends that span's `traceparent`. With no
+    current span (a call outside a task: the smoke's setup, the logout on close), the tries
+    share the request's `TraceId` or a new trace, as before. `TApiCall.TraceId` and the
+    client's `ATraceId` parameters stay for those.
+  - With tracing not started the spans record nothing and the `traceparent` still goes,
+    sampled (the default ratio is 1), so the server records its side as before.
+- The program: `StartDesktopTracing` (`Agenda.Desktop.App`) starts the tracing only when
+  `OTEL_EXPORTER_OTLP_ENDPOINT` is set (the environment or the `.env`), as the api does, under
+  the service name `agenda-desktop` (`OTEL_SERVICE_NAME` replaces it), with
+  `TOtlpHttpExporter.FromEnvironment`; `RunDesktop` calls `TPcTracing.Shutdown` at the end so
+  the spans still queued go. Export failures aren't shown (no console, and a collector down
+  must not bother the user).
+- Checked end to end with no Docker: `tools/test_http.sh` runs the desktop smoke against
+  `tools/otlp_sink.py` (a stand-in collector on port PORT+1 that keeps the OTLP JSON bodies)
+  and `tools/desktop_traces.py` checks what it kept: every action the smoke goes through has
+  its span, each with one `run`; every call inside an action is under a `run`; every call's
+  trace is in the api's log (`trace_id`), so the server used the `traceparent` sent. On FPC
+  Windows (SQLite, PORT=9410): 669 + worker 74 + client 29 + desktop smoke 56, and "desktop
+  traces: 84 spans, 24 actions, 36 calls (26 inside an action), all in the api's log". A look
+  at two: `booking.book` 43 ms > `run` 37.5 ms > `POST /appointments` 201; `move.move` 47.8 ms
+  > `run` 40.2 ms > `PATCH /appointments/<id>` 200.
+- Tests: 2 more, 188 in all, 0 failures, 0 leaks on FPC Windows and Linux.
+  `Spans_PerTry_UnderTheCurrentSpan` (a retried GET: two client spans under the current one,
+  each try's `traceparent` its own span, the status and resend count) and
+  `Spans_Action_Run_Call` (a day read: `day.load` > `run` > `GET`, the `traceparent` sent; a
+  500: the three spans errors, a trace of its own). `TSpanRecorder` (in
+  `Agenda.HttpClientTests`) is the exporter both read.
+- Owed on Delphi: the 188 unit tests (Win32, Win64) and the runner with `DESKTOP_SMOKE_EXE`
+  (the span check included).

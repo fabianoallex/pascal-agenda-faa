@@ -85,6 +85,7 @@ type
     FTenant, FEmail, FPassword: string;
     FRole: string;
   protected
+    function SpanName: string; override;
     procedure Run; override;
     procedure Done; override;
   public
@@ -228,6 +229,11 @@ function TLoginModel.TakeClient: TAgendaClient;
 begin
   Result := FClient;
   FClient := nil;
+end;
+
+function TLoginTask.SpanName: string;
+begin
+  Result := 'login';
 end;
 
 end.
