@@ -13,7 +13,10 @@ unit Agenda.Desktop.Login;
   - A 401 here is the wrong company, email or password (one answer for
     all, as the server gives); 403 tenant_suspended and the rest show the
     server's message; no server, ekOffline.
-  - An address without a scheme gets http://. }
+  - An address without a scheme gets http://.
+  - Logging in again (the session was lost): CreateAgain takes the client
+    the screens already use; Submit logs it in again (the server is the
+    client's), and TakeClient gives nil: the program keeps its own. }
 
 interface
 
@@ -38,6 +41,7 @@ type
     FEmail: string;
     FPassword: string;
     FClient: TAgendaClient;
+    FAgain: TAgendaClient;
     FRole: string;
     FOnLoggedIn: TNotifyEvent;
     procedure SetServer(const AValue: string);
@@ -49,7 +53,12 @@ type
     /// the tests).
     constructor Create(const ARunner: IUiTaskRunner; const ATransport: IHttpTransport;
       const AServer: string);
+    /// Logging AClient (not owned) in again, the company and email kept.
+    constructor CreateAgain(const ARunner: IUiTaskRunner; AClient: TAgendaClient;
+      const ATenant, AEmail: string);
     destructor Destroy; override;
+    /// True when logging the screens' client in again.
+    function Again: Boolean;
     function CanSubmit: Boolean;
     procedure Submit;
     /// The logged-in client, now the caller's (nil before OnLoggedIn).
@@ -72,6 +81,7 @@ type
   private
     FModel: TLoginModel;
     FClient: TAgendaClient;
+    FOwnsClient: Boolean;
     FTenant, FEmail, FPassword: string;
     FRole: string;
   protected
@@ -84,7 +94,8 @@ type
 destructor TLoginTask.Destroy;
 begin
   // Not handed over (failed, or the model gone): the client goes with it.
-  FClient.Free;
+  if FOwnsClient then
+    FClient.Free;
   inherited;
 end;
 
@@ -110,9 +121,12 @@ begin
     FModel.Changed;
     Exit;
   end;
-  FModel.FClient.Free;
-  FModel.FClient := FClient;
-  FClient := nil;
+  if FOwnsClient then
+  begin
+    FModel.FClient.Free;
+    FModel.FClient := FClient;
+    FClient := nil;
+  end;
   FModel.FRole := FRole;
   FModel.FPassword := '';
   FModel.Changed;
@@ -128,6 +142,21 @@ begin
   inherited Create(ARunner);
   FTransport := ATransport;
   FServer := AServer;
+end;
+
+constructor TLoginModel.CreateAgain(const ARunner: IUiTaskRunner; AClient: TAgendaClient;
+  const ATenant, AEmail: string);
+begin
+  inherited Create(ARunner);
+  FAgain := AClient;
+  FServer := AClient.Http.BaseUrl;
+  FTenant := ATenant;
+  FEmail := AEmail;
+end;
+
+function TLoginModel.Again: Boolean;
+begin
+  Result := FAgain <> nil;
 end;
 
 destructor TLoginModel.Destroy;
@@ -182,7 +211,13 @@ begin
   SetError(TUiError.None);
   LTask := TLoginTask.Create(Self);
   LTask.FModel := Self;
-  LTask.FClient := TAgendaClient.Create(ServerUrl, FTransport);
+  if FAgain <> nil then
+    LTask.FClient := FAgain
+  else
+  begin
+    LTask.FClient := TAgendaClient.Create(ServerUrl, FTransport);
+    LTask.FOwnsClient := True;
+  end;
   LTask.FTenant := Trim(FTenant);
   LTask.FEmail := Trim(FEmail);
   LTask.FPassword := FPassword;

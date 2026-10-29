@@ -2167,3 +2167,42 @@ both, resizes the window and checks the layout, then quits.
   `AgendaClientCheck` now do so, and `tools/test_fpc.sh` fails on non-ASCII text in the
   project's `.pas`/`.dpr` without a BOM, so FPC catches what only Delphi showed.
 - Delphi 12 Win32 and Win64 (the user): 177 of 177, no leak.
+
+### M6: the screens (2026-10-29, decisions 3 and 8)
+
+- `client/desktop/AgendaDesktop` (`.dpr` for both compilers, `.dproj` VCL, `.lpi` LCL; in
+  `Agenda.groupproj`): the login dialog, the day as the main window, the booking dialog, each
+  built in code with OPCB v0.2.0 (`CreateNew`, no `.dfm`/`.lfm`). A form shows its view model's
+  state on `OnChange` and passes the user's input and clicks on; nothing else.
+  `Agenda.Desktop.App` holds the flow: the settings from a `.env` next to the program
+  (`AGENDA_SERVER`, `AGENDA_TENANT`, `AGENDA_EMAIL`, through `TAppConfig`), the login, the day
+  as the main form (`Application.CreateForm`, pascal-snake's way: its `Create` calls
+  `CreateNew`), and at the end the calls waited for, the logout, the client freed. A lost
+  session opens the login again on the same client (`TLoginModel.CreateAgain`, a test of its
+  own). The day: F5 and a 60-second timer read it again; the bottom bar has what the selected
+  appointment allows and a status line (error in red, notice, or "Appointments: n (zone)").
+- `client/desktop/smoke/AgendaDesktopSmoke`: the screens driven against the real api, 30
+  checks. The owner creates a service, a professional and a customer named "Conceição Smoke
+  ..."; then the login dialog (Log in off while blank, the wrong password told, logged in, the
+  password forgotten), the booking dialog three days on (the service and the professional
+  listed, the free times, the customer found by "conceicao smoke", Book), the day window (the
+  appointment at its time, booked; Confirm, still selected after the read; Cancel), closing
+  logged out. Every form's layout checked: each control inside its parent's client area, no two
+  siblings overlapping. `SMOKE_SHOTS=<folder>` saves each form as a PNG (`GetFormImage`), which
+  is how the two layout faults below were seen. `tools/test_http.sh` runs it on the third start,
+  after `AgendaClientCheck` (`DESKTOP_SMOKE_EXE` for a Delphi build, `SKIP_DESKTOP=1` to leave it
+  out); not in Docker (it shows forms).
+- Found by the smoke: the login form copied every field into the model on each change, and
+  each assignment rendered, putting the model's old password back in the edit before it was
+  read: typing the password lost it. Each field now updates only itself.
+- Found in the screenshots: the booking dialog's two lists came out 23 pixels high, with 200
+  reserved below them. OPCB applies `SetControlHeight` after the build, over an explicit
+  height, on purpose (its source says so), while the flow had advanced by the builder's 200.
+  Here: `UnsetControlHeight` after the grid. For OPCB (the user's call): the flow and the
+  forced size disagree. Also: an LCL `TLabel` with `AutoSize` shrinks back to its text at the
+  top of a grid row; `CenterLabels` (`Agenda.Desktop.Ui`) turns it off and centers the text.
+- `tools/test_fpc.sh`'s BOM check covers `client/` too.
+- Checked: FPC Windows (LCL): `AgendaDesktop` and the smoke build with no warning of ours; the
+  smoke 30 of 30, 0 unfreed blocks, alone and inside `tools/test_http.sh` (669 + 74 + client 29
+  + desktop 30). Unit tests 178, 0 leaks, FPC Windows and Linux. Delphi (VCL): waiting for the
+  IDE.

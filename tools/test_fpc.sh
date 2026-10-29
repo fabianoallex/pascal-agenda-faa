@@ -19,6 +19,7 @@ python tools/gen_fpc_mirror.py
 python - <<'EOF'
 import glob, sys
 bad = [f for f in glob.glob('src/*.pas') + glob.glob('tests/**/*.pas', recursive=True)
+       + glob.glob('client/**/*.pas', recursive=True)
        + [f for f in glob.glob('*/**/*.dpr', recursive=True) if not f.startswith('external')]
        if not open(f, 'rb').read().startswith(b'\xef\xbb\xbf')
        and any(c > 127 for c in open(f, 'rb').read())]

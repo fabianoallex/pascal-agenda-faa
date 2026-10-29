@@ -15,6 +15,12 @@
         <Projects Include="client\check\AgendaClientCheck.dproj">
             <Dependencies/>
         </Projects>
+        <Projects Include="client\desktop\AgendaDesktop.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="client\desktop\smoke\AgendaDesktopSmoke.dproj">
+            <Dependencies/>
+        </Projects>
     </ItemGroup>
     <ProjectExtensions>
         <Borland.Personality>Default.Personality.12</Borland.Personality>
@@ -59,14 +65,32 @@
     <Target Name="AgendaClientCheck:Make">
         <MSBuild Projects="client\check\AgendaClientCheck.dproj" Targets="Make"/>
     </Target>
+    <Target Name="AgendaDesktop">
+        <MSBuild Projects="client\desktop\AgendaDesktop.dproj"/>
+    </Target>
+    <Target Name="AgendaDesktop:Clean">
+        <MSBuild Projects="client\desktop\AgendaDesktop.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="AgendaDesktop:Make">
+        <MSBuild Projects="client\desktop\AgendaDesktop.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="AgendaDesktopSmoke">
+        <MSBuild Projects="client\desktop\smoke\AgendaDesktopSmoke.dproj"/>
+    </Target>
+    <Target Name="AgendaDesktopSmoke:Clean">
+        <MSBuild Projects="client\desktop\smoke\AgendaDesktopSmoke.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="AgendaDesktopSmoke:Make">
+        <MSBuild Projects="client\desktop\smoke\AgendaDesktopSmoke.dproj" Targets="Make"/>
+    </Target>
     <Target Name="Build">
-        <CallTarget Targets="Agenda_UnitTests;AgendaApi;AgendaWorker;AgendaClientCheck"/>
+        <CallTarget Targets="Agenda_UnitTests;AgendaApi;AgendaWorker;AgendaClientCheck;AgendaDesktop;AgendaDesktopSmoke"/>
     </Target>
     <Target Name="Clean">
-        <CallTarget Targets="Agenda_UnitTests:Clean;AgendaApi:Clean;AgendaWorker:Clean;AgendaClientCheck:Clean"/>
+        <CallTarget Targets="Agenda_UnitTests:Clean;AgendaApi:Clean;AgendaWorker:Clean;AgendaClientCheck:Clean;AgendaDesktop:Clean;AgendaDesktopSmoke:Clean"/>
     </Target>
     <Target Name="Make">
-        <CallTarget Targets="Agenda_UnitTests:Make;AgendaApi:Make;AgendaWorker:Make;AgendaClientCheck:Make"/>
+        <CallTarget Targets="Agenda_UnitTests:Make;AgendaApi:Make;AgendaWorker:Make;AgendaClientCheck:Make;AgendaDesktop:Make;AgendaDesktopSmoke:Make"/>
     </Target>
     <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
 </Project>

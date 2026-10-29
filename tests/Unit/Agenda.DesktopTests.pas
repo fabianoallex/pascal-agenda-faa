@@ -68,6 +68,7 @@ type
     [Test] procedure Errors_Kinds;
     [Test] procedure Login_Submit_HandsTheClient;
     [Test] procedure Login_Wrong_Offline;
+    [Test] procedure Login_Again_SameClient;
     [Test] procedure Day_Open_Select_FollowsTheId;
     [Test] procedure Day_OldReadDropped_TickSkippedWhileBusy;
     [Test] procedure Day_Confirm_IfMatch_ThenReadAgain;
@@ -404,6 +405,42 @@ begin
   finally
     LModel.Free;
   end;
+end;
+
+procedure TDesktopTests.Login_Again_SameClient;
+var
+  LModel: TLoginModel;
+begin
+  LogIn;
+  // The session lost: the refresh refused.
+  FFake.Answer(401, '');
+  FFake.Answer(401, '');
+  try
+    FClient.Me;
+  except
+    on EApiError do ;
+  end;
+  TAssert.AssertTrue(FClient.SessionLost);
+  LModel := TLoginModel.CreateAgain(FRunner, FClient, 'demo', 'staff@demo.test');
+  try
+    LModel.OnLoggedIn := NoteLoggedIn;
+    TAssert.AssertTrue(LModel.Again);
+    TAssert.AssertEquals('http://agenda.test', LModel.Server);
+    TAssert.AssertEquals('demo', LModel.Tenant);
+    TAssert.AssertFalse(LModel.CanSubmit);
+    LModel.Password := 'secret';
+    FFake.Answer(200, '{"accessToken":"acc9","tokenType":"Bearer","expiresIn":900,"refreshToken":"ref9"}');
+    FFake.Answer(200, ME_STAFF);
+    LModel.Submit;
+    FManual.RunPending;
+    TAssert.AssertEquals('L', FEvents);
+    TAssert.AssertTrue(LModel.TakeClient = nil);
+  finally
+    LModel.Free;
+  end;
+  // The screens' client, logged in again.
+  TAssert.AssertFalse(FClient.SessionLost);
+  TAssert.AssertEquals('ref9', FClient.Session.RefreshToken);
 end;
 
 procedure TDesktopTests.Day_Open_Select_FollowsTheId;

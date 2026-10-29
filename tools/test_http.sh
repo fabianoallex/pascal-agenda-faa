@@ -20,7 +20,10 @@
 # The desktop client (M6): a third start with ACCESS_TOKEN_SECONDS=8 runs
 # client/check/AgendaClientCheck (its own /auth/ window, tokens that run out
 # while it works). CLIENT_CHECK_EXE=client/check/Win32/Debug/AgendaClientCheck.exe
-# for a Delphi build.
+# for a Delphi build. On the same start, client/desktop/smoke/AgendaDesktopSmoke
+# drives the desktop client's screens (VCL or LCL) against it;
+# DESKTOP_SMOKE_EXE=client/desktop/smoke/Win32/Debug/AgendaDesktopSmoke.exe
+# for a Delphi build, SKIP_DESKTOP=1 to leave it out.
 #
 # DB_ENGINE=postgresql runs them on PostgreSQL: a fresh postgres:17 container
 # (PG_IMAGE) on port 55433 (PG_PORT), removed at the end, and the 64-bit
@@ -72,6 +75,13 @@ if [ -z "$CLIENT_CHECK_EXE" ]; then
     exit 1
   fi
   CLIENT_CHECK_EXE=client/check/AgendaClientCheck.exe
+fi
+if [ -z "$SKIP_DESKTOP" ] && [ -z "$DESKTOP_SMOKE_EXE" ]; then
+  if ! (cd client/desktop/smoke && "$LAZBUILD" -B AgendaDesktopSmoke.lpi > build.log 2>&1); then
+    grep -E "Error|Fatal" client/desktop/smoke/build.log | head -30
+    exit 1
+  fi
+  DESKTOP_SMOKE_EXE=client/desktop/smoke/AgendaDesktopSmoke.exe
 fi
 EXE="$ROOT/$AGENDA_EXE"
 DIR="$(dirname "$EXE")"
@@ -213,10 +223,23 @@ unset ACCESS_TOKEN_SECONDS
 CRC=0
 CLOG="$ROOT/client/check/check.log"
 CHECK_TOKEN_SECONDS=8 "$ROOT/$CLIENT_CHECK_EXE" "http://127.0.0.1:$PORT" > "$CLOG" 2>&1 || CRC=$?
+DRC=0
+DLOG="$ROOT/client/desktop/smoke/smoke.log"
+if [ -z "$SKIP_DESKTOP" ]; then
+  "$ROOT/$DESKTOP_SMOKE_EXE" "http://127.0.0.1:$PORT" > "$DLOG" 2>&1 || DRC=$?
+fi
 stop
 grep "^client check:" "$CLOG" || { echo "FAIL: no summary from AgendaClientCheck"; cat "$CLOG"; exit 1; }
 [ $CRC -eq 0 ] || { grep -v "^ok " "$CLOG"; exit $CRC; }
 # An FPC build reports its heap (heaptrc) at the end.
 if grep -q "unfreed memory blocks" "$CLOG"; then
   grep -q "^0 unfreed memory blocks" "$CLOG" || { echo "FAIL: AgendaClientCheck leaked"; sed -n '/unfreed/,$p' "$CLOG" | head -30; exit 1; }
+fi
+if [ -z "$SKIP_DESKTOP" ]; then
+  echo "== the desktop client's screens (AgendaDesktopSmoke)"
+  grep "^desktop smoke:" "$DLOG" || { echo "FAIL: no summary from AgendaDesktopSmoke"; cat "$DLOG"; exit 1; }
+  [ $DRC -eq 0 ] || { grep -v "^OK " "$DLOG"; exit $DRC; }
+  if grep -q "unfreed memory blocks" "$DLOG"; then
+    grep -q "^0 unfreed memory blocks" "$DLOG" || { echo "FAIL: AgendaDesktopSmoke leaked"; sed -n '/unfreed/,$p' "$DLOG" | head -30; exit 1; }
+  fi
 fi
