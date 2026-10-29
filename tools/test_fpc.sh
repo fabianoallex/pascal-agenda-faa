@@ -12,6 +12,19 @@ command -v "$LAZBUILD" >/dev/null 2>&1 || LAZBUILD=/c/lazarus4.0/lazbuild.exe
 
 cd "$ROOT"
 python tools/gen_fpc_mirror.py
+# Delphi reads a source without a BOM in the ANSI code page, FPC (here) in
+# UTF-8: a non-ASCII literal in such a file passes on FPC and fails on
+# Delphi (2026-10-29, "JoÃ£o"). Write \uXXXX in JSON, or save with a BOM.
+python - <<'EOF'
+import glob, sys
+bad = [f for f in glob.glob('src/*.pas') + glob.glob('tests/**/*.pas', recursive=True)
+       + [f for f in glob.glob('*/**/*.dpr', recursive=True) if not f.startswith('external')]
+       if not open(f, 'rb').read().startswith(b'\xef\xbb\xbf')
+       and any(c > 127 for c in open(f, 'rb').read())]
+if bad:
+    print('non-ASCII text in a source without a BOM (Delphi reads it as ANSI):', *bad)
+    sys.exit(1)
+EOF
 # Agenda.OutboxTests opens SQLite: SQLdb loads sqlite3.dll next to the runner,
 # and it must be sqlite.org's build (pascal-db-faa gotcha 23).
 DLL="${SQLITE_DLL:-.deps/sqlite3.dll}"

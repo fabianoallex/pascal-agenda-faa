@@ -137,7 +137,7 @@ begin
     '{"id":"a1","startsAt":"2026-11-02T12:00:00Z","endsAt":"2026-11-02T12:30:00Z",' +
     '"localStart":"2026-11-02T09:00:00","localEnd":"2026-11-02T09:30:00","status":"booked",' +
     '"version":3,"professionalId":"p 1","professionalName":"Ana","serviceId":"s1",' +
-    '"serviceName":"Corte","customerId":"c1","customerName":"João"}]}');
+    '"serviceName":"Corte","customerId":"c1","customerName":"Jo\u00e3o"}]}');
   LDay := FClient.GetDay('2026-11-02', 'p 1');
   TAssert.AssertEquals('America/Sao_Paulo', LDay.TimeZone);
   TAssert.AssertEquals(1, Length(LDay.Appointments));
