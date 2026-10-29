@@ -1960,7 +1960,8 @@ both, resizes the window and checks the layout, then quits.
   0 unfreed blocks.
 - The api unchanged: FPC Windows, HTTP on SQLite 669 + 74, on PostgreSQL with Redis and RabbitMQ
   680 + 74, the restart; unit tests 116, 0 leaks, on FPC Windows and Linux. Not run: the official
-  MCP client (this machine's `python` has no `mcp`). Delphi: waiting for the IDE.
+  MCP client (this machine's `python` has no `mcp`). Delphi: the api builds on Win32 and
+  Win64 with the six units (the user, in the IDE).
 - Found while running them: the compose file's api, left up, publishes port 9400, the runner's
   default; the health check reached it before the api under test bound the port, so the token
   for the restart came from it ("no token before the restart", the same on the last commit).
@@ -1978,5 +1979,7 @@ both, resizes the window and checks the layout, then quits.
   (tops 14, 42, 70, 98 in cells of 28 from 12) and the buttons start below the grid (132);
   with no default at all each control is centered by its own height (edits 23 at 14..., labels
   15 at 17...). 10 of 10 both ways, 0 unfreed blocks. The dialog is still 167 high on the LCL.
-- Delphi Win32/Win64 with v0.2.0: waiting for the IDE (the probe's `OpcbProbeDelphi.dpr`; the
-  check "dialog holds its buttons" is the one the client size fixes).
+- Delphi 12 Win32 and Win64 with v0.2.0 (run by the user): 10 of 10 on both, the same tops as
+  the LCL (edits at 14, 42, 70, 98; buttons at 132), and the dialog's client area 167 high, as
+  on the LCL (128 before the fix). Harmless: a `TLabel` there takes the default height (23) and
+  the cell's width (80), the LCL one its text's size.
