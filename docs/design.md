@@ -2166,3 +2166,4 @@ both, resizes the window and checks the layout, then quits.
   saved as UTF-8 with a BOM, which both compilers read as UTF-8. The tests and
   `AgendaClientCheck` now do so, and `tools/test_fpc.sh` fails on non-ASCII text in the
   project's `.pas`/`.dpr` without a BOM, so FPC catches what only Delphi showed.
+- Delphi 12 Win32 and Win64 (the user): 177 of 177, no leak.
