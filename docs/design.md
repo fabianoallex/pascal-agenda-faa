@@ -2325,5 +2325,7 @@ the client's spans out of M6.
   `Spans_Action_Run_Call` (a day read: `day.load` > `run` > `GET`, the `traceparent` sent; a
   500: the three spans errors, a trace of its own). `TSpanRecorder` (in
   `Agenda.HttpClientTests`) is the exporter both read.
-- Owed on Delphi: the 188 unit tests (Win32, Win64) and the runner with `DESKTOP_SMOKE_EXE`
-  (the span check included).
+- On Delphi (the user built all of `Agenda.groupproj`, 2026-10-30; run from here): the unit
+  tests 188 of 188 on Win32 and Win64, 0 leaks; the runner on the Win32 builds (SQLite,
+  PORT=9410): 675 + worker 68 + client 29 + desktop smoke 56, 0 failed, and the same "84
+  spans, 24 actions, 36 calls (26 inside an action), all in the api's log".
