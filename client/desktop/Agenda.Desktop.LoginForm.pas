@@ -89,8 +89,10 @@ begin
   finally
     LCreator.Free;
   end;
-  FStatus.WordWrap := True;
+  // AutoSize off first: WordWrap set while AutoSize is on shrinks the empty
+  // label to the width of a space (VCL), one letter per line afterwards.
   FStatus.AutoSize := False;
+  FStatus.WordWrap := True;
   FStatus.Height := 30;
   CenterLabels(Self);
   FStatus.Layout := tlTop;
