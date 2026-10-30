@@ -2329,3 +2329,9 @@ the client's spans out of M6.
   tests 188 of 188 on Win32 and Win64, 0 leaks; the runner on the Win32 builds (SQLite,
   PORT=9410): 675 + worker 68 + client 29 + desktop smoke 56, 0 failed, and the same "84
   spans, 24 actions, 36 calls (26 inside an action), all in the api's log".
+
+### M6: by hand (2026-10-30)
+
+The last step before closing M6: a person using the program on the VCL and the LCL, from
+`docs/desktop-manual-check.md` (the setup, eight sections with what should happen, a table of
+results for both builds). Waiting for the user's run.
