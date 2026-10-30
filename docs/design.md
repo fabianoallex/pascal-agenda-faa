@@ -2334,7 +2334,12 @@ the client's spans out of M6.
 
 The last step before closing M6: a person using the program on the VCL and the LCL, from
 `docs/desktop-manual-check.md` (the setup, eight sections with what should happen, a table of
-results for both builds). Waiting for the user's run.
+results for both builds).
+
+- VCL (Delphi Win32 Debug, the user, 2026-10-30): every step of the eight sections passed,
+  after the two fixes below (the login's status line, the lists' selection). The Delphi unit
+  tests on those builds: 188 of 188 on Win32 and Win64, 0 leaks.
+- LCL (Lazarus): not run by hand yet; built from the same source with the fixes.
 
 - Found (2026-10-30, the VCL build at start): "Exception EEncodingError ... No mapping for the
   Unicode character exists in the target multi-byte code page", an application error before
