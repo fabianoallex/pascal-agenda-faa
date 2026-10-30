@@ -2335,3 +2335,18 @@ the client's spans out of M6.
 The last step before closing M6: a person using the program on the VCL and the LCL, from
 `docs/desktop-manual-check.md` (the setup, eight sections with what should happen, a table of
 results for both builds). Waiting for the user's run.
+
+- Found (2026-10-30, the VCL build at start): "Exception EEncodingError ... No mapping for the
+  Unicode character exists in the target multi-byte code page", an application error before
+  any window. The `.env` next to it was UTF-16 LE with a BOM (`FF FE`: what PowerShell 5.1's
+  `>` writes). Converted to UTF-8 by hand, the program starts. Two faults in the libraries,
+  asked of them, not patched here:
+  - pascal-common-faa 1.24.0, `PcTryUtf8BytesToString`: on Delphi it calls
+    `TEncoding.UTF8.GetString`, which raises `EEncodingError` on bytes that aren't UTF-8, so
+    the "Try" raises instead of returning False, and `PaUtf8BytesToString`'s message (with the
+    file's name) never comes. On FPC it checks nothing when the code page is UTF-8: a UTF-16
+    file goes through, its keys carry `#0` and match nothing, and the program runs on the
+    defaults without a word (the LCL build would have tried `http://127.0.0.1:9400` with an
+    empty login).
+  - pascal-api-infra-faa 0.28.0, `PaUtf8BytesToString`: its only message is the FPC code page
+    one; a file that isn't UTF-8 (a UTF-16 BOM, invalid bytes) should say so, with its name.
