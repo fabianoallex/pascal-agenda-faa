@@ -2350,3 +2350,12 @@ results for both builds). Waiting for the user's run.
     empty login).
   - pascal-api-infra-faa 0.28.0, `PaUtf8BytesToString`: its only message is the FPC code page
     one; a file that isn't UTF-8 (a UTF-16 BOM, invalid bytes) should say so, with its name.
+
+  Fixed there the same day: pascal-common-faa **1.25.0** (tag v1.25.0, d43d168:
+  `PcTryUtf8BytesToString` returns False on bytes that aren't UTF-8 on both compilers, and
+  `PcIsValidUtf8`) and pascal-api-infra-faa **0.29.0** (tag v0.29.0, 11407dd: "<file> is not
+  UTF-8 (it starts with a UTF-16 byte order mark): save it as UTF-8", on both). Both submodules
+  moved here; nothing changed in this repository's code. Checked on FPC: the unit tests 188 of
+  188 on Windows and Linux, 0 leaks, and the runner (PORT=9430): 675 + worker 74 + client 29 + desktop smoke 56, 0 failed, the same
+  "84 spans, 24 actions, 36 calls". The smoke with a UTF-16 `.env` now stops in
+  `PaUtf8BytesToString` with the UTF-16 message (PascalApi.Text line 77), as asked.

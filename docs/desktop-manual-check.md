@@ -30,10 +30,10 @@ works (a clipped label, a focus that jumps, a slow screen), goes in the notes.
 
    The password is `correct horse battery staple`.
 
-   Save each `.env` as UTF-8. PowerShell 5.1's `>` writes UTF-16, which stops the VCL build
-   with EEncodingError and leaves the LCL build on the defaults, saying nothing (a library
-   fault, recorded in `docs/design.md`). Write it with
-   `Set-Content -Encoding utf8 .env -Value 'KEY=value', ...`, or in an editor as UTF-8.
+   Save each `.env` as UTF-8. PowerShell 5.1's `>` writes UTF-16, and the program then stops
+   at start with "<file> is not UTF-8 (it starts with a UTF-16 byte order mark): save it as
+   UTF-8". Write it with `Set-Content -Encoding utf8 .env -Value 'KEY=value', ...`, or in an
+   editor as UTF-8.
 3. Some steps need a second window on the same server: start the same program twice (two
    instances, the same user is fine).
 
