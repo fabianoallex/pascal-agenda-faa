@@ -1,7 +1,8 @@
 # pascal-agenda-faa — design
 
-Status: scope agreed with the user on 2026-10-18. M0 to M5 built (see "Progress" and the
-milestone sections after it); M5 closed 2026-10-28, M6 closed 2026-10-30 ("M6: closed").
+Status: scope agreed with the user on 2026-10-18. M0 to M6 built (see "Progress" and the
+milestone sections after it); M5 closed 2026-10-28, M6 closed 2026-10-30 ("M6: closed"); M7's
+decisions taken 2026-10-30 ("M7: design").
 
 ## Why this application exists
 
@@ -134,12 +135,12 @@ two libraries would share goes to pascal-common-faa.
 
 | Candidate | Would live in | Notes |
 |---|---|---|
-| Password hashing: PBKDF2-HMAC-SHA256, `$pbkdf2-sha256$<iter>$<salt>$<hash>`, constant-time compare, "needs rehash" | pascal-common-faa (has HMAC and `Random`) | no library has it |
-| Refresh tokens: rotation, reuse detection, family revoke, db/Redis store | `PascalApi.RefreshTokens` + `src/redis` | `docs/jwt-keys-design.md` lists them as "an application's flow": promoting reopens that |
+| Password hashing: PBKDF2-HMAC-SHA256, `$pbkdf2-sha256$<iter>$<salt>$<hash>`, constant-time compare, "needs rehash" | pascal-common-faa (has HMAC and `Random`) | no library has it; PBKDF2 itself added in pascal-common-faa 1.18.0, the stored form built here as `src/Agenda.Passwords`. **M7: promote** (decision 1) |
+| Refresh tokens: rotation, reuse detection, family revoke, db/Redis store | `PascalApi.RefreshTokens` + `src/redis` | `docs/jwt-keys-design.md` lists them as "an application's flow": promoting reopens that. **Done** in pascal-api-infra-faa 0.19.0 (`PascalApi.RefreshTokens`, the core only, user 2026-10-19); the race fixed in 0.20.1 |
 | `Idempotency-Key` middleware: replay, 409 while in flight, 422 on another body | `PascalApi.Idempotency` + Horse, db/Redis store | same pluggable-store shape as the JWT keys; **built here 2026-10-21** as `src/Agenda.Idempotency` (memory and database stores, 9 unit tests), see "M2: Idempotency-Key". **Done** in pascal-api-infra-faa 0.23.0 (`PascalApi.Idempotency`, `THorseIdempotentRequest`); adopted 2026-10-21 ("Candidates promoted (2026-10-21)") |
 | Optimistic concurrency: `ETag`/`If-Match`, 412/428 | `PascalApi.Http` + middleware | small; **built here 2026-10-21** as `src/Agenda.Preconditions` (RFC 9110 parsing, 6 unit tests), see "M2: changing and cancelling". **Done** in pascal-api-infra-faa 0.23.0 (`PascalApi.Preconditions`, no middleware); adopted 2026-10-21 |
-| Tenant from the path or host | `PascalApi.Tenancy` | multi-tenancy decision 5; **built here 2026-10-21** as `src/Agenda.PublicTenancy` (the path's slug; unknown and suspended one 404), see "M3: design" |
-| Signed links: HMAC with expiry | `PascalApi.SignedUrl` | cancel, invite, email confirmation. Not the JWT key ring (user, 2026-10-21: its keys retire in about 30 days, a link may need a year); keys of its own, derived per tenant. **Built here 2026-10-21** as `src/Agenda.SignedLinks`, see "M3: design" |
+| Tenant from the path or host | `PascalApi.Tenancy` | multi-tenancy decision 5; **built here 2026-10-21** as `src/Agenda.PublicTenancy` (the path's slug; unknown and suspended one 404), see "M3: design". **M7: promote** (decision 5) |
+| Signed links: HMAC with expiry | `PascalApi.SignedUrl` | cancel, invite, email confirmation. Not the JWT key ring (user, 2026-10-21: its keys retire in about 30 days, a link may need a year); keys of its own, derived per tenant. **Built here 2026-10-21** as `src/Agenda.SignedLinks`, see "M3: design". **M7: promote**, the context a parameter (decision 6) |
 | IANA time zones on both compilers | pascal-common-faa | **biggest risk**: neither RTL converts an arbitrary zone. Linux has `/usr/share/zoneinfo`; Windows has the registry (Windows names) or an embedded database. Own design phase before M2. **Done in pascal-common-faa 1.22.0** (`PascalCommon.TimeZones`, the tzdb embedded); adopted 2026-10-20 |
 
 **Probable** (a second case should confirm the shape):
@@ -180,42 +181,55 @@ candidate (promote, keep in the application, drop) with these criteria:
   - Not a sink: a side effect such as email belongs to a handler or a consumer, not to the
     transport (a sink sees every event; SMTP can't deduplicate; a slow server would stall the
     relay). Out of scope: CDC (reading the database log, as Debezium does); polling is enough.
+  - **M7: promote** the core and the local sink to pascal-db-faa (decision 10), the broker
+    sink as a bridge in pascal-amqp-faa (decision 11).
 - Scheduler with a lease (Redis `SetNx` or a database row): the core in pascal-common-faa.
   **Built here 2026-10-26** as `src/Agenda.Leases`, one interface with a database store (the
-  default) and a Redis one (`TRedisLock`); see "M4: the worker".
+  default) and a Redis one (`TRedisLock`); see "M4: the worker". **M7: kept here**
+  (decision 14).
 - RFC 9457 errors (`application/problem+json`) as an option of `TErrorHandlerMiddleware`.
+  **M7: dropped** from this list (decision 16).
 - Typed HTTP client for Delphi/Lazarus with refresh, retry and trace propagation (M6; its shape
   in "M6: design", decisions 4 to 7). Its transport **built here 2026-10-29** as
   `src/Agenda.HttpTransport` (`IHttpTransport`, each compiler's own client, the third copy of
   that switch) with a fake, `src/Agenda.HttpTransport.Fake`; see "M6: the HTTP transport".
   The client over it **built here 2026-10-29** as `src/Agenda.HttpClient`, and the session's
   tokens as `src/Agenda.HttpSession`; see "M6: the generic client" and "M6: the session".
+  **M7**: the transport promoted (decision 9), the client and the session kept here (12).
 
 **Found while building** (not in the first list):
 
 - Filling a Find DTO from the query string, and the paged query (count + page through the same
   filters): both repeated in every list route (see "Progress", M1, customers and users).
-- Phone normalization, next to the accent-insensitive search key (pascal-common-faa).
+  **Done** in pascal-api-infra-faa 0.19.0 (`PascalApi.QueryParams`, `PascalApi.PagedQuery`).
+- Phone normalization, next to the accent-insensitive search key (pascal-common-faa). The
+  search key **done** in pascal-common-faa 1.20.0 (`PcFoldForSearch`); the phone **M7: kept
+  here**, off this list (decision 15).
 - Percent-encoding a query string's values (RFC 3986, UTF-8 bytes): pascal-api-infra-faa's
   `McpUrlEncode` is private to the MCP unit, so the client wrote its own, `ApiQueryEscape` in
-  `src/Agenda.HttpClient` (M6): the second copy (pascal-common-faa).
+  `src/Agenda.HttpClient` (M6): the second copy (pascal-common-faa). **M7: promote**
+  (decision 4).
 - Background work for a screen with its result back on the UI thread, on `PcPool`: a task
   with `Run` (pool thread) and `Done` (UI thread, via `TThread.Queue`), `Forget(owner)` so a
   late answer never reaches a freed view model, `WaitIdle` for `OnCloseQuery`, and a manual
   runner for tests (pascal-common-faa, next to the pool; FPC 3.2.2 has no closures, so a task
   is an object). **Built here 2026-10-29** as `src/Agenda.Desktop.Tasks` (M6), with a span
   per task (a detached one for the action, `run` on the pool thread) since decision 9.
+  **M7: kept here** (decision 13).
 - A package of pascal-api-infra-faa's units a client needs (`PascalApi.Dto`, `PascalApi.OpenApi`,
   `PascalApi.OrderBy`, `PascalApi.Text`): `pascal_api_infra_faa.lpk` requires `pascal_db_faa`,
   so the desktop client's `.lpi` takes the library's `src` as a search path instead (M6).
+  **M7: promote** (decision 8).
 - A console program's stop request: Ctrl+C, Ctrl+Break and the console closing on Windows,
   SIGINT and SIGTERM on Unix, as a flag the main loop reads, and a sleep that wakes on it
   (pascal-common-faa). No library has it: the amqp, redis and pipes samples stop on Enter or
   are killed. **Built here 2026-10-26** as `src/Agenda.StopSignal` (the worker; SIGTERM checked
   on Linux by the HTTP scenarios); the api uses it too since M5 (a second case, with an FPC
-  gotcha: block the signals on the thread that accepts, "M5: under load").
+  gotcha: block the signals on the thread that accepts, "M5: under load"). **M7: promote**
+  (decision 2).
 - `Connection: close` on FPC 3.2.2 (its server closes every connection without saying so),
-  pascal-api-infra-faa or Horse: found 2026-10-27 under load, "M5: under load".
+  pascal-api-infra-faa or Horse: found 2026-10-27 under load, "M5: under load". **M7:
+  promote** to pascal-api-infra-faa (decision 7).
 - An `Idempotency-Key` completed after the caller's commit can fail on its own (no pool
   connection): the client gets a 5xx for a change that was made. pascal-api-infra-faa's
   `THorseIdempotentRequest`; found 2026-10-27 under load, "M5: under load". **Fixed there**
@@ -223,8 +237,9 @@ candidate (promote, keep in the application, drop) with these criteria:
   optional `CompleteOn` stores the answer in the handler's own transaction.
 - `Agenda.WinHeap` (Delphi on Windows: the program's memory on the process heap; Delphi's own
   manager kept a program's threads at one thread's throughput, pascal-db-faa gotcha 55):
-  pascal-common-faa; written 2026-10-28, "M5: under load".
+  pascal-common-faa; written 2026-10-28, "M5: under load". **M7: promote** (decision 3).
 - An instant type for the mapper: zone required on input, `Z` on output (pascal-jsonmapper-faa).
+  **Done** in pascal-jsonmapper-faa 0.7.0 (`TUtcDateTime`).
 - A Boolean parameter into an `INTEGER` column fails on PostgreSQL ("column ... is of type
   integer but expression is of type boolean"); SQLite takes it, and pascal-db-faa's contract suite
   only binds `Integers` to its flag column (it reads one back as a Boolean). pascal-db-faa: say it
@@ -2428,3 +2443,116 @@ Still open, for M7 or later:
   leave out the appointment's own span; ten `/auth/` calls a minute per address; no push (the
   day within 60 s); the screens checked by hand, not by a script.
 
+## M7: design (2026-10-30)
+
+The review of the library candidates still in this application, by the criteria in "Library
+candidates" (use here, generality, stability, the cost of keeping it, the destination). Each
+unit was read; seventeen decisions taken with the user (2026-10-30), one per candidate. The
+promotions are made in sessions in each library, as in "Candidates promoted (2026-10-21)":
+its own tests, docs and a release green on FPC (Windows, Linux) and Delphi 12 (Win32, Win64)
+before the tag; then this application moves its submodules to the tags and drops its copies.
+Nothing built yet.
+
+### Decisions (user, 2026-10-30)
+
+To pascal-common-faa:
+
+1. **Passwords: promote** (`Agenda.Passwords`: `$pbkdf2-sha256$i=...`, `Verify`,
+   `NeedsRehash`). Two places here (the login with its rehash, creating a user), no agenda
+   rule, its API unchanged since M1, easy to copy wrong (constant time, a strict parser, the
+   iteration ceiling). PBKDF2 is already there (1.18.0): no new dependency.
+2. **The stop request: promote** (`Agenda.StopSignal`). Two cases (the api, the worker),
+   unchanged since M4, small but all platform details. Found by the review: the part easiest
+   to get wrong, blocking SIGINT and SIGTERM on the thread that accepts (FPC, "M5: under
+   load"), is `BlockStopSignals` in `api/AgendaApi.dpr`, outside the unit: it moves with it.
+   The amqp, redis and pipes samples, which stop on Enter, can take it.
+3. **The process heap on Delphi: promote** (`Agenda.WinHeap`). Two cases (the api, the
+   worker), measured in pascal-db-faa's gotcha 55, no dependency, nothing on FPC. Not taken:
+   a snippet in the skill only (it has to be the first unit and nothing may be allocated
+   before it: easy to copy wrong).
+4. **Percent-encoding: promote** (`ApiQueryEscape`, RFC 3986 unreserved characters, UTF-8
+   bytes). The second copy, the same byte for byte as pascal-api-infra-faa's private
+   `McpUrlEncode`, which then calls it.
+
+To pascal-api-infra-faa:
+
+5. **The tenant from the path: promote** (`Agenda.PublicTenancy`) to `PascalApi.Tenancy`, and
+   its middleware (`PublicTenant` in `api/AgendaApi.dpr`) to `PascalApi.Horse.Tenancy`. M3's
+   decision 3 becomes the library's rule for sources nobody authenticated: an unknown, a
+   suspended and an impossible slug are one 404. Found by the review: the tenant id's rule
+   has three copies (the library's private `ValidTenantId`, `Agenda.Tokens.IsTenantId`,
+   `CanBeTenantId`): the library's becomes public. The host as a source stays out (no case).
+6. **Signed links: promote** (`Agenda.SignedLinks`) as `PascalApi.SignedLinks`. Signed in the
+   worker, verified in the api; on pascal-common-faa only; unchanged since M3 but for the
+   strict Base64url. Found by the review: the signed text starts with the literal
+   `agenda-link|v1|` and the key derivation with `agenda-link-key|`. The context becomes a
+   constructor parameter, and this application passes its own texts, so the links already
+   sent still verify.
+7. **`Connection: close` on FPC 3.2.2: promote** (`ConnectionClose` in `api/AgendaApi.dpr`) to
+   `PascalApi.Horse.Middlewares`. Every api on FPC 3.2.2 with a keep-alive client meets it,
+   and Horse is a third party's. Whether it is on by default is for that session.
+8. **A package for a client: promote.** A second `.lpk` with the units that need no
+   pascal-db-faa (`PascalApi.Dto`, `OpenApi`, `OrderBy`, `Text`, `HttpTypes`, `Otlp` and
+   decision 9's transport), checked as `tests/Deps/OtlpNoDb` is. The desktop client's `.lpi`
+   then requires it instead of taking the library's `src` as a search path.
+9. **The HTTP transport: promote** (`Agenda.HttpTransport` and its fake). The third copy of
+   the switch between Delphi's `THTTPClient` and FPC's `fphttpclient`; the other two are in
+   the library itself (`PascalApi.Otlp`, the MCP executor), which then use it.
+
+To pascal-db-faa and pascal-amqp-faa:
+
+10. **The outbox's core and local sink: promote** (`Agenda.Outbox`) to pascal-db-faa as
+    `PascalDb.Outbox`. The criteria's own example of a large copying cost (the retry, the
+    lease per row, a delivery per handler); on pascal-db-faa and pascal-common-faa only; from
+    M4 to M5 only metrics were added, no change of API. Its weak point, accepted: two
+    producers here (the appointments, the reminders), one consumer (the email).
+11. **The outbox's AMQP sink: promote** (`Agenda.Outbox.Amqp`) as a bridge in pascal-amqp-faa,
+    `src/outbox`, outside its `.lpk` (it needs pascal-db-faa), as pascal-api-infra-faa's
+    `src/redis` is. The retry queue with its TTL, `x-death`, the dead queue and the dedupe
+    before the ack are costly to copy. Found by the review: it uses `TJwt.UnixNow`
+    (pascal-api-infra-faa) only as a clock, which would bring a third library into the
+    bridge: replaced by a clock of pascal-common-faa first. After decision 10.
+
+Kept in this application:
+
+12. **The HTTP client and the session** (`Agenda.HttpClient`, `Agenda.HttpSession`). Nothing of
+    the agenda in them, but written on 2026-10-29 and changed the same day (the trace): no
+    milestone has tested their API, and they have one consumer. Reviewed with a second client
+    (a client sample in pascal-api-infra-faa, their natural home: they read that library's
+    error body).
+13. **The UI task runner** (`Agenda.Desktop.Tasks`). Seven view models, one program, from M6.
+    pascal-common-faa is all server code today; a unit for a UI thread's owner opens a new
+    area there and waits for a second desktop program.
+14. **The scheduler's lease** (`Agenda.Leases`). One job (the purge runs under the reminders'
+    lease); its destination splits in three libraries (the interface in pascal-common-faa,
+    the database store in pascal-db-faa, the Redis one in pascal-redis-faa) for about 200
+    lines, whose SQL is the application's anyway. With decision 10 done, the database store
+    can follow to pascal-db-faa when a second job appears.
+15. **The phone normalization** (`TNorm.Phone`, `TryPhoneDigits`), and off the candidates'
+    list: about 30 lines of this application's rule (separators out, a first "+" kept); a
+    library's phone would need E.164 and a country, which the agenda doesn't use.
+
+Dropped:
+
+16. **RFC 9457 errors**, from this application's list: nothing built, no client asked (the
+    desktop client reads the library's own shape). It stays in pascal-api-infra-faa's
+    `docs/plan.md` as "needs a second case".
+
+As text:
+
+17. **A Delphi api under load: a section in pascal-api-infra-faa's guide**, not code:
+    WebBroker's 32 requests at once (`MAX_CONNECTIONS`) and Horse's listen queue of 15
+    (`LISTEN_QUEUE`), "M5: under load".
+
+### What follows from rules already set
+
+- **The order**: pascal-common-faa first (1 to 4), pascal-db-faa (10), pascal-api-infra-faa
+  (5 to 9, 17; 9's users take 4's function), the bridge in pascal-amqp-faa last (11). Each
+  library's session records the candidate in its own `docs/plan.md`, and
+  pascal-api-infra-faa's "Candidates from pascal-agenda-faa" gets every decision.
+- **A library takes the unit as it is here, under its prefix**, with the review's changes
+  (2's `BlockStopSignals`, 5's public tenant id rule, 6's context, 11's clock) and its unit
+  tests; tables and SQL stay the application's, by name, as with `TDbIdempotencyStore`.
+- **This application adopts each release**: the submodule on the tag, its copy and its tests
+  removed, every HTTP check the same in number and outcome.
+- **Acceptance** as in every milestone: FPC Windows and Linux, Delphi Win32 and Win64, 0 leaks.
