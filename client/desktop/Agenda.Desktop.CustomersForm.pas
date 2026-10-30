@@ -38,6 +38,8 @@ type
     FEdit: TButton;
     FStatus: TLabel;
     FRendering: Boolean;
+    // The customers on the list: rebuilt only when the model has others.
+    FShownCustomers: TCustomerArray;
     procedure Build;
     procedure Render(Sender: TObject);
     procedure SearchClick(Sender: TObject);
@@ -169,26 +171,38 @@ var
 begin
   FRendering := True;
   try
-    FList.Items.BeginUpdate;
-    try
-      FList.Items.Clear;
-      for I := 0 to High(FModel.Customers) do
-      begin
-        LCustomer := FModel.Customers[I];
-        LItem := FList.Items.Add;
-        LItem.Caption := LCustomer.Name;
-        LItem.SubItems.Add(LCustomer.Phone.ValueOr(''));
-        LItem.SubItems.Add(LCustomer.Email.ValueOr(''));
+    // Not rebuilt on a click (see TDayForm.RenderRows): only after a read.
+    if (Pointer(FShownCustomers) <> Pointer(FModel.Customers)) or
+      (FList.Items.Count <> Length(FModel.Customers)) then
+    begin
+      FList.Items.BeginUpdate;
+      try
+        FList.Items.Clear;
+        for I := 0 to High(FModel.Customers) do
+        begin
+          LCustomer := FModel.Customers[I];
+          LItem := FList.Items.Add;
+          LItem.Caption := LCustomer.Name;
+          LItem.SubItems.Add(LCustomer.Phone.ValueOr(''));
+          LItem.SubItems.Add(LCustomer.Email.ValueOr(''));
+        end;
+      finally
+        FList.Items.EndUpdate;
       end;
-    finally
-      FList.Items.EndUpdate;
+      FShownCustomers := FModel.Customers;
     end;
     I := FModel.SelectedIndex;
     if I >= 0 then
     begin
-      FList.Items[I].Selected := True;
-      FList.Items[I].MakeVisible(False);
-    end;
+      if FList.Selected <> FList.Items[I] then
+      begin
+        FList.Selected := FList.Items[I];
+        FList.ItemFocused := FList.Items[I];
+        FList.Items[I].MakeVisible(False);
+      end;
+    end
+    else if FList.Selected <> nil then
+      FList.Selected := nil;
     if FModel.Info.TotalPages > 0 then
       FPage.Caption := Format('Page %d of %d', [FModel.Info.Page, FModel.Info.TotalPages])
     else

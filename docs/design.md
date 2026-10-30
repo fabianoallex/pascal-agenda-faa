@@ -2356,6 +2356,14 @@ results for both builds). Waiting for the user's run.
   `PcIsValidUtf8`) and pascal-api-infra-faa **0.29.0** (tag v0.29.0, 11407dd: "<file> is not
   UTF-8 (it starts with a UTF-16 byte order mark): save it as UTF-8", on both). Both submodules
   moved here; nothing changed in this repository's code. Checked on FPC: the unit tests 188 of
-  188 on Windows and Linux, 0 leaks, and the runner (PORT=9430): 675 + worker 74 + client 29 + desktop smoke 56, 0 failed, the same
-  "84 spans, 24 actions, 36 calls". The smoke with a UTF-16 `.env` now stops in
-  `PaUtf8BytesToString` with the UTF-16 message (PascalApi.Text line 77), as asked.
+  188 on Windows and Linux, 0 leaks, and the runner (PORT=9430): 675 + worker 74 + client 29
+  + desktop smoke 56, 0 failed, the same "84 spans, 24 actions, 36 calls". The smoke with a
+  UTF-16 `.env` now stops in `PaUtf8BytesToString` with the UTF-16 message (PascalApi.Text
+  line 77), as asked.
+- Found (2026-10-30, the VCL build, sections 1 and 2): the login's status line had the width of
+  a space (WordWrap set while AutoSize was on), one letter per line; fixed in 409881d. A click
+  on a row of the day selected it on the mouse down and dropped it on the mouse up, and F5 then
+  had nothing to keep: the selection changes the model, the model re-renders, and the render
+  rebuilt the items in the middle of the click. The lists (the day, the customers, the
+  booking's and the move's) are rebuilt now only when the model holds another array (after a
+  read), and the selection is set only when it differs from the model's.

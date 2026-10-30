@@ -53,6 +53,8 @@ type
     FMove, FConfirm, FDone, FNoShow, FCancel: TButton;
     FTimer: TTimer;
     FRendering: Boolean;
+    // The rows on the list: rebuilt only when the model has others.
+    FShownRows: TDayAppointmentArray;
     procedure Build;
     procedure Render(Sender: TObject);
     procedure RenderProfessionals;
@@ -259,25 +261,42 @@ var
   LRow: IDayAppointment;
   LItem: TListItem;
 begin
-  FList.Items.BeginUpdate;
-  try
-    FList.Items.Clear;
-    for I := 0 to High(FModel.Rows) do
-    begin
-      LRow := FModel.Rows[I];
-      LItem := FList.Items.Add;
-      LItem.Caption := TimeOf(LRow.LocalStart) + ' - ' + TimeOf(LRow.LocalEnd);
-      LItem.SubItems.Add(LRow.CustomerName);
-      LItem.SubItems.Add(LRow.ServiceName);
-      LItem.SubItems.Add(LRow.ProfessionalName);
-      LItem.SubItems.Add(StatusText(LRow.Status));
+  // A click selects a row, the model changes, and this runs again: rebuilding
+  // the items in the middle of the click made the list drop the selection on
+  // the mouse up. The model's rows are a new array only after a read.
+  if (Pointer(FShownRows) <> Pointer(FModel.Rows)) or
+    (FList.Items.Count <> Length(FModel.Rows)) then
+  begin
+    FList.Items.BeginUpdate;
+    try
+      FList.Items.Clear;
+      for I := 0 to High(FModel.Rows) do
+      begin
+        LRow := FModel.Rows[I];
+        LItem := FList.Items.Add;
+        LItem.Caption := TimeOf(LRow.LocalStart) + ' - ' + TimeOf(LRow.LocalEnd);
+        LItem.SubItems.Add(LRow.CustomerName);
+        LItem.SubItems.Add(LRow.ServiceName);
+        LItem.SubItems.Add(LRow.ProfessionalName);
+        LItem.SubItems.Add(StatusText(LRow.Status));
+      end;
+    finally
+      FList.Items.EndUpdate;
     end;
-  finally
-    FList.Items.EndUpdate;
+    FShownRows := FModel.Rows;
   end;
+  // Touched only when it differs from the model's.
   I := FModel.SelectedIndex;
   if I >= 0 then
-    FList.Items[I].Selected := True;
+  begin
+    if FList.Selected <> FList.Items[I] then
+    begin
+      FList.Selected := FList.Items[I];
+      FList.ItemFocused := FList.Items[I];
+    end;
+  end
+  else if FList.Selected <> nil then
+    FList.Selected := nil;
 end;
 
 procedure TDayForm.Render(Sender: TObject);

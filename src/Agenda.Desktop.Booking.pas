@@ -356,6 +356,8 @@ procedure TBookingModel.UseCustomer(const ACustomer: ICustomer);
 begin
   // A search still running would replace the list: its answer is old now.
   Inc(FSearchSeq);
+  // A new array: the dialog rebuilds its list when the array is another one.
+  FCustomers := nil;
   SetLength(FCustomers, 1);
   FCustomers[0] := ACustomer;
   SelectCustomer(ACustomer.Id);

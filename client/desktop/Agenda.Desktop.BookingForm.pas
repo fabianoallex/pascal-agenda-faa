@@ -20,6 +20,8 @@ uses
   OPCB,
   Agenda.Desktop.Ui,
   Agenda.Client,
+  Agenda.Availability.Dtos,
+  Agenda.Customers.Dtos,
   Agenda.Desktop.Tasks,
   Agenda.Desktop.Errors,
   Agenda.Desktop.Booking;
@@ -39,6 +41,10 @@ type
     FStatus: TLabel;
     FBook: TButton;
     FRendering: Boolean;
+    // The lists' contents: rebuilt only when the model has others, so a
+    // click doesn't scroll them back to the top.
+    FShownSlots: TAvailableSlotArray;
+    FShownCustomers: TCustomerArray;
     procedure Build;
     procedure Render(Sender: TObject);
     procedure Booked(Sender: TObject);
@@ -64,7 +70,6 @@ type
 implementation
 
 uses
-  Agenda.Customers.Dtos,
   Agenda.Desktop.CustomerForm;
 
 constructor TBookingForm.CreateFor(AOwner: TComponent; const ARunner: IUiTaskRunner;
@@ -178,7 +183,7 @@ end;
 
 procedure TBookingForm.Render(Sender: TObject);
 var
-  I: Integer;
+  I, LIndex: Integer;
 begin
   FRendering := True;
   try
@@ -196,27 +201,40 @@ begin
         FProfessional.Items.Add(FModel.Professionals[I].Name);
     end;
     FDate.Caption := FModel.DateText;
-    FSlots.Items.BeginUpdate;
-    try
-      FSlots.Items.Clear;
-      for I := 0 to High(FModel.Slots) do
-        FSlots.Items.Add(Copy(FModel.Slots[I].Local, 12, 5));
-    finally
-      FSlots.Items.EndUpdate;
-    end;
-    FSlots.ItemIndex := FModel.SlotIndex;
-    FCustomers.Items.BeginUpdate;
-    try
-      FCustomers.Items.Clear;
-      for I := 0 to High(FModel.Customers) do
-      begin
-        FCustomers.Items.Add(FModel.Customers[I].Name);
-        if FModel.Customers[I].Id = FModel.CustomerId then
-          FCustomers.ItemIndex := I;
+    if (Pointer(FShownSlots) <> Pointer(FModel.Slots)) or
+      (FSlots.Items.Count <> Length(FModel.Slots)) then
+    begin
+      FSlots.Items.BeginUpdate;
+      try
+        FSlots.Items.Clear;
+        for I := 0 to High(FModel.Slots) do
+          FSlots.Items.Add(Copy(FModel.Slots[I].Local, 12, 5));
+      finally
+        FSlots.Items.EndUpdate;
       end;
-    finally
-      FCustomers.Items.EndUpdate;
+      FShownSlots := FModel.Slots;
     end;
+    if FSlots.ItemIndex <> FModel.SlotIndex then
+      FSlots.ItemIndex := FModel.SlotIndex;
+    if (Pointer(FShownCustomers) <> Pointer(FModel.Customers)) or
+      (FCustomers.Items.Count <> Length(FModel.Customers)) then
+    begin
+      FCustomers.Items.BeginUpdate;
+      try
+        FCustomers.Items.Clear;
+        for I := 0 to High(FModel.Customers) do
+          FCustomers.Items.Add(FModel.Customers[I].Name);
+      finally
+        FCustomers.Items.EndUpdate;
+      end;
+      FShownCustomers := FModel.Customers;
+    end;
+    LIndex := -1;
+    for I := 0 to High(FModel.Customers) do
+      if FModel.Customers[I].Id = FModel.CustomerId then
+        LIndex := I;
+    if FCustomers.ItemIndex <> LIndex then
+      FCustomers.ItemIndex := LIndex;
     FBook.Enabled := FModel.CanBook;
     if not FModel.Error.IsNone then
     begin

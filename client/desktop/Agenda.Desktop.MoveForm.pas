@@ -19,6 +19,7 @@ uses
   OPCB,
   Agenda.Desktop.Ui,
   Agenda.Client,
+  Agenda.Availability.Dtos,
   Agenda.Day.Dtos,
   Agenda.Desktop.Tasks,
   Agenda.Desktop.Errors,
@@ -34,6 +35,8 @@ type
     FStatus: TLabel;
     FMove: TButton;
     FRendering: Boolean;
+    // The free times on the list: rebuilt only when the model has others.
+    FShownSlots: TAvailableSlotArray;
     procedure Build;
     procedure Render(Sender: TObject);
     procedure Moved(Sender: TObject);
@@ -151,15 +154,21 @@ begin
   FRendering := True;
   try
     FDate.Caption := FModel.DateText;
-    FSlots.Items.BeginUpdate;
-    try
-      FSlots.Items.Clear;
-      for I := 0 to High(FModel.Slots) do
-        FSlots.Items.Add(Copy(FModel.Slots[I].Local, 12, 5));
-    finally
-      FSlots.Items.EndUpdate;
+    if (Pointer(FShownSlots) <> Pointer(FModel.Slots)) or
+      (FSlots.Items.Count <> Length(FModel.Slots)) then
+    begin
+      FSlots.Items.BeginUpdate;
+      try
+        FSlots.Items.Clear;
+        for I := 0 to High(FModel.Slots) do
+          FSlots.Items.Add(Copy(FModel.Slots[I].Local, 12, 5));
+      finally
+        FSlots.Items.EndUpdate;
+      end;
+      FShownSlots := FModel.Slots;
     end;
-    FSlots.ItemIndex := FModel.SlotIndex;
+    if FSlots.ItemIndex <> FModel.SlotIndex then
+      FSlots.ItemIndex := FModel.SlotIndex;
     FMove.Enabled := FModel.CanMove;
     if not FModel.Error.IsNone then
     begin
