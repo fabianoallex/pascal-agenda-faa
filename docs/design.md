@@ -1,7 +1,7 @@
 # pascal-agenda-faa — design
 
 Status: scope agreed with the user on 2026-10-18. M0 to M5 built (see "Progress" and the
-milestone sections after it); M5 closed 2026-10-28. M6 designed 2026-10-28 ("M6: design").
+milestone sections after it); M5 closed 2026-10-28, M6 closed 2026-10-30 ("M6: closed").
 
 ## Why this application exists
 
@@ -2339,7 +2339,7 @@ results for both builds).
 - VCL (Delphi Win32 Debug, the user, 2026-10-30): every step of the eight sections passed,
   after the two fixes below (the login's status line, the lists' selection). The Delphi unit
   tests on those builds: 188 of 188 on Win32 and Win64, 0 leaks.
-- LCL (Lazarus): not run by hand yet; built from the same source with the fixes.
+- LCL (Lazarus, FPC Win64, the user, 2026-10-30): every step passed too.
 
 - Found (2026-10-30, the VCL build at start): "Exception EEncodingError ... No mapping for the
   Unicode character exists in the target multi-byte code page", an application error before
@@ -2372,3 +2372,55 @@ results for both builds).
   rebuilt the items in the middle of the click. The lists (the day, the customers, the
   booking's and the move's) are rebuilt now only when the model holds another array (after a
   read), and the selection is set only when it differs from the model's.
+
+### M6: closed (2026-10-30)
+
+The staff's day runs in a desktop program on the server's own DTOs, from one source on VCL
+(Delphi) and LCL (Lazarus), checked by hand on both: login, the day, booking, the status,
+cancelling, moving, customers, the session renewed and lost, the failures and the closing
+(`docs/desktop-manual-check.md`). The nine decisions are built:
+
+- The DTOs in units of their own (1), checked by the client with the server's limits (2).
+- The screens in code with OPCB v0.2.0, no `.dfm`/`.lfm` (3), over view models with tests and
+  `Agenda.Desktop.Tasks` (no call on the UI thread).
+- `Agenda.HttpTransport` (4), `Agenda.HttpClient` and `Agenda.Client` (5), the session's single
+  refresh (6), the retry rules (7), the screens of decision 8.
+- One trace from the click (9): an action span, its `run`, a client span per try, joined by the
+  api's spans in its log.
+
+Results:
+
+- FPC: unit tests 188 of 188 on Windows and Linux, 0 leaks. `tools/test_http.sh` on Windows
+  (SQLite, pascal-common-faa 1.25.0, pascal-api-infra-faa 0.29.0): 675 + worker 74 + client 29
+  + desktop smoke 56, 0 failed, "84 spans, 24 actions, 36 calls (26 inside an action), all in
+  the api's log".
+- Delphi 12: unit tests 188 of 188 on Win32 and Win64, 0 leaks (the builds after the fixes
+  found by hand). `tools/test_http.sh` on the Win32 builds: 675 + 68 + 29 + 56, 0 failed, the
+  same traces line (2026-10-30, on pascal-api-infra-faa 0.28.0; not run again on 0.29.0, whose
+  change is the `.env`'s decoding, covered by the unit tests and the manual run).
+- By hand: the eight sections on VCL and LCL.
+
+Asked of the libraries during M6, all released and adopted:
+
+- OPCB v0.2.0: the probe's two fixes.
+- pascal-api-infra-faa 0.28.0: `PascalApi.Otlp` without pascal-db-faa (`PascalApi.HttpTypes`).
+- pascal-common-faa 1.25.0 and pascal-api-infra-faa 0.29.0: a file that isn't UTF-8 named, on
+  both compilers.
+
+Found by hand and fixed here: the login's status line one letter wide on the VCL (AutoSize
+off before WordWrap), and the lists dropping a click's selection (rebuilt only when the model
+holds another array).
+
+Still open, for M7 or later:
+
+- Candidates (see "Library candidates"): the typed HTTP client (`Agenda.HttpTransport`,
+  `Agenda.HttpClient`, `Agenda.HttpSession`), the UI task runner (`Agenda.Desktop.Tasks`),
+  `ApiQueryEscape` (the second copy of query encoding), a package of pascal-api-infra-faa's
+  units a client needs.
+- OPCB (the user's call): `SetControlHeight` applied over an explicit height while the flow
+  advanced by that height (here `UnsetControlHeight`); an LCL `TLabel` with `AutoSize` at the
+  top of a grid row (here `CenterLabels`).
+- Known limits kept: a refresh whose answer is lost logs the user out; the move's free times
+  leave out the appointment's own span; ten `/auth/` calls a minute per address; no push (the
+  day within 60 s); the screens checked by hand, not by a script.
+

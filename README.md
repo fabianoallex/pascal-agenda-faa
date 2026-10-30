@@ -10,9 +10,11 @@ Status: M0 to M2 done (tenants, login and refresh tokens, the catalog and people
 hours and free slots, booking with a slot lock, If-Match and Idempotency-Key); M3 (public
 routes by slug, rate limit by address, signed links) and M4 (the outbox, the worker
 `worker/AgendaWorker` that sends the customer's email and the reminders, through RabbitMQ or
-without it, and `docker-compose.yml` with the whole stack) built; M5 in progress: the api as
-MCP tools for an AI agent (`POST /mcp`) and one day of the agenda (`GET /agenda/day`). Scope,
-milestones and library candidates: [`docs/design.md`](docs/design.md).
+without it, and `docker-compose.yml` with the whole stack) built; M5 (the api as MCP tools for
+an AI agent, `POST /mcp`, one day of the agenda, the dashboards, the load test) and M6 (the
+desktop client `client/desktop`, VCL and LCL from one source, on the server's DTOs) closed.
+Next: M7, the review of the library candidates. Scope, milestones and library candidates:
+[`docs/design.md`](docs/design.md).
 
 ## Getting the code
 
