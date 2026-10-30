@@ -2395,9 +2395,13 @@ Results:
   + desktop smoke 56, 0 failed, "84 spans, 24 actions, 36 calls (26 inside an action), all in
   the api's log".
 - Delphi 12: unit tests 188 of 188 on Win32 and Win64, 0 leaks (the builds after the fixes
-  found by hand). `tools/test_http.sh` on the Win32 builds: 675 + 68 + 29 + 56, 0 failed, the
-  same traces line (2026-10-30, on pascal-api-infra-faa 0.28.0; not run again on 0.29.0, whose
-  change is the `.env`'s decoding, covered by the unit tests and the manual run).
+  found by hand). `tools/test_http.sh` on the Win32 and the Win64 builds (pascal-common-faa
+  1.25.0, pascal-api-infra-faa 0.29.0): 675 + worker 68 + client 29 + desktop smoke 56 on each,
+  0 failed, the same traces line. On the way, two leftovers of the manual run stopped it, each
+  told plainly: the api's `.env` still had `ACCESS_TOKEN_SECONDS`/`REFRESH_TOKEN_SECONDS` (step
+  7.4 says to take them out), and the smoke's `.env` was UTF-16, which now stops it with
+  "... .env is not UTF-8 (it starts with a UTF-16 byte order mark): save it as UTF-8" (Delphi's
+  leak report then lists the one exception object, as for any exception at the start).
 - By hand: the eight sections on VCL and LCL.
 
 Asked of the libraries during M6, all released and adopted:
