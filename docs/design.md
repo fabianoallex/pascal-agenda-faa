@@ -2556,3 +2556,24 @@ As text:
 - **This application adopts each release**: the submodule on the tag, its copy and its tests
   removed, every HTTP check the same in number and outcome.
 - **Acceptance** as in every milestone: FPC Windows and Linux, Delphi Win32 and Win64, 0 leaks.
+### M7: pascal-common-faa 1.26.0 adopted (2026-10-30, decisions 1 to 4)
+
+pascal-common-faa 1.26.0 (CI run 41128991010: 420 of 420, 0 leaks, Linux x86_64 and i386; a
+real SIGTERM to a program shaped like a server, interrupted without `PcBlockStopSignals`,
+not with it) has the four units as they were here, under its names. This application moved
+its submodule to the tag and dropped its copies:
+
+| Here | Now |
+|---|---|
+| `src/Agenda.Passwords` (`TPasswords`, `EPasswordError`, `DEFAULT_PASSWORD_ITERATIONS`) and its 9 tests | `PascalCommon.Passwords` (`TPcPasswords`, `EPcPasswordError`, `PC_PASSWORD_DEFAULT_ITERATIONS`), the tests there |
+| `src/Agenda.StopSignal` and `BlockStopSignals` in `api/AgendaApi.dpr` (with its `BaseUnix`) | `PascalCommon.StopSignal` (`PcStopSignalInstall`, `PcStopRequested`, `PcStopSleep`, `PcBlockStopSignals`...); the api calls `PcBlockStopSignals` with no `{$IFDEF}` (nothing outside FPC/Unix) |
+| `src/Agenda.WinHeap` | `PascalCommon.WinHeap` (`PcMemoryManagerName`), still the first unit of the api's and the worker's `uses` |
+| `ApiQueryEscape` in `src/Agenda.HttpClient` | `PcPercentEncode` (`PascalCommon.Utf8`); `ApiQuery` and `Agenda.Client`'s path ids call it, and `ApiQuery`'s test checks an encoded value instead of the function itself |
+
+Results: FPC unit tests 179 of 179 on Windows and Linux (188 less the 9 that moved), 0
+leaks. `tools/test_http.sh` on Windows (SQLite): 675 + worker 74 + client 29 + desktop smoke
+56, 0 failed, "84 spans, 24 actions, 36 calls (26 inside an action), all in the api's log",
+the same as at M6's close. `tools/test_http_docker.sh` (FPC Linux): 675 + worker 79 + client
+29, 0 failed, the api stopped on SIGTERM each time (the known 64-byte block, "M5: closed").
+Delphi Win32 and Win64: to build in the IDE.
+

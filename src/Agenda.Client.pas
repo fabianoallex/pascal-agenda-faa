@@ -118,6 +118,7 @@ implementation
 
 uses
   PascalCommon.Optionals,
+  PascalCommon.Utf8,
   PascalCommon.Validators,
   PascalJsonMapper.Mapper,
   PascalApi.OpenApi;
@@ -145,7 +146,7 @@ end;
 
 function PathId(const AId: string): string;
 begin
-  Result := ApiQueryEscape(AId);
+  Result := PcPercentEncode(AId);
 end;
 
 { TAgendaRefresher }

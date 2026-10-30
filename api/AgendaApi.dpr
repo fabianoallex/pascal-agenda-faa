@@ -109,7 +109,7 @@ program AgendaApi;
   secret: a token without kid is refused.
 
   Stopping (M5): Ctrl+C, Ctrl+Break or closing the console on Windows,
-  SIGINT or SIGTERM on Unix (Agenda.StopSignal) stop the server and the
+  SIGINT or SIGTERM on Unix (PascalCommon.StopSignal) stop the server and the
   program frees what it made, so a build with heaptrc reports at the stop.
   Horse's FPC provider has no StopListen: TStopWatcher calls fphttpapp's
   Application.Terminate (the server inactive, and a fake connection that
@@ -131,7 +131,7 @@ uses
   cwstring,
   {$ENDIF}
   // First on Windows: Delphi's threads scale on the process heap (M5).
-  Agenda.WinHeap in '..\src\Agenda.WinHeap.pas',
+  PascalCommon.WinHeap,
   SysUtils,
   Classes,
   Horse,
@@ -164,15 +164,11 @@ uses
   {$IFDEF FPC}
   fphttpapp,
   {$ENDIF}
-  {$IFDEF UNIX}
-  BaseUnix,
-  {$ENDIF}
   Redis.Types,
   Redis.Client,
   Redis.Lock,
   Agenda.Schema in '..\src\Agenda.Schema.pas',
   Agenda.Database in '..\src\Agenda.Database.pas',
-  Agenda.Passwords in '..\src\Agenda.Passwords.pas',
   Agenda.Tokens in '..\src\Agenda.Tokens.pas',
   Agenda.Auth in '..\src\Agenda.Auth.pas',
   Agenda.AuthDtos in '..\src\Agenda.AuthDtos.pas',
@@ -196,7 +192,7 @@ uses
   Agenda.Day.Dtos in '..\src\Agenda.Day.Dtos.pas',
   Agenda.Day in '..\src\Agenda.Day.pas',
   Agenda.Metrics in '..\src\Agenda.Metrics.pas',
-  Agenda.StopSignal in '..\src\Agenda.StopSignal.pas',
+  PascalCommon.StopSignal,
   Agenda.Appointments.Dtos in '..\src\Agenda.Appointments.Dtos.pas',
   Agenda.Appointments in '..\src\Agenda.Appointments.pas',
   Agenda.SignedLinks in '..\src\Agenda.SignedLinks.pas',
@@ -377,24 +373,12 @@ var
   GHooks: TAgendaHooks;
 
 type
-  /// Waits for a stop request (Agenda.StopSignal), then stops the server, so
+  /// Waits for a stop request (PascalCommon.StopSignal), then stops the server, so
   /// THorse.Listen returns and the program frees what it made.
   TStopWatcher = class(TThread)
   protected
     procedure Execute; override;
   end;
-
-{$IFDEF UNIX}
-procedure BlockStopSignals;
-var
-  LSet: TSigSet;
-begin
-  fpSigEmptySet(LSet);
-  fpSigAddSet(LSet, SIGINT);
-  fpSigAddSet(LSet, SIGTERM);
-  fpSigProcMask(SIG_BLOCK, @LSet, nil);
-end;
-{$ENDIF}
 
 const
   /// Delphi: how long the requests in flight get to finish at a stop.
@@ -402,8 +386,8 @@ const
 
 procedure TStopWatcher.Execute;
 begin
-  while not Terminated and not StopRequested do
-    StopSleep(200);
+  while not Terminated and not PcStopRequested do
+    PcStopSleep(200);
   if Terminated then
     Exit;
   SafeWriteln('%s stopping', [APP_NAME]);
@@ -1904,16 +1888,14 @@ begin
     // metric (measured under load, M5). FPC's server has no such limit.
     THorse.MaxConnections := TAppConfig.GetInt('MAX_CONNECTIONS', 256);
     {$ENDIF}
-    StopSignalInstall;
+    PcStopSignalInstall;
     GWatcher := TStopWatcher.Create(False);
-    {$IFDEF UNIX}
-    // SIGINT and SIGTERM to the watcher, not to this thread: one here
-    // interrupts the server's accept (EINTR), and FPC's web application
-    // takes that for an error and listens again.
-    BlockStopSignals;
-    {$ENDIF}
+    // SIGINT and SIGTERM to the watcher, not to this thread (FPC on Unix;
+    // nothing elsewhere): one here interrupts the server's accept (EINTR),
+    // and FPC's web application takes that for an error and listens again.
+    PcBlockStopSignals;
     SafeWriteln('%s %s listening on port %d (memory: %s)', [APP_NAME, APP_VERSION, GPort,
-      MemoryManagerName]);
+      PcMemoryManagerName]);
     THorse.Listen(GPort);
     SafeWriteln('%s stopped', [APP_NAME]);
   finally
@@ -1922,8 +1904,8 @@ begin
       GWatcher.Terminate;
       GWatcher.WaitFor;
       GWatcher.Free;
-      StopSignalDone;
-      StopSignalUninstall;
+      PcStopSignalDone;
+      PcStopSignalUninstall;
     end;
     GIdempotency.Free;
     GLinks.Free;

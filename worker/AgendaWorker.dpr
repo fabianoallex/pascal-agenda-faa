@@ -80,7 +80,7 @@ uses
   cwstring,
   {$ENDIF}
   // First on Windows: Delphi's threads scale on the process heap (M5).
-  Agenda.WinHeap in '..\src\Agenda.WinHeap.pas',
+  PascalCommon.WinHeap,
   SysUtils,
   PascalJsonMapper.Mapper,
   PascalCommon.SafeLog,
@@ -106,7 +106,7 @@ uses
   Agenda.Leases in '..\src\Agenda.Leases.pas',
   Agenda.Reminders in '..\src\Agenda.Reminders.pas',
   Agenda.Metrics in '..\src\Agenda.Metrics.pas',
-  Agenda.StopSignal in '..\src\Agenda.StopSignal.pas';
+  PascalCommon.StopSignal;
 
 const
   APP_NAME = 'agenda-worker';
@@ -269,7 +269,7 @@ var
   LSaid, LLine: string;
 begin
   LSaid := '';
-  while not StopRequested do
+  while not PcStopRequested do
   begin
     try
       AConnection.Open;
@@ -281,7 +281,7 @@ begin
     if LLine <> LSaid then
       SafeWriteln(LLine);
     LSaid := LLine;
-    StopSleep(SCHEMA_WAIT_MS);
+    PcStopSleep(SCHEMA_WAIT_MS);
   end;
   Result := False;
 end;
@@ -307,7 +307,7 @@ var
   LLine: string;
 begin
   LSaid := '';
-  while not StopRequested do
+  while not PcStopRequested do
   begin
     try
       LVersion := ADatabase.SchemaVersion;
@@ -325,7 +325,7 @@ begin
     if LLine <> LSaid then
       SafeWriteln(LLine);
     LSaid := LLine;
-    StopSleep(SCHEMA_WAIT_MS);
+    PcStopSleep(SCHEMA_WAIT_MS);
   end;
   Result := False;
 end;
@@ -447,7 +447,7 @@ begin
   GPublish := nil;
   GConsume := nil;
   GConsumer := nil;
-  StopSignalInstall;
+  PcStopSignalInstall;
   try
     try
       GDatabase := TAgendaDatabase.Create;
@@ -531,16 +531,16 @@ begin
 
       if GDrain then
         SafeWriteln('%s %s draining as %s (memory: %s)', [APP_NAME, APP_VERSION, GOwner,
-          MemoryManagerName])
+          PcMemoryManagerName])
       else
         SafeWriteln('%s %s running as %s (memory: %s)', [APP_NAME, APP_VERSION, GOwner,
-          MemoryManagerName]);
+          PcMemoryManagerName]);
       GNextReminders := 0;
       GNextPurge := 0;
       GNextPending := 0;
       GQuiet := 0;
       GDrainUntil := TJwt.UnixNow + DRAIN_MAX_SECONDS;
-      while not StopRequested do
+      while not PcStopRequested do
       begin
         GNow := TJwt.UnixNow;
         GWork := RunRound(GNow);
@@ -558,10 +558,10 @@ begin
           if (GQuiet > 0) and ((GConsumer = nil) or (GQuiet >= DRAIN_QUIET_ROUNDS)) then
             Break;
           if GWork = 0 then
-            StopSleep(DRAIN_QUIET_MS);
+            PcStopSleep(DRAIN_QUIET_MS);
         end
         else if GWork = 0 then
-          StopSleep(GPollMs);
+          PcStopSleep(GPollMs);
       end;
       if GHasLease then
         try
@@ -610,7 +610,7 @@ begin
     // Last: its Free sends one more export, with what the stop counted.
     GMetrics.Free;
     GHooks.Free;
-    StopSignalDone;
-    StopSignalUninstall;
+    PcStopSignalDone;
+    PcStopSignalUninstall;
   end;
 end.

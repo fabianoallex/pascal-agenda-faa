@@ -101,10 +101,6 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
-        <Filename Value="..\src\Agenda.Passwords.pas"/>
-        <IsPartOfProject Value="True"/>
-      </Unit>
-      <Unit>
         <Filename Value="..\src\Agenda.Tokens.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
@@ -194,14 +190,6 @@
       </Unit>
       <Unit>
         <Filename Value="..\src\Agenda.Metrics.pas"/>
-        <IsPartOfProject Value="True"/>
-      </Unit>
-      <Unit>
-        <Filename Value="..\src\Agenda.StopSignal.pas"/>
-        <IsPartOfProject Value="True"/>
-      </Unit>
-      <Unit>
-        <Filename Value="..\src\Agenda.WinHeap.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>

@@ -168,9 +168,6 @@ type
 
   EApiPageFormat = class(Exception);
 
-/// AText for a query string: UTF-8, every byte but A-Z a-z 0-9 - . _ ~ as
-/// %XX (RFC 3986's unreserved characters).
-function ApiQueryEscape(const AText: string): string;
 /// '?name=value&...' from name/value pairs; a pair whose value is '' is
 /// left out; '' when every value is.
 function ApiQuery(const ANamesAndValues: array of string): string;
@@ -193,28 +190,6 @@ uses
   PascalCommon.Utf8,
   PascalJsonMapper.Json;
 
-function ApiQueryEscape(const AText: string): string;
-const
-  HEX = '0123456789ABCDEF';
-var
-  LBytes: TBytes;
-  I: Integer;
-  B: Byte;
-begin
-  Result := '';
-  LBytes := PcStringToUtf8Bytes(AText);
-  for I := 0 to High(LBytes) do
-  begin
-    B := LBytes[I];
-    if ((B >= Ord('A')) and (B <= Ord('Z'))) or ((B >= Ord('a')) and (B <= Ord('z'))) or
-      ((B >= Ord('0')) and (B <= Ord('9'))) or (B = Ord('-')) or (B = Ord('.')) or
-      (B = Ord('_')) or (B = Ord('~')) then
-      Result := Result + Char(B)
-    else
-      Result := Result + '%' + HEX[(B shr 4) + 1] + HEX[(B and $F) + 1];
-  end;
-end;
-
 function ApiQuery(const ANamesAndValues: array of string): string;
 var
   I: Integer;
@@ -231,8 +206,8 @@ begin
         Result := '?'
       else
         Result := Result + '&';
-      Result := Result + ApiQueryEscape(ANamesAndValues[I]) + '=' +
-        ApiQueryEscape(ANamesAndValues[I + 1]);
+      Result := Result + PcPercentEncode(ANamesAndValues[I]) + '=' +
+        PcPercentEncode(ANamesAndValues[I + 1]);
     end;
     Inc(I, 2);
   end;

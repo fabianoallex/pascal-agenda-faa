@@ -107,7 +107,7 @@ type
 procedure CreateTenant(const AFactory: IDBFactory; const AId, AName, ATimeZone: string);
 
 /// A user of ATenant (in the catalog); returns its id. EArgumentException for
-/// a bad email or role; Agenda.Passwords' EPasswordError for a bad password.
+/// a bad email or role; PascalCommon.Passwords' EPcPasswordError for a bad password.
 function CreateUser(const ACatalog: ITenantCatalog; const AResolver: ITenantDataResolver;
   const ATenant, AEmail, ARole, APassword: string; AIterations: Integer): string;
 
@@ -119,7 +119,7 @@ uses
   PascalJsonMapper.Json,
   PascalApi.Jwt,
   PascalApi.Http,
-  Agenda.Passwords,
+  PascalCommon.Passwords,
   Agenda.Text,
   Agenda.Tokens;
 
@@ -149,7 +149,7 @@ class function TAuthOptions.Default: TAuthOptions;
 begin
   Result.AccessSeconds := 900;
   Result.RefreshSeconds := 30 * 86400;
-  Result.PasswordIterations := DEFAULT_PASSWORD_ITERATIONS;
+  Result.PasswordIterations := PC_PASSWORD_DEFAULT_ITERATIONS;
 end;
 
 { helpers }
@@ -192,7 +192,7 @@ begin
   FSign := ASign;
   FOptions := AOptions;
   FRefresh := TRefreshTokens.Create(ARefreshStore, AOptions.RefreshSeconds, AOnSecurity);
-  FDummyHash := TPasswords.Hash(NewId, FOptions.PasswordIterations);
+  FDummyHash := TPcPasswords.Hash(NewId, FOptions.PasswordIterations);
 end;
 
 destructor TAuthService.Destroy;
@@ -267,10 +267,10 @@ begin
   end;
   // The same work whatever failed: the answer's time says nothing.
   if LFound then
-    LOk := TPasswords.Verify(APassword, LUser.PasswordHash)
+    LOk := TPcPasswords.Verify(APassword, LUser.PasswordHash)
   else
   begin
-    TPasswords.Verify(APassword, FDummyHash);
+    TPcPasswords.Verify(APassword, FDummyHash);
     LOk := False;
   end;
   if not LOk then
@@ -280,9 +280,9 @@ begin
 
   // A weaker stored hash is replaced while the password is at hand; hashed
   // before the transaction, so it holds no connection for 0.3 s.
-  if TPasswords.NeedsRehash(LUser.PasswordHash, FOptions.PasswordIterations) then
+  if TPcPasswords.NeedsRehash(LUser.PasswordHash, FOptions.PasswordIterations) then
   begin
-    LNewHash := TPasswords.Hash(APassword, FOptions.PasswordIterations);
+    LNewHash := TPcPasswords.Hash(APassword, FOptions.PasswordIterations);
     LTx := LScope.Factory.GetPool.AcquireQuery(LQuery);
     LTx.StartTransaction;
     try
@@ -401,7 +401,7 @@ begin
     raise EArgumentException.CreateFmt('Role "%s": owner or staff.', [ARole]);
   Result := NewId;
   LScope := AResolver.ScopeFor(LInfo);
-  LHash := TPasswords.Hash(APassword, AIterations);
+  LHash := TPcPasswords.Hash(APassword, AIterations);
   LTx := LScope.Factory.GetPool.AcquireQuery(LQuery);
   LTx.StartTransaction;
   try

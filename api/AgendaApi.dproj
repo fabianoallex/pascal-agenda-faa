@@ -67,7 +67,6 @@
         </DelphiCompile>
         <DCCReference Include="..\src\Agenda.Schema.pas"/>
         <DCCReference Include="..\src\Agenda.Database.pas"/>
-        <DCCReference Include="..\src\Agenda.Passwords.pas"/>
         <DCCReference Include="..\src\Agenda.Tokens.pas"/>
         <DCCReference Include="..\src\Agenda.Auth.pas"/>
         <DCCReference Include="..\src\Agenda.AuthDtos.pas"/>
@@ -91,8 +90,6 @@
         <DCCReference Include="..\src\Agenda.Day.Dtos.pas"/>
         <DCCReference Include="..\src\Agenda.Day.pas"/>
         <DCCReference Include="..\src\Agenda.Metrics.pas"/>
-        <DCCReference Include="..\src\Agenda.StopSignal.pas"/>
-        <DCCReference Include="..\src\Agenda.WinHeap.pas"/>
         <DCCReference Include="..\src\Agenda.Appointments.Dtos.pas"/>
         <DCCReference Include="..\src\Agenda.Appointments.pas"/>
         <DCCReference Include="..\src\Agenda.SignedLinks.pas"/>

@@ -23,7 +23,7 @@ git clone <this repository>
 git submodule update --init      # no --recursive: the libraries' own external/ isn't needed
 ```
 
-The libraries are pinned in `external/`, one copy each: pascal-common-faa 1.25.0,
+The libraries are pinned in `external/`, one copy each: pascal-common-faa 1.26.0,
 pascal-jsonmapper-faa 0.7.0, pascal-db-faa 0.17.0, pascal-api-infra-faa 0.29.0,
 pascal-redis-faa 0.3.1, pascal-amqp-faa 0.4.2, Horse 3.3.12, Synapse (SMTP, a commit). The unit
 suite also uses pascal-amqp-faa's embedded broker (`pascal_amqp_faa_server`).

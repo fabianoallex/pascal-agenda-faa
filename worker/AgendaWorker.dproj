@@ -77,8 +77,6 @@
         <DCCReference Include="..\src\Agenda.Leases.pas"/>
         <DCCReference Include="..\src\Agenda.Reminders.pas"/>
         <DCCReference Include="..\src\Agenda.Metrics.pas"/>
-        <DCCReference Include="..\src\Agenda.StopSignal.pas"/>
-        <DCCReference Include="..\src\Agenda.WinHeap.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>

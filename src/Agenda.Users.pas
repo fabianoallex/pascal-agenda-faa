@@ -198,7 +198,7 @@ uses
   PascalApi.Jwt,
   PascalApi.PagedQuery,
   Agenda.Auth,
-  Agenda.Passwords,
+  PascalCommon.Passwords,
   Agenda.Normalizers,
   Agenda.Validators,
   Agenda.Text,
@@ -301,9 +301,9 @@ end;
 function HashPassword(const APassword: string; AIterations: Integer): string;
 begin
   try
-    Result := TPasswords.Hash(APassword, AIterations);
+    Result := TPcPasswords.Hash(APassword, AIterations);
   except
-    on E: EPasswordError do
+    on E: EPcPasswordError do
       raise EValidationException.Create('"password": ' + E.Message);
   end;
 end;

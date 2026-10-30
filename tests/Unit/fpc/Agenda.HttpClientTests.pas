@@ -555,10 +555,8 @@ end;
 
 procedure THttpClientTests.Query_Escaped_EmptyLeftOut;
 begin
-  TAssert.AssertEquals('a-Z_0.9~', ApiQueryEscape('a-Z_0.9~'));
-  TAssert.AssertEquals('a%20b%26c%3Dd%2F%3F%2B', ApiQueryEscape('a b&c=d/?+'));
-  // UTF-8, each byte.
-  TAssert.AssertEquals('Jo%C3%A3o', ApiQueryEscape('João'));
+  // Names and values percent-encoded (pascal-common-faa's PcPercentEncode).
+  TAssert.AssertEquals('?search=Jo%C3%A3o%20b%26c', ApiQuery(['search', 'João b&c']));
   TAssert.AssertEquals('?date=2026-11-02&days=3', ApiQuery(['date', '2026-11-02',
     'professional', '', 'days', '3']));
   TAssert.AssertEquals('', ApiQuery(['search', '']));
