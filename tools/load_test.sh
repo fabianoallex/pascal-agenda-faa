@@ -49,6 +49,11 @@ PY=python3
 "$PY" -c "import sys" >/dev/null 2>&1 || PY=python
 mkdir -p "$OUT"
 rm -f "$OUT/$TAG"-*
+# The k6 image runs as its own user (uid 12345): on Linux it can't write its
+# summary into $OUT, made by this user with mode 755 (CI, 2026-10-31). Run
+# it as this user there. Docker Desktop on Windows doesn't check the mount.
+K6_USER=""
+command -v cygpath >/dev/null 2>&1 || K6_USER="--user $(id -u):$(id -g)"
 
 export DEV_MODE=true PASSWORD_ITERATIONS=20000 AUTH_RATE_LIMIT=1000
 export RATE_LIMIT=1000000 PUBLIC_RATE_LIMIT=1000000
@@ -218,7 +223,7 @@ while [ $P -le "$PASSES" ]; do
   K6RC=0
   RUN_TAG="$TAG-$P-$(date +%s)"
   if [ $K6_DOCKER = 1 ]; then
-    MSYS_NO_PATHCONV=1 docker run --rm --network "$K6_NETWORK" \
+    MSYS_NO_PATHCONV=1 docker run --rm --network "$K6_NETWORK" $K6_USER \
       -v "$(cygpath -w "$ROOT/load" 2>/dev/null || echo "$ROOT/load"):/load" \
       -e BASE="$K6_BASE" -e DURATION="$DURATION" -e VUS="$VUS" -e RUN="$RUN_TAG" \
       "$K6_IMAGE" run --quiet --summary-export "/load/out/$TAG-p$P.json" /load/agenda.js \
@@ -228,6 +233,7 @@ while [ $P -le "$PASSES" ]; do
       --summary-export "$OUT/$TAG-p$P.json" load/agenda.js > "$OUT/$TAG-p$P.log" 2>&1 || K6RC=$?
   fi
   curl -s "http://127.0.0.1:$PORT/metrics" > "$OUT/$TAG-p$P-after.txt"
+  [ -f "$OUT/$TAG-p$P.json" ] || { echo "no k6 summary (exit $K6RC); its log:"; tail -20 "$OUT/$TAG-p$P.log"; }
   MEM="$(memory_mb)"
   MEMS="$MEMS $MEM"
   "$PY" tools/load_check.py pass "$TAG" "$P" "$OUT/$TAG-p$P.json" "$OUT/$TAG-p$P-before.txt" \
