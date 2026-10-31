@@ -29,7 +29,7 @@ interface
 uses
   SysUtils,
   PascalJsonMapper.Json,
-  Agenda.HttpTransport,
+  PascalApi.HttpTransport,
   Agenda.HttpClient,
   Agenda.HttpSession,
   Agenda.AuthDtos,

@@ -201,14 +201,6 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
-        <Filename Value="..\src\Agenda.SignedLinks.pas"/>
-        <IsPartOfProject Value="True"/>
-      </Unit>
-      <Unit>
-        <Filename Value="..\src\Agenda.PublicTenancy.pas"/>
-        <IsPartOfProject Value="True"/>
-      </Unit>
-      <Unit>
         <Filename Value="..\src\Agenda.Public.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>

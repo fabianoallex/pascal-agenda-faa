@@ -48,7 +48,7 @@ uses
   SysUtils,
   PascalCommon.Validators,
   PascalCommon.Tracing,
-  Agenda.HttpTransport;
+  PascalApi.HttpTransport;
 
 const
   API_DEFAULT_MAX_ATTEMPTS = 3;
@@ -80,7 +80,7 @@ type
   TApiReply = record
     Status: Integer;
     Body: string;
-    Headers: THttpFields;
+    Headers: THttpHeaders;
     function Header(const AName: string): string;
     /// The ETag header ('' when absent).
     function ETag: string;
@@ -309,7 +309,7 @@ end;
 
 function TApiReply.Header(const AName: string): string;
 begin
-  FindHttpField(Headers, AName, Result);
+  FindHttpHeader(Headers, AName, Result);
 end;
 
 function TApiReply.ETag: string;

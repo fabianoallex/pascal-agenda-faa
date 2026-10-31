@@ -35,7 +35,7 @@ program AgendaApi;
                          REDIS_CONNECT_TIMEOUT_MS (500), REDIS_LOCK_PREFIX
                          ('agenda:lock:')
     IDEMPOTENCY_TTL_HOURS how long a booking's Idempotency-Key replays (24)
-    LINK_SIGNING_KEYS    signs the public links (Agenda.SignedLinks):
+    LINK_SIGNING_KEYS    signs the public links (PascalApi.SignedLinks):
                          "id:<base64 of 32 bytes>", comma separated, the
                          first signs; required unless DEV_MODE=true
     PUBLIC_RATE_LIMIT    a minute per client address on /public/ (60)
@@ -90,7 +90,7 @@ program AgendaApi;
     GET  /health/live, /health/ready, /metrics, /swagger (/swagger/doc.json)
 
   Public, no token (docs/design.md, M3): the tenant is the path's slug
-  (Agenda.PublicTenancy: unknown and suspended are one 404), rate limited by
+  (TPathTenantMiddleware: unknown and suspended are one 404), rate limited by
   client address:
     GET  /public/:slug/services, /public/:slug/professionals
                          the active ones: id, name (a service's duration and
@@ -122,7 +122,7 @@ program AgendaApi;
 
   tools/http_scenarios.sh checks all of this over HTTP. *)
 
-{$IFDEF FPC}{$MODE DELPHI}{$H+}{$I AgendaApi.fpc.inc}{$ENDIF}
+{$IFDEF FPC}{$MODE DELPHI}{$H+}{$ENDIF}
 {$APPTYPE CONSOLE}
 
 uses
@@ -151,6 +151,7 @@ uses
   PascalApi.Jwt,
   PascalApi.JwtKeys,
   PascalApi.Tenancy,
+  PascalApi.SignedLinks,
   PascalApi.Horse.Middlewares,
   PascalApi.OpenApi,
   PascalApi.Horse.OpenApi,
@@ -195,8 +196,6 @@ uses
   PascalCommon.StopSignal,
   Agenda.Appointments.Dtos in '..\src\Agenda.Appointments.Dtos.pas',
   Agenda.Appointments in '..\src\Agenda.Appointments.pas',
-  Agenda.SignedLinks in '..\src\Agenda.SignedLinks.pas',
-  Agenda.PublicTenancy in '..\src\Agenda.PublicTenancy.pas',
   Agenda.Public in '..\src\Agenda.Public.pas',
   Agenda.Settings in '..\src\Agenda.Settings.pas',
   Agenda.Reminders in '..\src\Agenda.Reminders.pas';
@@ -208,7 +207,8 @@ const
   // The 32 bytes "development-master-key-change-me": DEV_MODE only.
   DEV_MASTER_KEY = 'dev:ZGV2ZWxvcG1lbnQtbWFzdGVyLWtleS1jaGFuZ2UtbWU=';
   // /public: the end customer's routes, with no token; the tenant is the
-  // path's (PublicTenant, below).
+  // path's (pascal-api-infra-faa's TPathTenantMiddleware).
+  PUBLIC_PATH_PREFIX = '/public/';
   /// The If-Match parameter's text: all the MCP tool's model reads of it.
   IF_MATCH_TEXT = 'The version read, in double quotes: the appointment''s "version" ' +
     'field, as in "3" (its ETag)';
@@ -309,7 +309,8 @@ end;
 
 function IsPublicPath(AReq: THorseRequest): Boolean;
 begin
-  Result := IsUnderPathPrefix(LowerCase(AReq.PathInfo), PUBLIC_PATH_PREFIX);
+  // The prefix's case is ignored, as Horse's router ignores it.
+  Result := IsUnderPathPrefix(AReq.PathInfo, PUBLIC_PATH_PREFIX);
 end;
 
 function TAgendaHooks.RateKey(AReq: THorseRequest): string;
@@ -334,39 +335,6 @@ begin
     Result := GAuthLimit
   else if IsPublicPath(AReq) then
     Result := GPublicLimit;
-end;
-
-// The tenant of a /public/<slug>/ path, after the rate limit: marked as
-// TTenantMiddleware marks a token's (so ScopeOf, the access log's tenant.id
-// and the repositories work alike), or one 404 for a slug that is unknown,
-// suspended or can't be an id (M3 decision 3). Other paths pass untouched;
-// TTenantMiddleware, before it, already cleared the mark on them.
-{$IFDEF AGENDA_CONNECTION_CLOSE}
-// FPC 3.2.2's fphttpserver closes the connection after every response
-// without saying so (no Connection header; Horse's FPC provider says the
-// same), so an HTTP/1.1 client that keeps it for the next request writes to
-// a closed socket: measured with k6 (Go), a PUT answered "EOF" and never
-// reached the api. Saying it lets the client open a new one (M5).
-procedure ConnectionClose(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
-begin
-  ARes.AddHeader('Connection', 'close');
-  ANext();
-end;
-{$ENDIF}
-
-procedure PublicTenant(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc);
-var
-  LInfo: TTenantInfo;
-begin
-  if IsUnderPathPrefix(AReq.PathInfo, PUBLIC_PATH_PREFIX) then
-  begin
-    // Raised, not sent: TLoggerMiddleware (first) answers a middleware's
-    // exception as the error handler answers a handler's, the same 404 body.
-    if not ResolvePathTenant(GCatalog, AReq.PathInfo, PUBLIC_PATH_PREFIX, LInfo) then
-      raise ENotFoundException.Create('Not found.');
-    TPascalApiRequestState.Get(AReq).TenantId := LInfo.Id;
-  end;
-  ANext();
 end;
 
 var
@@ -1442,9 +1410,10 @@ begin
         TOtlpHttpExporter.FromEnvironment, GHooks.Error);
     TErrorHandlerMiddleware.Register(GHooks.Error);
     TLoggerMiddleware.AddField('tenant.id', TenantIdOf);
-    {$IFDEF AGENDA_CONNECTION_CLOSE}
-    THorse.Use(@ConnectionClose);
-    {$ENDIF}
+    // FPC 3.2.2's fphttpserver closes the connection after every response
+    // without saying so, so a keep-alive client wrote to a closed socket
+    // (k6: a PUT answered "EOF", M5). Nothing on Delphi.
+    THorse.Use(TConnectionCloseMiddleware.New);
     // The logger first: it also answers a middleware's exception on FPC.
     THorse.Use(TLoggerMiddleware.New(nil, alfJson));
     THorse.Use(TMetricsMiddleware.New);
@@ -1456,12 +1425,11 @@ begin
     GRateLimit.KeyExtractor := GHooks.RateKey;
     GRateLimit.LimitFor := GHooks.RateLimitFor;
     THorse.Use(TRateLimitMiddleware.New(GRateLimit));
-    // After the rate limit: trying slugs spends the address's window.
-    {$IFDEF FPC}
-    THorse.Use(@PublicTenant);
-    {$ELSE}
-    THorse.Use(PublicTenant);
-    {$ENDIF}
+    // The tenant of a /public/<slug>/ path, after the rate limit (trying
+    // slugs spends the address's window): marked as TTenantMiddleware marks
+    // a token's, or one 404 for a slug that is unknown, suspended or can't
+    // be an id (M3 decision 3).
+    THorse.Use(TPathTenantMiddleware.New(GCatalog, PUBLIC_PATH_PREFIX));
 
     TRouteDoc.Post('/auth/login').Summary('Log in: tokens for a user of one tenant').Tag('auth')
       .Body<ILoginRequest>

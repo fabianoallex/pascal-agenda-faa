@@ -41,7 +41,7 @@ uses
   Classes,
   PascalCommon.Tracing,
   PascalJsonMapper.Json,
-  Agenda.HttpTransport in '..\..\..\src\Agenda.HttpTransport.pas',
+  PascalApi.HttpTransport,
   Agenda.HttpClient in '..\..\..\src\Agenda.HttpClient.pas',
   Agenda.HttpSession in '..\..\..\src\Agenda.HttpSession.pas',
   Agenda.AuthDtos in '..\..\..\src\Agenda.AuthDtos.pas',

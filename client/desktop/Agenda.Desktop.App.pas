@@ -34,7 +34,7 @@ uses
   PascalCommon.Tracing,
   PascalApi.Config,
   PascalApi.Otlp,
-  Agenda.HttpTransport,
+  PascalApi.HttpTransport,
   Agenda.Client,
   Agenda.Desktop.Tasks;
 

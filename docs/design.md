@@ -139,8 +139,8 @@ two libraries would share goes to pascal-common-faa.
 | Refresh tokens: rotation, reuse detection, family revoke, db/Redis store | `PascalApi.RefreshTokens` + `src/redis` | `docs/jwt-keys-design.md` lists them as "an application's flow": promoting reopens that. **Done** in pascal-api-infra-faa 0.19.0 (`PascalApi.RefreshTokens`, the core only, user 2026-10-19); the race fixed in 0.20.1 |
 | `Idempotency-Key` middleware: replay, 409 while in flight, 422 on another body | `PascalApi.Idempotency` + Horse, db/Redis store | same pluggable-store shape as the JWT keys; **built here 2026-10-21** as `src/Agenda.Idempotency` (memory and database stores, 9 unit tests), see "M2: Idempotency-Key". **Done** in pascal-api-infra-faa 0.23.0 (`PascalApi.Idempotency`, `THorseIdempotentRequest`); adopted 2026-10-21 ("Candidates promoted (2026-10-21)") |
 | Optimistic concurrency: `ETag`/`If-Match`, 412/428 | `PascalApi.Http` + middleware | small; **built here 2026-10-21** as `src/Agenda.Preconditions` (RFC 9110 parsing, 6 unit tests), see "M2: changing and cancelling". **Done** in pascal-api-infra-faa 0.23.0 (`PascalApi.Preconditions`, no middleware); adopted 2026-10-21 |
-| Tenant from the path or host | `PascalApi.Tenancy` | multi-tenancy decision 5; **built here 2026-10-21** as `src/Agenda.PublicTenancy` (the path's slug; unknown and suspended one 404), see "M3: design". **M7: promote** (decision 5) |
-| Signed links: HMAC with expiry | `PascalApi.SignedUrl` | cancel, invite, email confirmation. Not the JWT key ring (user, 2026-10-21: its keys retire in about 30 days, a link may need a year); keys of its own, derived per tenant. **Built here 2026-10-21** as `src/Agenda.SignedLinks`, see "M3: design". **M7: promote**, the context a parameter (decision 6) |
+| Tenant from the path or host | `PascalApi.Tenancy` | multi-tenancy decision 5; **built here 2026-10-21** as `src/Agenda.PublicTenancy` (the path's slug; unknown and suspended one 404), see "M3: design". **M7: promote** (decision 5). **Done** in pascal-api-infra-faa 0.31.0 (`PascalApi.Tenancy`'s `ResolvePathTenant`, `TPathTenantMiddleware`); adopted 2026-10-31 ("M7: pascal-api-infra-faa 0.31.0 adopted") |
+| Signed links: HMAC with expiry | `PascalApi.SignedUrl` | cancel, invite, email confirmation. Not the JWT key ring (user, 2026-10-21: its keys retire in about 30 days, a link may need a year); keys of its own, derived per tenant. **Built here 2026-10-21** as `src/Agenda.SignedLinks`, see "M3: design". **M7: promote**, the context a parameter (decision 6). **Done** in pascal-api-infra-faa 0.31.0 (`PascalApi.SignedLinks`, context `'agenda-link'` here); adopted 2026-10-31 |
 | IANA time zones on both compilers | pascal-common-faa | **biggest risk**: neither RTL converts an arbitrary zone. Linux has `/usr/share/zoneinfo`; Windows has the registry (Windows names) or an embedded database. Own design phase before M2. **Done in pascal-common-faa 1.22.0** (`PascalCommon.TimeZones`, the tzdb embedded); adopted 2026-10-20 |
 
 **Probable** (a second case should confirm the shape):
@@ -198,6 +198,8 @@ candidate (promote, keep in the application, drop) with these criteria:
   The client over it **built here 2026-10-29** as `src/Agenda.HttpClient`, and the session's
   tokens as `src/Agenda.HttpSession`; see "M6: the generic client" and "M6: the session".
   **M7**: the transport promoted (decision 9), the client and the session kept here (12).
+  The transport **done** in pascal-api-infra-faa 0.31.0 (`PascalApi.HttpTransport` and its
+  fake); adopted 2026-10-31.
 
 **Found while building** (not in the first list):
 
@@ -221,7 +223,8 @@ candidate (promote, keep in the application, drop) with these criteria:
 - A package of pascal-api-infra-faa's units a client needs (`PascalApi.Dto`, `PascalApi.OpenApi`,
   `PascalApi.OrderBy`, `PascalApi.Text`): `pascal_api_infra_faa.lpk` requires `pascal_db_faa`,
   so the desktop client's `.lpi` takes the library's `src` as a search path instead (M6).
-  **M7: promote** (decision 8).
+  **M7: promote** (decision 8). **Done** in pascal-api-infra-faa 0.31.0
+  (`pascal_api_infra_faa_client.lpk`); the three client projects require it since 2026-10-31.
 - A console program's stop request: Ctrl+C, Ctrl+Break and the console closing on Windows,
   SIGINT and SIGTERM on Unix, as a flag the main loop reads, and a sleep that wakes on it
   (pascal-common-faa). No library has it: the amqp, redis and pipes samples stop on Enter or
@@ -231,7 +234,8 @@ candidate (promote, keep in the application, drop) with these criteria:
   (decision 2).
 - `Connection: close` on FPC 3.2.2 (its server closes every connection without saying so),
   pascal-api-infra-faa or Horse: found 2026-10-27 under load, "M5: under load". **M7:
-  promote** to pascal-api-infra-faa (decision 7).
+  promote** to pascal-api-infra-faa (decision 7). **Done** in 0.31.0
+  (`TConnectionCloseMiddleware`, opt-in); adopted 2026-10-31.
 - An `Idempotency-Key` completed after the caller's commit can fail on its own (no pool
   connection): the client gets a 5xx for a change that was made. pascal-api-infra-faa's
   `THorseIdempotentRequest`; found 2026-10-27 under load, "M5: under load". **Fixed there**
@@ -2607,3 +2611,35 @@ client 29, 0 failed, the api stopped on SIGTERM each time (the known 64-byte blo
 Delphi 12: unit tests 167 of 167 on Win32 and Win64, 0 leaks; `tools/test_http.sh` on the Win32
 and the Win64 builds: 675 + worker 68 + client 29 + desktop smoke 56 on each, 0 failed, the same
 traces line.
+
+### M7: pascal-api-infra-faa 0.31.0 adopted (2026-10-31, decisions 5 to 9 and 17)
+
+pascal-api-infra-faa 0.31.0 (CI run 41246483813, FPC Linux) has decisions 5 to 9 and 17, the
+units as they were here with the review's changes. This application moved its submodule to the
+tag and dropped its copies:
+
+| Here | Now |
+|---|---|
+| `src/Agenda.PublicTenancy` (`IsUnderPathPrefix`, `TryPathTenant`, `ResolvePathTenant`) and its 6 tests; `PublicTenant` in `api/AgendaApi.dpr` | `PascalApi.Tenancy`, and `TPathTenantMiddleware.New(GCatalog, PUBLIC_PATH_PREFIX)` (`PascalApi.Horse.Tenancy`), still after the rate limit. Its 404 is sent with `TApiMessages`' "Resource not found." (was "Not found.", raised); the scenarios compare the bodies with each other, not the text. `IsPublicPath` no longer lower-cases the path: the library's prefix ignores case |
+| `Agenda.Tokens.IsTenantId` and its test; `CanBeTenantId` in `Agenda.PublicTenancy` | `ValidTenantId` (`PascalApi.Tenancy`): `Agenda.Auth`'s four calls |
+| `src/Agenda.SignedLinks` and its 13 tests | `PascalApi.SignedLinks`, `TSignedLinks.Create(AKeys, LINK_CONTEXT)`; `LINK_CONTEXT = 'agenda-link'` in `Agenda.Settings` (the links already sent still verify; the scenarios' Python signer unchanged) |
+| `ConnectionClose` in `api/AgendaApi.dpr` and `api/AgendaApi.fpc.inc` (its `FPC_FULLVERSION` test) | `TConnectionCloseMiddleware.New`, registered first as before; the library decides where it is needed |
+| `src/Agenda.HttpTransport`, `src/Agenda.HttpTransport.Fake` and their 8 tests | `PascalApi.HttpTransport` and `.Fake`: `THttpField`/`THttpFields` are `THttpHeader`/`THttpHeaders`, `FindHttpField` is `FindHttpHeader` |
+| The client projects' `.lpi` with `external/pascal-api-infra-faa/src` on the search path | `pascal_api_infra_faa_client` required (`AgendaClientCheck`, `AgendaDesktop`, `AgendaDesktopSmoke`) |
+| Decision 17 | nothing to change: the api already set `LISTEN_QUEUE` and `MAX_CONNECTIONS` (M5) |
+
+- **Found while adopting** (a build note, not a library bug): after the switch to the package,
+  the smoke program's own `lib/` still held `PascalApi.*.ppu` built from the old search path, and
+  FPC took them over the package's ("Can't find unit PascalApi.HttpTransport", with "duplicate
+  unit" warnings). `lazbuild -B` doesn't remove them: delete the project's `lib/` once.
+- **Still open** (0.30.0's note): the auth routes (`/auth/login`, `/refresh`, `/logout`) parse
+  `AReq.Body` with `TJsonMapper` themselves, so on FPC a body that isn't UTF-8 gets no 400 there.
+
+Results: FPC unit tests 139 of 139 on Windows and Linux (167 less the 28 that moved), 0 leaks.
+`tools/test_http.sh` on Windows (SQLite): 675 + worker 74 + client 29 + desktop smoke 56, 0
+failed, "84 spans, 24 actions, 36 calls (26 inside an action), all in the api's log", the same as
+before; on PostgreSQL (Redis, RabbitMQ): 686 + worker 74 + client 29 + desktop smoke 56, 0
+failed, the same traces line. `tools/test_http_docker.sh` (FPC Linux): 675 + worker 79 + client
+29, 0 failed, the api stopped on SIGTERM each time (the known 64-byte block). Delphi 12: unit
+tests 139 of 139 on Win32 and Win64, 0 leaks; `tools/test_http.sh` on the Win32 and the Win64
+builds: 675 + worker 68 + client 29 + desktop smoke 56 on each, 0 failed, the same traces line.

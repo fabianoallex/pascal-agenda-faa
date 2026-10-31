@@ -65,7 +65,6 @@
         <DelphiCompile Include="$(MainSource)">
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
-        <DCCReference Include="..\..\src\Agenda.HttpTransport.pas"/>
         <DCCReference Include="..\..\src\Agenda.HttpClient.pas"/>
         <DCCReference Include="..\..\src\Agenda.HttpSession.pas"/>
         <DCCReference Include="..\..\src\Agenda.AuthDtos.pas"/>

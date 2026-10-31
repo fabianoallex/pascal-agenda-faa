@@ -92,8 +92,6 @@
         <DCCReference Include="..\src\Agenda.Metrics.pas"/>
         <DCCReference Include="..\src\Agenda.Appointments.Dtos.pas"/>
         <DCCReference Include="..\src\Agenda.Appointments.pas"/>
-        <DCCReference Include="..\src\Agenda.SignedLinks.pas"/>
-        <DCCReference Include="..\src\Agenda.PublicTenancy.pas"/>
         <DCCReference Include="..\src\Agenda.Public.pas"/>
         <DCCReference Include="..\src\Agenda.Settings.pas"/>
         <DCCReference Include="..\src\Agenda.Reminders.pas"/>

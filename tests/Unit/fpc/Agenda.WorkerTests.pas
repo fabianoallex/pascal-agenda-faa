@@ -28,7 +28,8 @@ uses
   PascalDb.Outbox,
   Agenda.Database,
   Agenda.Mail,
-  Agenda.SignedLinks,
+  PascalApi.SignedLinks,
+  Agenda.Settings,
   Agenda.Notifications;
 
 type
@@ -133,7 +134,7 @@ begin
   FSkips := 0;
   FLastSkip := '';
   FNow := TJwt.UnixNow;
-  FLinks := TSignedLinks.Create(LINK_KEYS);
+  FLinks := TSignedLinks.Create(LINK_KEYS, LINK_CONTEXT);
   FFile := TempDir + 'agenda-worker-' +
     LowerCase(PcBytesToHex(PcRandomBytes(6))) + '.sqlite';
   FDb := TAgendaDatabase.CreateSQLite(FFile);

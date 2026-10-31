@@ -129,10 +129,6 @@
         <DCCReference Include="Agenda.TimesTests.pas"/>
         <DCCReference Include="Agenda.SlotsTests.pas"/>
         <DCCReference Include="..\..\src\Agenda.Slots.pas"/>
-        <DCCReference Include="..\..\src\Agenda.SignedLinks.pas"/>
-        <DCCReference Include="..\..\src\Agenda.PublicTenancy.pas"/>
-        <DCCReference Include="Agenda.SignedLinksTests.pas"/>
-        <DCCReference Include="Agenda.PublicTenancyTests.pas"/>
         <DCCReference Include="..\..\src\Agenda.Database.pas"/>
         <DCCReference Include="..\..\src\Agenda.Settings.pas"/>
         <DCCReference Include="..\..\src\Agenda.Events.pas"/>
@@ -145,9 +141,6 @@
         <DCCReference Include="Agenda.WorkerTests.pas"/>
         <DCCReference Include="..\..\src\Agenda.Outbox.Amqp.pas"/>
         <DCCReference Include="Agenda.OutboxAmqpTests.pas"/>
-        <DCCReference Include="..\..\src\Agenda.HttpTransport.pas"/>
-        <DCCReference Include="..\..\src\Agenda.HttpTransport.Fake.pas"/>
-        <DCCReference Include="Agenda.HttpTransportTests.pas"/>
         <DCCReference Include="..\..\src\Agenda.HttpClient.pas"/>
         <DCCReference Include="Agenda.HttpClientTests.pas"/>
         <DCCReference Include="..\..\src\Agenda.HttpSession.pas"/>

@@ -67,7 +67,6 @@
         </DelphiCompile>
         <DCCReference Include="..\src\Agenda.Schema.pas"/>
         <DCCReference Include="..\src\Agenda.Database.pas"/>
-        <DCCReference Include="..\src\Agenda.SignedLinks.pas"/>
         <DCCReference Include="..\src\Agenda.Settings.pas"/>
         <DCCReference Include="..\src\Agenda.Events.pas"/>
         <DCCReference Include="..\src\Agenda.Outbox.Amqp.pas"/>

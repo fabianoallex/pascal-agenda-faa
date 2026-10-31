@@ -101,7 +101,7 @@ uses
   {$IFNDEF FPC}
   Winapi.Windows,
   {$ENDIF}
-  Agenda.HttpTransport;
+  PascalApi.HttpTransport;
 
 constructor TApiSession.Create(const ARefresher: IApiTokenRefresher);
 begin

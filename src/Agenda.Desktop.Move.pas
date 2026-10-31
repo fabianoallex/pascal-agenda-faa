@@ -31,7 +31,7 @@ uses
   SysUtils,
   Classes,
   PascalJsonMapper.Json,
-  Agenda.HttpTransport,
+  PascalApi.HttpTransport,
   Agenda.Client,
   Agenda.Appointments.Dtos,
   Agenda.Availability.Dtos,

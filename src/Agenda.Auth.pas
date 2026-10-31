@@ -255,7 +255,7 @@ var
   LTx: IScopeTransaction;
 begin
   LEmail := NormalizeEmail(AEmail);
-  if IsTenantId(ATenant) then
+  if ValidTenantId(ATenant) then
     LCheck := CheckTenant(FCatalog, ATenant, LInfo)
   else
     LCheck := tcUnknown;
@@ -308,7 +308,7 @@ var
 begin
   // The tenant is in the token, in clear: checked against the catalog before
   // any lookup. Every token here names one (no scope '').
-  if not TRefreshTokens.TryParse(ARefreshToken, LTenant) or not IsTenantId(LTenant) then
+  if not TRefreshTokens.TryParse(ARefreshToken, LTenant) or not ValidTenantId(LTenant) then
     raise InvalidRefreshToken;
   case CheckTenant(FCatalog, LTenant, LInfo) of
     tcOk: ;
@@ -333,7 +333,7 @@ var
   LTenant: string;
   LInfo: TTenantInfo;
 begin
-  if not TRefreshTokens.TryParse(ARefreshToken, LTenant) or not IsTenantId(LTenant) then
+  if not TRefreshTokens.TryParse(ARefreshToken, LTenant) or not ValidTenantId(LTenant) then
     Exit;
   if CheckTenant(FCatalog, LTenant, LInfo) in [tcOk, tcSuspended] then
     FRefresh.Revoke(ARefreshToken);
@@ -354,7 +354,7 @@ var
   LTx: IScopeTransaction;
   LZone, LSpelled: string;
 begin
-  if not IsTenantId(AId) then
+  if not ValidTenantId(AId) then
     raise EArgumentException.CreateFmt('"%s" is not a tenant id (1-40 of a-z, 0-9, -).', [AId]);
   LZone := Trim(ATimeZone);
   if (Trim(AName) = '') or (LZone = '') then

@@ -5,7 +5,7 @@ unit Agenda.Public;
 (* What the public routes do for an end customer, who has no account
   (docs/design.md, M3): list a tenant's active services and professionals,
   book, and see or cancel one appointment through a signed link. The tenant
-  is the request's (Agenda.PublicTenancy marked it); the work is the
+  is the request's (TPathTenantMiddleware marked it); the work is the
   repositories', with a narrower view.
 
   - What a public route shows: a service's id, name, duration and price; a
@@ -17,7 +17,7 @@ unit Agenda.Public;
     (docs/design.md, "Known limits"). The booking's own members are checked
     before the customer is looked for, so a body missing them creates
     nothing.
-  - The link (Agenda.SignedLinks): purpose "appointment", scope the tenant,
+  - The link (PascalApi.SignedLinks): purpose "appointment", scope the tenant,
     resource the appointment's id, expiry its start when booked. A link that
     can't be read, signed with another key or for another appointment or
     tenant is 403 invalid_link; a good one past its expiry is 410
@@ -37,7 +37,7 @@ uses
   PascalApi.Dto,
   PascalApi.Tenancy,
   Redis.Lock,
-  Agenda.SignedLinks;
+  PascalApi.SignedLinks;
 
 const
   LINK_PURPOSE_APPOINTMENT = 'appointment';

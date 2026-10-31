@@ -75,10 +75,6 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
-        <Filename Value="..\src\Agenda.SignedLinks.pas"/>
-        <IsPartOfProject Value="True"/>
-      </Unit>
-      <Unit>
         <Filename Value="..\src\Agenda.Settings.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>

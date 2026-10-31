@@ -24,8 +24,8 @@ uses
   SysUtils,
   SyncObjs,
   PascalCommon.Tracing,
-  Agenda.HttpTransport,
-  Agenda.HttpTransport.Fake,
+  PascalApi.HttpTransport,
+  PascalApi.HttpTransport.Fake,
   Agenda.HttpClient;
 
 type

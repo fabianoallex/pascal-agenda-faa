@@ -17,8 +17,8 @@ uses
   SysUtils,
   Classes,
   SyncObjs,
-  Agenda.HttpTransport,
-  Agenda.HttpTransport.Fake,
+  PascalApi.HttpTransport,
+  PascalApi.HttpTransport.Fake,
   Agenda.HttpClient,
   Agenda.HttpSession;
 

@@ -24,7 +24,7 @@ interface
 uses
   SysUtils,
   PascalCommon.Validators,
-  Agenda.HttpTransport,
+  PascalApi.HttpTransport,
   Agenda.HttpClient,
   Agenda.Desktop.Tasks;
 

@@ -5,7 +5,8 @@ unit Agenda.Settings;
 { Settings both programs read the same way (the api and the worker), from
   the environment or a .env file (pascal-api-infra-faa's TAppConfig).
 
-  - LINK_SIGNING_KEYS: the public links' keys (Agenda.SignedLinks); required
+  - LINK_SIGNING_KEYS: the public links' keys (pascal-api-infra-faa's
+    PascalApi.SignedLinks, with this application's context); required
     unless DEV_MODE=true, which gives a development key. The worker signs the
     links its emails carry, so it needs the api's keys.
   - PUBLIC_BASE_URL: what goes before /public/... in a link, without a
@@ -14,7 +15,13 @@ unit Agenda.Settings;
 interface
 
 uses
-  Agenda.SignedLinks;
+  PascalApi.SignedLinks;
+
+const
+  /// The links' context (TSignedLinks.Create): the text the signed text and
+  /// the key derivation start with ('agenda-link|v1|', 'agenda-link-key|').
+  /// Keep it: a link already sent verifies only with it.
+  LINK_CONTEXT = 'agenda-link';
 
 /// The configured link keys; raises without them outside DEV_MODE.
 /// AWarning: the DEV_MODE warning line, '' otherwise.
@@ -47,7 +54,7 @@ begin
     AWarning := 'WARNING DEV_MODE: the public links are signed with a development key';
     LKeys := DEV_LINK_KEY;
   end;
-  Result := TSignedLinks.Create(LKeys);
+  Result := TSignedLinks.Create(LKeys, LINK_CONTEXT);
 end;
 
 function ConfiguredPublicBaseUrl: string;

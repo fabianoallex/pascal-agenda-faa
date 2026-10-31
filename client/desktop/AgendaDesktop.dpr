@@ -19,7 +19,6 @@ uses
   {$ELSE}
   Vcl.Forms,
   {$ENDIF}
-  Agenda.HttpTransport in '..\..\src\Agenda.HttpTransport.pas',
   Agenda.HttpClient in '..\..\src\Agenda.HttpClient.pas',
   Agenda.HttpSession in '..\..\src\Agenda.HttpSession.pas',
   Agenda.AuthDtos in '..\..\src\Agenda.AuthDtos.pas',

@@ -23,7 +23,7 @@ interface
 uses
   SysUtils,
   Classes,
-  Agenda.HttpTransport,
+  PascalApi.HttpTransport,
   Agenda.Client,
   Agenda.Desktop.Tasks,
   Agenda.Desktop.Errors,

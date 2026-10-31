@@ -16,7 +16,7 @@ unit Agenda.Notifications;
   - Who (decision 7): the customer's email; none, nothing sent (OnSkip says
     why). An appointment that isn't there (the event's tenant has none with
     that id) is skipped too: retrying wouldn't find it.
-  - The links (M3's Agenda.SignedLinks): purpose "appointment", scope the
+  - The links (M3's, PascalApi.SignedLinks): purpose "appointment", scope the
     tenant, expiry the start, as the public booking's answer has them; the
     worker needs the same LINK_SIGNING_KEYS and PUBLIC_BASE_URL as the api.
   - The time: the tenant's zone (pascal-common-faa's PcTimeZones), with the
@@ -35,7 +35,7 @@ uses
   PascalDb.Interfaces,
   PascalDb.Outbox,
   Agenda.Mail,
-  Agenda.SignedLinks;
+  PascalApi.SignedLinks;
 
 const
   NOTIFY_SQL_APPOINTMENT = 'NOTIFY.APPOINTMENT';
