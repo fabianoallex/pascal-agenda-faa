@@ -51,7 +51,7 @@ type
     FFactory: IDBFactory;
     FOwner: string;
   public
-    /// AOwner: unique per process (OutboxNewOwner's kind of name).
+    /// AOwner: unique per process (PdbOutboxNewOwner's kind of name).
     constructor Create(const AFactory: IDBFactory; const AOwner: string);
     function TryAcquire(const AJob: string; ASeconds: Integer; ANow: Int64): Boolean;
     procedure Release(const AJob: string);

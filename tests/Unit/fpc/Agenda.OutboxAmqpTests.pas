@@ -8,9 +8,9 @@
 
 { Tests for Agenda.Outbox.Amqp: the sink and the consumer against
   pascal-amqp-faa's embedded broker (TAMQPServer, an ephemeral port on
-  127.0.0.1), with the database a SQLite file in the temporary directory, as
-  Agenda.OutboxTests. No RabbitMQ: the HTTP scenarios run the worker against
-  one.
+  127.0.0.1), with the database a SQLite file in the temporary directory
+  (Agenda.WorkerTests' way). No RabbitMQ: the HTTP scenarios run the worker
+  against one.
 
   The consumer's callbacks run on the library's threads, so a test waits for
   what it expects (a count reached, a queue empty) with a deadline, never a
@@ -25,10 +25,10 @@ uses
   fpcunit, testregistry,
   SysUtils,
   PascalDb.Interfaces,
+  PascalDb.Outbox,
   AMQP.Connection,
   AMQP.Server.Broker,
   Agenda.Database,
-  Agenda.Outbox,
   Agenda.Outbox.Amqp;
 
 type

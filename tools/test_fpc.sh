@@ -27,7 +27,7 @@ if bad:
     print('non-ASCII text in a source without a BOM (save it as UTF-8 with a BOM):', *bad)
     sys.exit(1)
 EOF
-# Agenda.OutboxTests opens SQLite: SQLdb loads sqlite3.dll next to the runner,
+# Agenda.WorkerTests opens SQLite: SQLdb loads sqlite3.dll next to the runner,
 # and it must be sqlite.org's build (pascal-db-faa gotcha 23).
 DLL="${SQLITE_DLL:-.deps/sqlite3.dll}"
 [ -f "$DLL" ] || { echo "no sqlite.org sqlite3.dll: set SQLITE_DLL or put one in .deps/sqlite3.dll"; exit 1; }

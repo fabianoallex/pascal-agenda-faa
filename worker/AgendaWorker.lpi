@@ -87,10 +87,6 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
-        <Filename Value="..\src\Agenda.Outbox.pas"/>
-        <IsPartOfProject Value="True"/>
-      </Unit>
-      <Unit>
         <Filename Value="..\src\Agenda.Outbox.Amqp.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>

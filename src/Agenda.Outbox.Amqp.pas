@@ -49,8 +49,8 @@ interface
 uses
   SysUtils,
   PascalDb.Interfaces,
-  AMQP.Connection,
-  Agenda.Outbox;
+  PascalDb.Outbox,
+  AMQP.Connection;
 
 const
   PROCESSED_SQL_EXISTS = 'PROCESSED.EXISTS';

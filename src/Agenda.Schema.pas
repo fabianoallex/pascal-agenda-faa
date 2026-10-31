@@ -247,7 +247,7 @@ begin
     .Add(COMMON_SQL_DIR, 'MIG.0013',
       'CREATE INDEX IX_CUSTOMERS_EMAIL ON CUSTOMERS (TENANT_ID, EMAIL);')
     // M4 (docs/design.md, "M4: design"). OUTBOX: one row per event, written
-    // in the transaction that changed the appointment (Agenda.Outbox); the
+    // in the transaction that changed the appointment (PascalDb.Outbox); the
     // relay claims pending rows across tenants with a lease (LEASE_OWNER,
     // LEASE_UNTIL), hands them to a sink and sets DELIVERED_AT; a failure
     // counts ATTEMPTS and moves AVAILABLE_AT. PAYLOAD is JSON text (a thin
@@ -602,12 +602,14 @@ begin
       'SELECT ID, NAME, PHONE, EMAIL FROM CUSTOMERS WHERE EMAIL = :EMAIL AND ' +
       'NAME_KEY = :NAME_KEY AND ${TENANT} ORDER BY CREATED_AT, ID')
 
-    // --- the outbox (Agenda.Outbox; a library candidate, so these are the
-    // statements it names). Across tenants: the relay serves them all, so
-    // no ${TENANT} here; Enqueue binds :TENANT_ID. A claim leases a batch:
-    // the outer WHERE repeats the inner one, so a row another relay leased
-    // meanwhile is left alone (PostgreSQL re-checks it after waiting); on
-    // PostgreSQL the inner SELECT skips locked rows instead of waiting.
+    // --- the outbox (pascal-db-faa's PascalDb.Outbox, from this application:
+    // the statements it names; its docs/outbox.md has the reference SQL).
+    // Across tenants: the relay serves them all, so no ${TENANT} here;
+    // Enqueue binds :TENANT_ID. A claim leases a batch. SQLite: the outer
+    // WHERE repeats the inner one, so a row another relay leased meanwhile is
+    // left alone. PostgreSQL: a CTE that locks the batch and skips rows
+    // another relay holds (the IN form claimed more than the batch there,
+    // pascal-db-faa gotcha 56).
     // [TRACE]: the enqueuing span's traceparent, when there is one.
     .Add(COMMON_SQL_DIR, 'OUTBOX.INSERT',
       'INSERT INTO OUTBOX (TENANT_ID, ID, KIND, PAYLOAD, [TRACE {] TRACE_PARENT, [} TRACE] ' +
@@ -622,13 +624,12 @@ begin
       'AND (LEASE_UNTIL IS NULL OR LEASE_UNTIL < :NOW) ' +
       'ORDER BY CREATED_AT, ID ${PAGE})')
     .Add(PG_SQL_DIR, 'OUTBOX.CLAIM',
-      'UPDATE OUTBOX SET LEASE_OWNER = :OWNER, LEASE_UNTIL = :LEASE_UNTIL ' +
+      'WITH C AS (SELECT TENANT_ID, ID FROM OUTBOX ' +
       'WHERE DELIVERED_AT IS NULL AND AVAILABLE_AT <= :NOW ' +
       'AND (LEASE_UNTIL IS NULL OR LEASE_UNTIL < :NOW) ' +
-      'AND (TENANT_ID, ID) IN (SELECT TENANT_ID, ID FROM OUTBOX ' +
-      'WHERE DELIVERED_AT IS NULL AND AVAILABLE_AT <= :NOW ' +
-      'AND (LEASE_UNTIL IS NULL OR LEASE_UNTIL < :NOW) ' +
-      'ORDER BY CREATED_AT, ID ${PAGE} FOR UPDATE SKIP LOCKED)')
+      'ORDER BY CREATED_AT, ID ${PAGE} FOR UPDATE SKIP LOCKED) ' +
+      'UPDATE OUTBOX SET LEASE_OWNER = :OWNER, LEASE_UNTIL = :LEASE_UNTIL FROM C ' +
+      'WHERE OUTBOX.TENANT_ID = C.TENANT_ID AND OUTBOX.ID = C.ID')
     .Add(COMMON_SQL_DIR, 'OUTBOX.CLAIMED',
       'SELECT TENANT_ID, ID, KIND, PAYLOAD, TRACE_PARENT, CREATED_AT, ATTEMPTS FROM OUTBOX ' +
       'WHERE LEASE_OWNER = :OWNER AND LEASE_UNTIL = :LEASE_UNTIL AND DELIVERED_AT IS NULL ' +
@@ -672,13 +673,13 @@ begin
       'AND (LEASE_UNTIL IS NULL OR LEASE_UNTIL < :NOW) ' +
       'ORDER BY AVAILABLE_AT, TENANT_ID, EVENT_ID, HANDLER ${PAGE})')
     .Add(PG_SQL_DIR, 'OUTBOX_DELIVERY.CLAIM',
-      'UPDATE OUTBOX_DELIVERIES SET LEASE_OWNER = :OWNER, LEASE_UNTIL = :LEASE_UNTIL ' +
+      'WITH C AS (SELECT TENANT_ID, EVENT_ID, HANDLER FROM OUTBOX_DELIVERIES ' +
       'WHERE STATUS = :PENDING AND AVAILABLE_AT <= :NOW ' +
       'AND (LEASE_UNTIL IS NULL OR LEASE_UNTIL < :NOW) ' +
-      'AND (TENANT_ID, EVENT_ID, HANDLER) IN (SELECT TENANT_ID, EVENT_ID, HANDLER ' +
-      'FROM OUTBOX_DELIVERIES WHERE STATUS = :PENDING AND AVAILABLE_AT <= :NOW ' +
-      'AND (LEASE_UNTIL IS NULL OR LEASE_UNTIL < :NOW) ' +
-      'ORDER BY AVAILABLE_AT, TENANT_ID, EVENT_ID, HANDLER ${PAGE} FOR UPDATE SKIP LOCKED)')
+      'ORDER BY AVAILABLE_AT, TENANT_ID, EVENT_ID, HANDLER ${PAGE} FOR UPDATE SKIP LOCKED) ' +
+      'UPDATE OUTBOX_DELIVERIES SET LEASE_OWNER = :OWNER, LEASE_UNTIL = :LEASE_UNTIL FROM C ' +
+      'WHERE OUTBOX_DELIVERIES.TENANT_ID = C.TENANT_ID ' +
+      'AND OUTBOX_DELIVERIES.EVENT_ID = C.EVENT_ID AND OUTBOX_DELIVERIES.HANDLER = C.HANDLER')
     .Add(COMMON_SQL_DIR, 'OUTBOX_DELIVERY.CLAIMED',
       'SELECT D.TENANT_ID, D.EVENT_ID AS ID, D.HANDLER, D.ATTEMPTS, O.KIND, O.PAYLOAD, ' +
       'O.TRACE_PARENT, O.CREATED_AT FROM OUTBOX_DELIVERIES D JOIN OUTBOX O ' +

@@ -2,7 +2,7 @@ unit Agenda.Events;
 
 {$I agenda.inc}
 
-{ The application's events, as they go through the outbox (Agenda.Outbox).
+{ The application's events, as they go through the outbox (PascalDb.Outbox).
 
   Thin (M4 decision 2): the appointment's id and the version the change
   wrote, nothing personal. Whoever handles one reads the appointment as it

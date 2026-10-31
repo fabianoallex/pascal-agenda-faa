@@ -48,7 +48,7 @@ unit Agenda.Appointments;
     after the commit; without it (no REDIS_HOST, or rlUnavailable: Redis
     down) the transaction alone decides, the same way.
   - Every change customers hear about writes its event in its own
-    transaction (Agenda.Outbox, Agenda.Events, M4): a booking, a move, a
+    transaction (PascalDb.Outbox, Agenda.Events, M4): a booking, a move, a
     cancel (by staff or by link). A status change through PATCH writes
     none; a move forgets the reminder queued for the old start.
   - Every query goes through TTenantFilter.Prepare (the ${TENANT} tag); the
@@ -117,6 +117,7 @@ uses
   PascalCommon.Validators,
   PascalDb.Interfaces,
   PascalDb.SqlLoader,
+  PascalDb.Outbox,
   PascalJsonMapper.Mapper,
   PascalCommon.JsonMapper.Optionals,
   PascalApi.OpenApi,
@@ -127,7 +128,6 @@ uses
   Agenda.Tokens,
   Agenda.Slots,
   Agenda.Availability,
-  Agenda.Outbox,
   Agenda.Events,
   Agenda.Metrics,
   Agenda.Availability.Dtos;

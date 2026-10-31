@@ -70,7 +70,6 @@
         <DCCReference Include="..\src\Agenda.SignedLinks.pas"/>
         <DCCReference Include="..\src\Agenda.Settings.pas"/>
         <DCCReference Include="..\src\Agenda.Events.pas"/>
-        <DCCReference Include="..\src\Agenda.Outbox.pas"/>
         <DCCReference Include="..\src\Agenda.Outbox.Amqp.pas"/>
         <DCCReference Include="..\src\Agenda.Mail.pas"/>
         <DCCReference Include="..\src\Agenda.Notifications.pas"/>

@@ -134,7 +134,6 @@
         <DCCReference Include="Agenda.SignedLinksTests.pas"/>
         <DCCReference Include="Agenda.PublicTenancyTests.pas"/>
         <DCCReference Include="..\..\src\Agenda.Database.pas"/>
-        <DCCReference Include="..\..\src\Agenda.Outbox.pas"/>
         <DCCReference Include="..\..\src\Agenda.Settings.pas"/>
         <DCCReference Include="..\..\src\Agenda.Events.pas"/>
         <DCCReference Include="..\..\src\Agenda.Mail.pas"/>
@@ -142,7 +141,6 @@
         <DCCReference Include="..\..\src\Agenda.Notifications.pas"/>
         <DCCReference Include="..\..\src\Agenda.Leases.pas"/>
         <DCCReference Include="..\..\src\Agenda.Reminders.pas"/>
-        <DCCReference Include="Agenda.OutboxTests.pas"/>
         <DCCReference Include="Agenda.MailTests.pas"/>
         <DCCReference Include="Agenda.WorkerTests.pas"/>
         <DCCReference Include="..\..\src\Agenda.Outbox.Amqp.pas"/>

@@ -28,7 +28,6 @@ uses
   Agenda.SlotsTests,
   Agenda.SignedLinksTests,
   Agenda.PublicTenancyTests,
-  Agenda.OutboxTests,
   Agenda.MailTests,
   Agenda.WorkerTests,
   Agenda.OutboxAmqpTests,

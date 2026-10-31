@@ -182,7 +182,9 @@ candidate (promote, keep in the application, drop) with these criteria:
     transport (a sink sees every event; SMTP can't deduplicate; a slow server would stall the
     relay). Out of scope: CDC (reading the database log, as Debezium does); polling is enough.
   - **M7: promote** the core and the local sink to pascal-db-faa (decision 10), the broker
-    sink as a bridge in pascal-amqp-faa (decision 11).
+    sink as a bridge in pascal-amqp-faa (decision 11). The core and the local sink **done** in
+    pascal-db-faa 0.18.0 (`PascalDb.Outbox`); adopted 2026-10-31 ("M7: pascal-db-faa 0.18.0
+    adopted").
 - Scheduler with a lease (Redis `SetNx` or a database row): the core in pascal-common-faa.
   **Built here 2026-10-26** as `src/Agenda.Leases`, one interface with a database store (the
   default) and a Redis one (`TRedisLock`); see "M4: the worker". **M7: kept here**
@@ -2579,3 +2581,29 @@ Delphi 12: unit tests 179 of 179 on Win32 and Win64, 0 leaks; `tools/test_http.s
 and the Win64 builds: 675 + worker 68 + client 29 + desktop smoke 56 on each, 0 failed, the same
 traces line.
 
+
+### M7: pascal-db-faa 0.18.0 adopted (2026-10-31, decision 10)
+
+pascal-db-faa 0.18.0 has the outbox's core and local sink as `PascalDb.Outbox`, the unit as it
+was here (13 integration tests on every database and adapter, 6 unit tests; sample 07). This
+application moved its submodule to the tag and dropped its copy:
+
+| Here | Now |
+|---|---|
+| `src/Agenda.Outbox` (`TOutbox`, `TOutboxRelay`, `TOutboxLocalSink`, `TOutboxRetry`, `OutboxNewOwner`...) | `PascalDb.Outbox`, the same names but `PdbOutboxNewOwner`; `TOutboxErrorProc` is `reference to` on Delphi (a method still passes) |
+| `Agenda.OutboxTests` (12) | the library's `TOutboxTests` and `TOutboxUnitTests` |
+| PostgreSQL's `OUTBOX.CLAIM` and `OUTBOX_DELIVERY.CLAIM`: `UPDATE ... WHERE (key) IN (SELECT ... ${PAGE} FOR UPDATE SKIP LOCKED)` | a CTE, as the library's `docs/outbox/sql/PG`: the `IN` form claimed more rows than the batch there (pascal-db-faa gotcha 56, found while porting) |
+
+`Agenda.Outbox.Amqp` (decision 11, still here) now uses `PascalDb.Outbox`. The tables and the
+rest of the SQL are unchanged.
+
+Results: FPC unit tests 167 of 167 on Windows and Linux (179 less the 12 that moved), 0
+leaks. `tools/test_http.sh` on Windows (SQLite): 675 + worker 74 + client 29 + desktop smoke
+56, 0 failed, "84 spans, 24 actions, 36 calls (26 inside an action), all in the api's log",
+the same as before; on PostgreSQL (`DB_ENGINE=postgresql`, Redis and RabbitMQ, the worker
+through the broker and the new claims): 686 + worker 74 + client 29 + desktop smoke 56, 0
+failed, the same traces line. `tools/test_http_docker.sh` (FPC Linux): 675 + worker 79 +
+client 29, 0 failed, the api stopped on SIGTERM each time (the known 64-byte block).
+Delphi 12: unit tests 167 of 167 on Win32 and Win64, 0 leaks; `tools/test_http.sh` on the Win32
+and the Win64 builds: 675 + worker 68 + client 29 + desktop smoke 56 on each, 0 failed, the same
+traces line.

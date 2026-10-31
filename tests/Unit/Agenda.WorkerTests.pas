@@ -3,8 +3,8 @@
 { Tests for what the worker runs on the database: the scheduler's lease
   (Agenda.Leases, the database's store), the reminders' pass
   (Agenda.Reminders) and the customer's email (Agenda.Notifications), on a
-  SQLite file in the temporary directory with every migration applied, as
-  Agenda.OutboxTests. The Redis lease is the HTTP scenarios' (a server).
+  SQLite file in the temporary directory with every migration applied. The
+  Redis lease is the HTTP scenarios' (a server).
 
   The rows are written here with plain SQL, around the real clock (TJwt's):
   the email handler reads it to tell a reminder for an appointment already
@@ -20,8 +20,8 @@ uses
   Agenda.DUnitXCompat,
   SysUtils,
   PascalDb.Interfaces,
+  PascalDb.Outbox,
   Agenda.Database,
-  Agenda.Outbox,
   Agenda.Mail,
   Agenda.SignedLinks,
   Agenda.Notifications;

@@ -22,7 +22,7 @@ unit Agenda.Notifications;
   - The time: the tenant's zone (pascal-common-faa's PcTimeZones), with the
     zone's name, in English as the rest of the text.
   - A failure to send raises: the local sink retries the delivery
-    (Agenda.Outbox), a broker consumer won't record it as processed. The
+    (PascalDb.Outbox), a broker consumer won't record it as processed. The
     send has a span of its own ("email send", a client span), the child of
     the handler's.
 
@@ -33,7 +33,7 @@ interface
 
 uses
   PascalDb.Interfaces,
-  Agenda.Outbox,
+  PascalDb.Outbox,
   Agenda.Mail,
   Agenda.SignedLinks;
 

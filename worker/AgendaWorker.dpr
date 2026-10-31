@@ -10,7 +10,7 @@ program AgendaWorker;
                             exit (0, or 1 when a pass failed): for scripts
 
   Two ways to carry the events (decision 5), the same handler either way:
-  - AMQP_HOST unset, the local sink: the relay (Agenda.Outbox) hands each
+  - AMQP_HOST unset, the local sink: the relay (PascalDb.Outbox) hands each
     pending event to the local sink, which writes a delivery per handler;
     the loop then runs them.
   - AMQP_HOST set, the broker (Agenda.Outbox.Amqp): the relay publishes each
@@ -34,7 +34,7 @@ program AgendaWorker;
   to a callback yet is in neither count); at most DRAIN_MAX_SECONDS.
 
   Metrics (M5): the outbox's, the consumer's, the emails' and the
-  reminders' (Agenda.Metrics, Agenda.Outbox and its AMQP unit) in PcMetrics; with
+  reminders' (Agenda.Metrics, PascalDb.Outbox, Agenda.Outbox.Amqp) in PcMetrics; with
   OTEL_EXPORTER_OTLP_ENDPOINT set, pushed there every
   OTEL_METRIC_EXPORT_INTERVAL ms (60000) by pascal-api-infra-faa's
   TOtlpMetricsExporter, and once more at the stop. The pending events'
@@ -99,7 +99,7 @@ uses
   Agenda.SignedLinks in '..\src\Agenda.SignedLinks.pas',
   Agenda.Settings in '..\src\Agenda.Settings.pas',
   Agenda.Events in '..\src\Agenda.Events.pas',
-  Agenda.Outbox in '..\src\Agenda.Outbox.pas',
+  PascalDb.Outbox,
   Agenda.Outbox.Amqp in '..\src\Agenda.Outbox.Amqp.pas',
   Agenda.Mail in '..\src\Agenda.Mail.pas',
   Agenda.Notifications in '..\src\Agenda.Notifications.pas',
@@ -456,7 +456,7 @@ begin
       GLinks := ConfiguredLinks(GWarning);
       if GWarning <> '' then
         SafeWriteln(GWarning);
-      GOwner := OutboxNewOwner(APP_NAME);
+      GOwner := PdbOutboxNewOwner(APP_NAME);
       GOptions := TOutboxOptions.Default;
       GOptions.BatchSize := TAppConfig.GetInt('OUTBOX_BATCH', GOptions.BatchSize);
       GPollMs := TAppConfig.GetInt('OUTBOX_POLL_MS', 1000);

@@ -59,8 +59,8 @@ implementation
 uses
   SysUtils,
   PascalDb.Paging,
+  PascalDb.Outbox,
   PascalCommon.Tracing,
-  Agenda.Outbox,
   Agenda.Events,
   Agenda.Metrics;
 
