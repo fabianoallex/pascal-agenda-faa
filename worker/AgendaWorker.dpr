@@ -13,11 +13,12 @@ program AgendaWorker;
   - AMQP_HOST unset, the local sink: the relay (PascalDb.Outbox) hands each
     pending event to the local sink, which writes a delivery per handler;
     the loop then runs them.
-  - AMQP_HOST set, the broker (Agenda.Outbox.Amqp): the relay publishes each
-    event to the exchange (confirmed), and a consumer on the "agenda.email"
-    queue runs the handler, on pascal-amqp-faa's threads, recording each
-    event in PROCESSED_EVENTS; a failure waits AMQP_RETRY_MS in the retry
-    queue, and after the tries the message is parked in "agenda.email.dead".
+  - AMQP_HOST set, the broker (pascal-amqp-faa's AMQP.Outbox): the relay
+    publishes each event to the exchange (confirmed), and a consumer on the
+    "agenda.email" queue runs the handler, on pascal-amqp-faa's threads,
+    recording each event in PROCESSED_EVENTS; a failure waits AMQP_RETRY_MS
+    in the retry queue, and after the tries the message is parked in
+    "agenda.email.dead".
   The handler today is one, the customer's email (Agenda.Notifications).
 
   The loop, every OUTBOX_POLL_MS (at once again while a pass found work): the
@@ -34,7 +35,7 @@ program AgendaWorker;
   to a callback yet is in neither count); at most DRAIN_MAX_SECONDS.
 
   Metrics (M5): the outbox's, the consumer's, the emails' and the
-  reminders' (Agenda.Metrics, PascalDb.Outbox, Agenda.Outbox.Amqp) in PcMetrics; with
+  reminders' (Agenda.Metrics, PascalDb.Outbox, AMQP.Outbox) in PcMetrics; with
   OTEL_EXPORTER_OTLP_ENDPOINT set, pushed there every
   OTEL_METRIC_EXPORT_INTERVAL ms (60000) by pascal-api-infra-faa's
   TOtlpMetricsExporter, and once more at the stop. The pending events'
@@ -100,7 +101,7 @@ uses
   Agenda.Settings in '..\src\Agenda.Settings.pas',
   Agenda.Events in '..\src\Agenda.Events.pas',
   PascalDb.Outbox,
-  Agenda.Outbox.Amqp in '..\src\Agenda.Outbox.Amqp.pas',
+  AMQP.Outbox,
   Agenda.Mail in '..\src\Agenda.Mail.pas',
   Agenda.Notifications in '..\src\Agenda.Notifications.pas',
   Agenda.Leases in '..\src\Agenda.Leases.pas',

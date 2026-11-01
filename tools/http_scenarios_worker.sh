@@ -19,7 +19,7 @@
 # - two workers draining at once: every event emailed exactly once (on
 #   PostgreSQL, the claims' SKIP LOCKED; through a broker, two consumers of
 #   one queue); with REDIS_HOST, the lease in Redis; with AMQP_HOST, the
-#   events through the broker (Agenda.Outbox.Amqp), else the local sink;
+#   events through the broker (AMQP.Outbox), else the local sink;
 # - on Linux, the worker running (not --drain) stops on SIGTERM, after
 #   sending what was due, with exit code 0 (and 0 unfreed blocks when built
 #   with heaptrc). Git Bash can't send a console's Ctrl+C to a Windows

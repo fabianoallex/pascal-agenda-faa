@@ -22,7 +22,7 @@ RUN set -e; E=/b/external; \
   P="$P -Fu$E/pascal-jsonmapper-faa/src -Fi$E/pascal-jsonmapper-faa/src"; \
   P="$P -Fu$E/pascal-db-faa/src -Fi$E/pascal-db-faa/src -Fu$E/pascal-db-faa/adapters/sqldb"; \
   P="$P -Fu$E/pascal-redis-faa/src -Fi$E/pascal-redis-faa/src"; \
-  P="$P -Fu$E/pascal-amqp-faa/src -Fi$E/pascal-amqp-faa/src -Fu$E/synapse -Fi$E/synapse"; \
+  P="$P -Fu$E/pascal-amqp-faa/src -Fi$E/pascal-amqp-faa/src -Fu$E/pascal-amqp-faa/src/outbox -Fu$E/synapse -Fi$E/synapse"; \
   mkdir -p /b/units-api /b/units-worker; \
   cd /b/api && fpc -v0 -O2 -Mdelphi -dUseCThreads $P -FU/b/units-api -o/b/AgendaApi AgendaApi.dpr; \
   cd /b/worker && fpc -v0 -O2 -Mdelphi -dUseCThreads $P -FU/b/units-worker -o/b/AgendaWorker AgendaWorker.dpr

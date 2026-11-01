@@ -98,7 +98,7 @@ MSYS_NO_PATHCONV=1 docker run --rm $NETOPT -v "$MOUNT:/src:ro" \
   fpc -v0 -Mdelphi -dUseCThreads $P -gh -gl -FU/t/units -o/t/AgendaApi AgendaApi.dpr > /t/build.log 2>&1 \
     || { grep -iE "error|fatal" /t/build.log | head -30; exit 1; }
   cd /t/worker
-  W="-Fu$E/synapse -Fi$E/synapse -Fu$E/pascal-amqp-faa/src -Fi$E/pascal-amqp-faa/src"
+  W="-Fu$E/synapse -Fi$E/synapse -Fu$E/pascal-amqp-faa/src -Fi$E/pascal-amqp-faa/src -Fu$E/pascal-amqp-faa/src/outbox"
   fpc -v0 -Mdelphi -dUseCThreads $P $W -gh -gl -FU/t/wunits -o/t/AgendaWorker AgendaWorker.dpr \
     > /t/wbuild.log 2>&1 || { grep -iE "error|fatal" /t/wbuild.log | head -30; exit 1; }
   # The client: no pascal-db-faa, Redis or Horse in its paths.

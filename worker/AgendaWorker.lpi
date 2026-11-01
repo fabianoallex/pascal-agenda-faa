@@ -83,10 +83,6 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
-        <Filename Value="..\src\Agenda.Outbox.Amqp.pas"/>
-        <IsPartOfProject Value="True"/>
-      </Unit>
-      <Unit>
         <Filename Value="..\src\Agenda.Mail.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
@@ -115,8 +111,8 @@
       <Filename Value="AgendaWorker"/>
     </Target>
     <SearchPaths>
-      <IncludeFiles Value="..\src;..\external\synapse"/>
-      <OtherUnitFiles Value="..\src;..\external\synapse"/>
+      <IncludeFiles Value="..\src;..\external\synapse;..\external\pascal-amqp-faa\src"/>
+      <OtherUnitFiles Value="..\src;..\external\synapse;..\external\pascal-amqp-faa\src\outbox"/>
       <UnitOutputDirectory Value="lib\$(TargetCPU)-$(TargetOS)"/>
     </SearchPaths>
     <Parsing>

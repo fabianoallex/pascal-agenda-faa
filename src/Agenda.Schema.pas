@@ -696,7 +696,7 @@ begin
       'LEASE_UNTIL = NULL, UPDATED_AT = :NOW WHERE TENANT_ID = :TENANT_ID ' +
       'AND EVENT_ID = :EVENT_ID AND HANDLER = :HANDLER AND LEASE_OWNER = :OWNER')
 
-    // --- a broker consumer's record (Agenda.Outbox.Amqp; decision 6): the
+    // --- a broker consumer's record (pascal-amqp-faa's AMQP.Outbox; decision 6): the
     // events it handled, so a redelivery is acked without running again.
     // Across tenants, as the outbox. INSERT: ON CONFLICT, as the leases'.
     .Add(COMMON_SQL_DIR, 'PROCESSED.EXISTS',

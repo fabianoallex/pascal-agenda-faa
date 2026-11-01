@@ -184,7 +184,8 @@ candidate (promote, keep in the application, drop) with these criteria:
   - **M7: promote** the core and the local sink to pascal-db-faa (decision 10), the broker
     sink as a bridge in pascal-amqp-faa (decision 11). The core and the local sink **done** in
     pascal-db-faa 0.18.0 (`PascalDb.Outbox`); adopted 2026-10-31 ("M7: pascal-db-faa 0.18.0
-    adopted").
+    adopted"). The broker sink **done** in pascal-amqp-faa 0.5.0 (`AMQP.Outbox`, `src/outbox`);
+    adopted 2026-11-01 ("M7: pascal-amqp-faa 0.5.0 adopted").
 - Scheduler with a lease (Redis `SetNx` or a database row): the core in pascal-common-faa.
   **Built here 2026-10-26** as `src/Agenda.Leases`, one interface with a database store (the
   default) and a Redis one (`TRedisLock`); see "M4: the worker". **M7: kept here**
@@ -2643,3 +2644,31 @@ failed, the same traces line. `tools/test_http_docker.sh` (FPC Linux): 675 + wor
 29, 0 failed, the api stopped on SIGTERM each time (the known 64-byte block). Delphi 12: unit
 tests 139 of 139 on Win32 and Win64, 0 leaks; `tools/test_http.sh` on the Win32 and the Win64
 builds: 675 + worker 68 + client 29 + desktop smoke 56 on each, 0 failed, the same traces line.
+
+### M7: pascal-amqp-faa 0.5.0 adopted (2026-11-01, decision 11)
+
+pascal-amqp-faa 0.5.0 has the outbox's broker sink as `AMQP.Outbox`, a bridge in `src/outbox`
+outside both packages (it needs pascal-db-faa 0.18.0), the unit as it was here with the
+review's clock: `PROCESSED_AT` comes from pascal-common-faa's `TClock` (was `TJwt.UnixNow`), so
+the bridge pulls no third library. Its suite `tests/Outbox` has the 7 tests that were here and
+one for the clock. This application moved its submodule to the tag (not recursive: the
+library's own submodules are for its tests) and dropped its copy:
+
+| Here | Now |
+|---|---|
+| `src/Agenda.Outbox.Amqp` (`TOutboxAmqpSink`, `TOutboxAmqpConsumer`, `TOutboxAmqpQueue`, `OutboxAmqpDeclareExchange`, `OutboxAmqpDeclareQueues`, `OutboxAmqpPending`, `OutboxAmqpEvent`, `OutboxAmqpPurgeProcessed`) | `AMQP.Outbox`, the same names; the worker takes `external/pascal-amqp-faa/src/outbox` as a search path (`.dproj`, `.lpi` with `src` for `amqp.inc`, `tools/test_http_docker.sh`, `docker/Dockerfile`) |
+| `Agenda.OutboxAmqpTests` (7) | the library's `tests/Outbox` |
+| The unit suite requiring `pascal_amqp_faa` and `pascal_amqp_faa_server` (for those tests only) | neither: no unit test here uses AMQP now |
+
+The `PROCESSED_EVENTS` table and its `PROCESSED.*` SQL stay the application's (`Agenda.Schema`),
+read by name as before.
+
+Results: FPC unit tests 132 of 132 on Windows and Linux (139 less the 7 that moved), 0 leaks.
+`tools/test_http.sh` on Windows (SQLite): 675 + worker 74 + client 29 + desktop smoke 56, 0
+failed, "84 spans, 24 actions, 36 calls (26 inside an action), all in the api's log", the same as
+before; on PostgreSQL (Redis, RabbitMQ, the worker through `AMQP.Outbox`): 686 + worker 74 +
+client 29 + desktop smoke 56, 0 failed, the same traces line. `tools/test_http_docker.sh` on
+PostgreSQL (FPC Linux, the worker through the broker): 686 + worker 79 + client 29, 0 failed, the
+api's stops with the known pool `EThreadError` (M5, pascal-db-faa, open). Delphi 12: unit tests
+132 of 132 on Win32 and Win64, 0 leaks; `tools/test_http.sh` on the Win32 and the Win64 builds:
+675 + worker 68 + client 29 + desktop smoke 56 on each, 0 failed, the same traces line.
